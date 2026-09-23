@@ -7,14 +7,13 @@ use thiserror::Error;
 use zg_engine::api::{
     context::{
         ContextResult,
-        result::{
-            CodeMetadata, ContentRange, ContextItem, ContextItemStatus, EntityMetadata,
-            MarkdownMetadata,
-        },
+        result::{ContentRange, ContextItem, ContextItemStatus, EntityMetadata, MarkdownMetadata},
     },
     index::IndexResult,
     info::{InfoResult, result::IndexCompatibility},
 };
+
+const SHORT_DOCUMENTATION_LIMIT: usize = 320;
 
 /// Writes a context reply in the stable CLI text layout.
 ///
@@ -137,22 +136,22 @@ fn write_item_preview(
     }
     if let Some(metadata) = &item.metadata {
         match metadata {
-            EntityMetadata::Code(CodeMetadata {
-                symbol_type,
-                symbol_name: Some(name),
-                scope,
-                ..
-            }) => {
-                write!(writer, "symbol: ")?;
-                if let Some(symbol_type) = symbol_type {
-                    let kind = serde_json::to_value(symbol_type).map_err(io::Error::other)?;
-                    write!(writer, "{} ", kind.as_str().unwrap_or_default())?;
+            EntityMetadata::Code(code) => {
+                if let Some(name) = code.symbol_name.as_deref() {
+                    write!(writer, "symbol: ")?;
+                    if let Some(symbol_type) = code.symbol_type {
+                        let kind = serde_json::to_value(symbol_type).map_err(io::Error::other)?;
+                        write!(writer, "{} ", kind.as_str().unwrap_or_default())?;
+                    }
+                    write!(writer, "{name}")?;
+                    if let Some(scope) = code.scope.as_deref() {
+                        write!(writer, " scope: {scope}")?;
+                    }
+                    writeln!(writer)?;
                 }
-                write!(writer, "{name}")?;
-                if let Some(scope) = scope {
-                    write!(writer, " scope: {scope}")?;
+                if let Some(documentation) = code.documentation.as_deref() {
+                    write_code_documentation(&mut writer, documentation, options.preview)?;
                 }
-                writeln!(writer)?;
             }
             EntityMetadata::Markdown(MarkdownMetadata {
                 heading,
@@ -169,7 +168,6 @@ fn write_item_preview(
                     writeln!(writer, "scope: {scope}")?;
                 }
             }
-            EntityMetadata::Code(_) => {}
         }
     }
     let max_lines = match options.preview {
@@ -212,6 +210,47 @@ fn write_item_preview(
         writeln!(writer, "  …")?;
     }
     Ok(())
+}
+
+fn write_code_documentation(
+    writer: &mut impl Write,
+    documentation: &str,
+    preview: crate::PreviewMode,
+) -> io::Result<()> {
+    use crate::PreviewMode;
+
+    if preview == PreviewMode::None {
+        return Ok(());
+    }
+    let documentation = match preview {
+        PreviewMode::None => return Ok(()),
+        PreviewMode::Short => documentation
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
+        PreviewMode::Full => documentation.trim().to_owned(),
+    };
+    if documentation.is_empty() {
+        return Ok(());
+    }
+
+    if preview == PreviewMode::Short {
+        let mut characters = documentation.chars();
+        let mut excerpt = characters
+            .by_ref()
+            .take(SHORT_DOCUMENTATION_LIMIT)
+            .collect::<String>();
+        if characters.next().is_some() {
+            excerpt.push('…');
+        }
+        writeln!(writer, "documentation: {excerpt}")
+    } else {
+        writeln!(writer, "documentation:")?;
+        for line in documentation.lines() {
+            writeln!(writer, "  {line}")?;
+        }
+        Ok(())
+    }
 }
 
 fn range_label(range: &ContentRange) -> String {
@@ -378,6 +417,8 @@ pub fn help_text(topic: Option<&str>) -> Result<String, HelpTopicError> {
     let text = match topic {
         None => return Ok(main_help()),
         Some("search") => SEARCH_HELP,
+        Some("graph") => GRAPH_HELP,
+        Some("graph-query") => GRAPH_QUERY_HELP,
         Some("index") => INDEX_HELP,
         Some("status") => STATUS_HELP,
         Some("config") => CONFIG_HELP,
@@ -426,12 +467,14 @@ Management:
   --config       Configure provider credentials and embedding model defaults
   --auth         Manage Workspace Remote Embedding authorization
   --server       Start, stop, inspect, or run the shared MCP server
+  --graph        Build or incrementally update the workspace codegraph
+  --graph-query  Query a codegraph snapshot
   --install      Install agent integrations
   --uninstall    Remove agent integrations
   --help [topic] Show help for search, a management command, or a topic
   --version      Print the installed version
 
-Bare words such as query, index, and help are literal search text.
+Bare words such as query, index, graph, and help are literal search text.
 Terminal searches use human-readable output and full previews; pipes use compact
 output. Use --compact to force compact output.
 
@@ -443,6 +486,8 @@ Examples:
   zg --status
   zg --auth status
   zg --server on
+  zg --graph
+  zg --graph-query .zvec-grep/codegraph-v1.json blast-radius Reconcile
   zg --config model set local/potion-code-16m-v2 --device metal
   zg --install
 
@@ -455,7 +500,7 @@ Environment:
 
 Run zg --help models or zg --help file-types for supported indexing capabilities.
 Run zg --help environment for all variables, scopes, aliases, and precedence.
-Run zg --help search or zg --help <topic> for specific help.
+Run zg --help search, zg --help graph, or zg --help <topic> for specific help.
 Use zg -h/--help for this page and zg -v/--version for the version."#;
 
 const SEARCH_HELP: &str = r#"Usage:
@@ -589,6 +634,29 @@ stored paths, refresh status, and suggested next action.
 --check-ready preserves the normal output and exits non-zero unless the
 Workspace index is ready.";
 
+const GRAPH_HELP: &str = r"Usage:
+  zg --graph [root] [--output <path>]
+  zg --graph [root] --base <artifact> [--changed <path>]... [--deleted <path>]...
+
+Builds a deterministic structural sidecar for Go, Rust, TypeScript/TSX, and
+Python. The default artifact is
+<root>/.zvec-grep/codegraph-v1.json and includes definitions, imports, and
+lexical call edges. Unresolved calls are retained with their target name.
+
+With --base, only supported --changed source files are reparsed. --deleted removes a file;
+represent a rename with both --deleted <old-path> and --changed <new-path>.
+Call edges are re-resolved against the updated definitions.";
+
+const GRAPH_QUERY_HELP: &str = r"Usage:
+  zg --graph-query <artifact> blast-radius <function> [--depth <n>]
+  zg --graph-query <artifact> shortest-path <source> <target>
+  zg --graph-query <artifact> cluster <function>
+  zg --graph-query <artifact> communities
+
+Queries a codegraph-v1 JSON artifact. Function names may be bare, path-qualified
+as <path>::<name>, or an exact sidecar node ID. Ambiguous or missing names
+return an error with candidate details.";
+
 const CONFIG_HELP: &str = r"Usage:
   zg --config provider set <provider> --api-key <key>
   zg --config model set <model> [--endpoint <url> | --device <device>] [--default]
@@ -651,9 +719,10 @@ when the client disconnects.
 
 The server listens on loopback. Authentication is disabled by default; pass a
 token file or set ZVEC_GREP_SERVER_TOKEN to require Bearer authentication.
-The public MCP endpoint defaults to the agent toolset (indexed search only).
-Use --mcp-toolset full, or ZVEC_GREP_MCP_TOOLSET=full, to expose managed rg and
-the four index and status tools. CLI managed rg, index, and status commands
+The public MCP endpoint defaults to the agent toolset (indexed search and
+root-scoped callgraph queries). Use --mcp-toolset full, or
+ZVEC_GREP_MCP_TOOLSET=full, to expose managed rg, workspace indexing, and status.
+CLI managed rg, index, and status commands
 continue to use the daemon's internal administration endpoint.
 --check-ready exits non-zero unless the server is ready.
 
@@ -883,6 +952,7 @@ environment values.";
 mod output_tests {
     use super::*;
     use crate::{OutputOptions, PreviewMode};
+    use zg_engine::api::context::result::CodeMetadata;
     use zg_engine::api::context::result::{
         ContextContentRole, ContextCoverage, ContextDiagnostics, ContextItemKind, ContextSource,
         MatchedBy,
@@ -1103,5 +1173,49 @@ mod output_tests {
             let rendered = String::from_utf8(buffer).expect("UTF-8");
             assert_eq!(rendered.lines().next(), Some(expected));
         }
+    }
+
+    #[test]
+    fn code_documentation_is_rendered_with_a_bounded_short_preview() {
+        let mut item = indexed_item();
+        let documentation = format!(
+            "{} supplementary explanation",
+            "x".repeat(SHORT_DOCUMENTATION_LIMIT + 8)
+        );
+        item.metadata = Some(EntityMetadata::Code(CodeMetadata {
+            symbol_type: Some(zg_engine::api::context::options::SymbolType::Function),
+            symbol_name: Some("SetDiscoveredWorkflowState".into()),
+            scope: Some("Validator".into()),
+            signature: None,
+            documentation: Some(documentation.clone()),
+        }));
+
+        let render = |preview| {
+            let mut buffer = Vec::new();
+            write_item_preview(
+                &mut buffer,
+                &item,
+                OutputOptions {
+                    preview,
+                    ..OutputOptions::default()
+                },
+            )
+            .expect("render code metadata");
+            String::from_utf8(buffer).expect("UTF-8")
+        };
+
+        let short = render(crate::PreviewMode::Short);
+        assert!(short.contains(&format!(
+            "documentation: {}…",
+            "x".repeat(SHORT_DOCUMENTATION_LIMIT)
+        )));
+        assert!(!short.contains("supplementary explanation"));
+
+        let full = render(crate::PreviewMode::Full);
+        assert!(full.contains("documentation:\n  "));
+        assert!(full.contains(&documentation));
+
+        let none = render(crate::PreviewMode::None);
+        assert!(!none.contains("documentation:"));
     }
 }

@@ -1,9 +1,10 @@
 use std::{
     error::Error,
     io::{self, IsTerminal},
-    path::Path,
+    path::{Path, PathBuf},
     process::ExitCode,
     sync::Arc,
+    time::Instant,
 };
 
 #[cfg(target_os = "macos")]
@@ -125,6 +126,20 @@ async fn execute_plan(plan: CliPlan) -> Result<(), Box<dyn Error>> {
             check_ready,
             output,
         } => execute_status(mode, home.as_deref(), request, check_ready, output).await,
+        CliPlan::Graph {
+            root,
+            output,
+            base,
+            changed,
+            deleted,
+        } => execute_graph(
+            &root,
+            output.as_deref(),
+            base.as_deref(),
+            &changed,
+            &deleted,
+        ),
+        CliPlan::GraphQuery { artifact, action } => execute_graph_query(&artifact, action),
         CliPlan::Config(args) => {
             use zg_cli::{ConfigAction, ModelAction, ProviderAction};
             let (label, reference, path) = match args.action {
@@ -178,6 +193,78 @@ async fn execute_plan(plan: CliPlan) -> Result<(), Box<dyn Error>> {
         CliPlan::Uninstall(args) => zg_cli::execute_uninstall(&args).map_err(Into::into),
         CliPlan::Help(_) | CliPlan::Version => Ok(()),
     }
+}
+
+fn execute_graph(
+    root: &Path,
+    output: Option<&Path>,
+    base: Option<&Path>,
+    changed: &[PathBuf],
+    deleted: &[PathBuf],
+) -> Result<(), Box<dyn Error>> {
+    let started = Instant::now();
+    let (path, artifact) = if let Some(base_path) = base {
+        let base_bytes = std::fs::read(base_path)?;
+        let base_artifact: zg_engine::codegraph::CodeGraphArtifact =
+            serde_json::from_slice(&base_bytes)?;
+        let graph_changes = changed
+            .iter()
+            .cloned()
+            .map(zg_engine::codegraph::CodeGraphChange::Upsert)
+            .chain(
+                deleted
+                    .iter()
+                    .cloned()
+                    .map(zg_engine::codegraph::CodeGraphChange::Delete),
+            )
+            .collect::<Vec<_>>();
+        zg_engine::codegraph::write_codegraph_update(&base_artifact, root, output, &graph_changes)?
+    } else {
+        zg_engine::codegraph::write_codegraph(root, output)?
+    };
+    println!("Codegraph: {}", path.display());
+    println!("Manifest: {}", artifact.manifest_key);
+    if base.is_some() {
+        println!("Changed: {}", changed.len());
+        println!("Deleted: {}", deleted.len());
+    }
+    println!("Files: {}", artifact.files.len());
+    println!("Nodes: {}", artifact.nodes.len());
+    println!("Edges: {}", artifact.edges.len());
+    println!("Elapsed: {} ms", started.elapsed().as_millis());
+    Ok(())
+}
+
+fn execute_graph_query(
+    artifact_path: &Path,
+    action: zg_cli::GraphQueryAction,
+) -> Result<(), Box<dyn Error>> {
+    let encoded = std::fs::read(artifact_path)?;
+    let artifact: zg_engine::codegraph::CodeGraphArtifact = serde_json::from_slice(&encoded)?;
+    if artifact.schema != zg_engine::codegraph::CODEGRAPH_SCHEMA
+        || artifact.version != zg_engine::codegraph::CODEGRAPH_VERSION
+    {
+        return Err(format!(
+            "unsupported codegraph artifact schema/version: {} v{}",
+            artifact.schema, artifact.version
+        )
+        .into());
+    }
+    let index = zg_engine::codegraph::CallGraphIndex::new(&artifact);
+    let result = match action {
+        zg_cli::GraphQueryAction::BlastRadius { function, depth } => {
+            serde_json::to_value(index.blast_radius(&function, depth)?)?
+        }
+        zg_cli::GraphQueryAction::ShortestPath { source, target } => {
+            serde_json::to_value(index.shortest_path(&source, &target)?)?
+        }
+        zg_cli::GraphQueryAction::Cluster { function } => {
+            serde_json::to_value(index.cluster(&function)?)?
+        }
+        zg_cli::GraphQueryAction::Communities => serde_json::to_value(index.clustering()?)?,
+    };
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
 }
 
 async fn execute_install_plan(args: &zg_cli::InstallArgs) -> Result<(), Box<dyn Error>> {

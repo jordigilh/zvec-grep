@@ -432,7 +432,7 @@ fn server_start_does_not_retry_unrelated_failures() -> Result<(), Box<dyn Error>
 }
 
 #[test]
-fn server_on_exposes_only_agent_search_and_off_stops_it() -> Result<(), Box<dyn Error>> {
+fn server_on_exposes_agent_search_and_graph_tools_and_off_stops_it() -> Result<(), Box<dyn Error>> {
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_zg"));
     let home = TempDir::new()?;
     let (mut guard, output) = start_server(&binary, &home, "agent", None, |_| {})?;
@@ -476,9 +476,13 @@ fn server_on_exposes_only_agent_search_and_off_stops_it() -> Result<(), Box<dyn 
     });
     let response = post_json(port, Some(&session), &list.to_string())?;
     assert!(response.contains("zvec_grep_search"));
+    assert!(response.contains("zvec_grep_callgraph_blast_radius"));
+    assert!(response.contains("zvec_grep_callgraph_shortest_path"));
     assert!(!response.contains("zvec_grep_index"));
     assert!(!response.contains("zvec_grep_rg"));
     assert!(response.contains("\"maximum\":50"));
+
+    assert_graph_mcp_refreshes_current_source(port, &session)?;
 
     let call = json!({
         "jsonrpc": "2.0",
@@ -513,6 +517,46 @@ fn server_on_exposes_only_agent_search_and_off_stops_it() -> Result<(), Box<dyn 
     let output = guard.stop()?;
     assert_command_success(&output);
     assert!(String::from_utf8_lossy(&output.stdout).contains("Server: stopped"));
+    Ok(())
+}
+
+fn assert_graph_mcp_refreshes_current_source(
+    port: u16,
+    session: &str,
+) -> Result<(), Box<dyn Error>> {
+    let code_workspace = TempDir::new()?;
+    let code_file = code_workspace.path().join("module.py");
+    std::fs::write(
+        &code_file,
+        "def target():\n    pass\ndef caller():\n    target()\n",
+    )?;
+    let graph_call = json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "tools/call",
+        "params": {
+            "name": "zvec_grep_callgraph_blast_radius",
+            "arguments": {
+                "root": code_workspace.path(),
+                "function": "target",
+                "depth": 1
+            }
+        }
+    });
+    let response = post_json(port, Some(session), &graph_call.to_string())?;
+    assert!(response.contains("module.py::caller"), "{response}");
+    assert!(response.contains("\"isError\":false"), "{response}");
+
+    // A second MCP call refreshes this root's persisted graph from the live
+    // source hash, so changed branch/worktree content cannot reuse stale edges.
+    std::fs::write(
+        &code_file,
+        "def target():\n    pass\ndef caller():\n    pass\n",
+    )?;
+    let mut refreshed_graph_call = graph_call;
+    refreshed_graph_call["id"] = json!(5);
+    let response = post_json(port, Some(session), &refreshed_graph_call.to_string())?;
+    assert!(response.contains("\"callers_by_depth\":[]"), "{response}");
     Ok(())
 }
 
@@ -588,6 +632,10 @@ fn full_toolset_exposes_lifecycle_tools_and_runs_managed_rg() -> Result<(), Box<
     });
     let response = post_json(port, Some(&session), &list.to_string())?;
     for name in [
+        "zvec_grep_callgraph_blast_radius",
+        "zvec_grep_callgraph_cluster",
+        "zvec_grep_callgraph_communities",
+        "zvec_grep_callgraph_shortest_path",
         "zvec_grep_search",
         "zvec_grep_index",
         "zvec_grep_index_drop",
@@ -883,7 +931,7 @@ fn default_connections_reuse_either_toolset_and_explicit_conflicts_fail()
                 .as_array()
                 .ok_or("tool list")?
                 .len(),
-            if profile == "agent" { 1 } else { 6 }
+            if profile == "agent" { 5 } else { 10 }
         );
         bridge.close()?;
         let current: serde_json::Value =
@@ -1112,7 +1160,7 @@ fn concurrent_stdio_bootstraps_share_one_resident_daemon() -> Result<(), Box<dyn
     let tools = list["result"]["tools"]
         .as_array()
         .ok_or("tools/list did not return an array")?;
-    assert_eq!(tools.len(), 6);
+    assert_eq!(tools.len(), 10);
 
     for bridge in bridges {
         bridge.close()?;

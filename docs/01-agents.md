@@ -226,11 +226,13 @@ lexical lookup to the agent's native tools:
 | --- | --- |
 | Workspace-grounded exact words, quotations, names, dates, keys, filenames, paths, or regexes are sufficient | Native grep or rg |
 | Workspace-grounded wording or location is unknown, or the answer requires semantic, fuzzy, relationship, chronology, causality, comparison, or cross-file synthesis | `zvec_grep_search` |
+| Exact callers, a shortest call path, or the callgraph community for a known function are requested | The corresponding `zvec_grep_callgraph_*` tool |
 | Exact anchors are known but the answer requires broader context or synthesis | `zvec_grep_search`, then native grep or rg |
 | The answer is unrelated open-world knowledge, a current external fact, or web content that does not depend on local evidence | The appropriate external source, not zvec-grep |
 
-`zvec_grep_search` needs an existing index. Managed rg remains available through
-`zg --rg` and through the optional `full` MCP toolset. See the
+`zvec_grep_search` needs an existing index. The callgraph tools refresh a
+root-scoped structural sidecar without requiring the semantic index. Managed rg
+remains available through `zg --rg` and through the optional `full` MCP toolset. See the
 [Pipeline guide](./04-pipeline.md) for the distinction and the
 [MCP guide](./03-mcp.md) for tool inputs.
 
@@ -239,6 +241,16 @@ available and the user asks whether conceptually related material exists
 locally, the agent makes at most one focused `zvec_grep_search` probe and stops
 when the results are not relevant. Exact quotations, configuration keys,
 filenames, regexes, and exhaustive occurrence requests stay on the exact route.
+
+For a workspace-grounded question that explicitly asks about multiple stages,
+causes, or handoffs, keep the original wording in the primary hybrid `query` and
+add at most one supplemental `vector` or `fts` group for a distinct facet in the
+same `zvec_grep_search` call. Use `vector` for conceptual or state-flow facets;
+use `fts` only for exact names or terms already present in the request or
+retrieved evidence. Leave `fuse` unset so group ranks and coverage remain
+visible, and use a small per-group `limit` (for example, 5). Do not invent
+repository-specific identifiers. For atomic questions or uncertain
+decompositions, use the normal single hybrid query.
 
 ## Verify the setup
 

@@ -14,13 +14,14 @@ rmcp = { workspace = true, features = ["elicitation"] }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["macros", "sync"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 tokio-util.workspace = true
 uuid.workspace = true
 zg-cli = { path = "../zg-cli" }
 zg-engine = { path = "../zg-engine" }
 
 [dev-dependencies]
+tempfile.workspace = true
 zg-testkit = { path = "../zg-testkit" }
 rmcp = { workspace = true, features = ["client", "transport-io"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
