@@ -504,6 +504,12 @@ test("Codex installer refreshes legacy managed guidance", async (t) => {
     /A workspace may contain any mix of code, documents, configuration, and data/,
   );
   assert.match(agents, /one focused `zvec_grep_search` probe/);
+  assert.match(
+    agents,
+    /explicitly asks about multiple stages, causes, or handoffs/,
+  );
+  assert.match(agents, /supplemental `vector` or `fts` group/);
+  assert.match(agents, /Do not invent repository-specific identifiers/);
   assert.match(agents, /When no sufficient exact anchor is available/);
   assert.match(agents, /probe does not apply to exact quotations/i);
   assert.match(
@@ -2038,6 +2044,12 @@ test("OpenCode installer preserves config and manages a remote MCP server", asyn
     /Choose the evidence source before the retrieval mode/,
   );
   assert.match(guidance, /one focused `zvec_grep_zvec_grep_search` probe/);
+  assert.match(
+    guidance,
+    /explicitly asks about multiple stages, causes, or handoffs/,
+  );
+  assert.match(guidance, /supplemental `vector` or `fts` group/);
+  assert.match(guidance, /Do not invent repository-specific identifiers/);
   assert.match(guidance, /`zvec_grep_zvec_grep_rg` when it is listed/);
   assert.match(guidance, /probe does not apply to exact quotations/i);
   assert.match(
