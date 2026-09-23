@@ -63,7 +63,7 @@ Result controls:
 | --- | --- |
 | `--limit <n>` | Maximum returned items per group |
 | `--compact` | Force compact output intended for pipes |
-| `--preview none\|short\|full` | Indexed source preview size |
+| `--preview none\|short\|full` | Indexed source preview size; short previews include up to 320 characters of indexed code documentation, full previews include all available documentation |
 | `--refresh background\|wait\|off` | Index refresh policy |
 | `--mode direct\|server\|auto` | Execution transport |
 | `--debug` | Print diagnostics to stderr |
@@ -72,6 +72,10 @@ Result controls:
 | `--symbol-type <type>` | Restrict results to a symbol type |
 | `--modified-after <time>` | Search files modified after a time |
 | `--modified-before <time>` | Search files modified before a time |
+
+For indexed code results, `--preview short` includes up to 320 characters of
+extracted symbol documentation. `--preview full` includes the full documentation
+text; `--preview none` omits it.
 
 Indexed CLI results are separated by query group and preserve the rank assigned
 inside that group. The CLI does not apply the MCP response's cross-group

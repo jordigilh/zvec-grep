@@ -39,6 +39,7 @@ const SHORT_SOURCE_CONTEXT_BEFORE = 2;
 const SHORT_OUTLINE_MAX_LINES = 7;
 const AGENT_PREVIEW_MAX_LINE_LENGTH = 160;
 const HUMAN_PREVIEW_MAX_LINE_LENGTH = 120;
+const SHORT_DOCUMENTATION_MAX_CHARS = 320;
 
 export function printAgentContextResult(
   result: ZvecGrepContextResult,
@@ -180,7 +181,7 @@ function agentContextLines(
       maxLineLength: AGENT_PREVIEW_MAX_LINE_LENGTH,
     });
     lines.push(
-      ...agentMetadataLines(item, [...outlineLines, ...sourceLines]),
+      ...agentMetadataLines(item, [...outlineLines, ...sourceLines], preview),
       ...outlineLines,
     );
     if (matched && preview !== "none") {
@@ -578,7 +579,7 @@ function printHumanItemGroups(
           `  ${theme.label("Matched")}: ${theme.accent(rangeLabel(item.excerptRange ?? item.range))}`,
         );
       }
-      for (const line of humanMetadataLines(item.metadata)) {
+      for (const line of humanMetadataLines(item.metadata, preview)) {
         console.log(`  ${line}`);
       }
       const outlineLines = outlineLinesForPreview(item, preview);
@@ -693,6 +694,7 @@ function compareContextItems(
 function agentMetadataLines(
   item: ZvecGrepContextItem,
   visiblePreviewLines: readonly string[],
+  preview: PreviewMode,
 ): string[] {
   const lines: string[] = [];
 
@@ -701,7 +703,7 @@ function agentMetadataLines(
   }
 
   lines.push(
-    ...agentMetadataFields(item.metadata, visiblePreviewLines, {
+    ...agentMetadataFields(item.metadata, visiblePreviewLines, preview, {
       forceSymbol:
         item.kind === "lexical_match" && item.container !== undefined,
     }),
@@ -712,6 +714,7 @@ function agentMetadataLines(
 function agentMetadataFields(
   metadata: EntityMetadata | undefined,
   visiblePreviewLines: readonly string[],
+  preview: PreviewMode,
   options: { forceSymbol?: boolean } = {},
 ): string[] {
   if (!metadata) {
@@ -730,6 +733,9 @@ function agentMetadataFields(
         `symbol: ${metadata.symbolType} ${metadata.symbolName}${scope}`,
       );
     }
+    lines.push(
+      ...codeDocumentationLines(metadata.doc, preview, "documentation"),
+    );
 
     return lines;
   }
@@ -809,7 +815,10 @@ function matchedRangeLine(item: ZvecGrepContextItem): string | undefined {
   return `matched: ${rangeLabel(item.excerptRange)}`;
 }
 
-function humanMetadataLines(metadata: EntityMetadata | undefined): string[] {
+function humanMetadataLines(
+  metadata: EntityMetadata | undefined,
+  preview: PreviewMode,
+): string[] {
   if (!metadata) {
     return [];
   }
@@ -830,6 +839,9 @@ function humanMetadataLines(metadata: EntityMetadata | undefined): string[] {
     if (metadata.modifiers.length > 0) {
       lines.push(`Modifiers: ${metadata.modifiers.join(", ")}`);
     }
+    lines.push(
+      ...codeDocumentationLines(metadata.doc, preview, "Documentation"),
+    );
     return lines;
   }
 
@@ -1136,6 +1148,34 @@ function truncate(value: string, maxLength: number): string {
   }
 
   return `${value.slice(0, Math.max(0, maxLength - 1))}...`;
+}
+
+function codeDocumentationLines(
+  documentation: string | null,
+  preview: PreviewMode,
+  label: string,
+): string[] {
+  if (preview === "none" || !documentation?.trim()) {
+    return [];
+  }
+
+  if (preview === "short") {
+    const normalized = oneLine(documentation);
+    const characters = Array.from(normalized);
+    const compact =
+      characters.length <= SHORT_DOCUMENTATION_MAX_CHARS
+        ? normalized
+        : `${characters.slice(0, SHORT_DOCUMENTATION_MAX_CHARS - 1).join("")}…`;
+    return [`${label}: ${compact}`];
+  }
+
+  return [
+    `${label}:`,
+    ...documentation
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => `  ${line}`),
+  ];
 }
 
 type HumanTheme = {

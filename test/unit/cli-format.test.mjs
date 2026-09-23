@@ -421,6 +421,9 @@ test("context formatters render indexed, lexical, metadata, preview, trace, and 
   );
   assert.match(output.logs.join("\n"), /README\.md:1-8/);
   assert.match(output.logs.join("\n"), /computeQuery/);
+  assert.match(agentText, /documentation: documentation/);
+  assert.match(output.logs.join("\n"), /Documentation:/);
+  assert.ok(output.logs.join("\n").includes("documentation"));
   assert.match(output.logs.join("\n"), /query "query"/);
   assert.match(output.logs.join("\n"), /\x1b\[/);
   assert.deepEqual(contextWarningLines(result), [
@@ -455,6 +458,40 @@ test("context formatters render indexed, lexical, metadata, preview, trace, and 
       reason === "no_searchable_files" ? 0 : 1,
     );
   }
+});
+
+test("code documentation follows none, short, and full preview bounds", () => {
+  const original = contextResult().items[0];
+  const documentation = `${"workflow discovery membership ".repeat(20)}full explanation`;
+  const result = contextResult({
+    items: [
+      {
+        ...original,
+        metadata: { ...original.metadata, doc: documentation },
+      },
+    ],
+  });
+
+  const short = formatAgentContextResult(result, {
+    preview: "short",
+    color: "never",
+  });
+  const compact = documentation.replace(/\s+/g, " ").trim();
+  const expectedShort = `${Array.from(compact).slice(0, 319).join("")}…`;
+  assert.ok(short.includes(`documentation: ${expectedShort}`));
+  assert.ok(!short.includes("full explanation"));
+
+  const full = formatAgentContextResult(result, {
+    preview: "full",
+    color: "never",
+  });
+  assert.ok(full.includes(`documentation:\n  ${documentation}`));
+
+  const none = formatAgentContextResult(result, {
+    preview: "none",
+    color: "never",
+  });
+  assert.ok(!none.includes("documentation:"));
 });
 
 test("indexed agent results preserve global rank and expand every candidate", () => {

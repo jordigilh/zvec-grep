@@ -194,10 +194,10 @@ zg --server on --listen 127.0.0.1:8999
 Set `ZVEC_GREP_SERVER_URL` when a client should use a non-default configured
 endpoint.
 
-The default `agent` MCP toolset exposes only `zvec_grep_search`. Use
-`--mcp-toolset full` or `ZVEC_GREP_MCP_TOOLSET=full` to expose optional managed
-rg together with the index and status tools. See [MCP](./03-mcp.md) for the tool
-contract.
+The default `agent` MCP toolset exposes `zvec_grep_search` and the four
+root-scoped callgraph tools. Use `--mcp-toolset full` or
+`ZVEC_GREP_MCP_TOOLSET=full` to additionally expose managed rg, index, and
+status tools. See [MCP](./03-mcp.md) for the tool contract.
 
 ## Bearer authentication
 

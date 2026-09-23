@@ -20,7 +20,8 @@ refresh, authentication, and logs.
 
 ## Default agent toolset
 
-The default `agent` toolset intentionally exposes only search:
+The default `agent` toolset exposes indexed semantic search and root-scoped
+callgraph queries. It omits index deletion and other workspace administration.
 
 Agents first decide whether the requested answer should be grounded in the
 current indexed workspace, then choose exact or semantic retrieval. The same
@@ -36,10 +37,16 @@ incidental, or comparative workspace mentions do not establish relevance.
 | Tool | Use it when | Index required |
 | --- | --- | --- |
 | `zvec_grep_search` | The answer is workspace-grounded and wording or location is unknown, or semantic, fuzzy, relationship, chronology, causality, comparison, or cross-file synthesis is required | Yes |
+| `zvec_grep_callgraph_blast_radius` | Finding direct and transitive callers of a function | No |
+| `zvec_grep_callgraph_shortest_path` | Checking whether one function can call another and how | No |
+| `zvec_grep_callgraph_cluster` | Inspecting the callgraph community around a function | No |
+| `zvec_grep_callgraph_communities` | Listing all callgraph communities | No |
 
 Agents use native grep or rg when locating an exact word, quotation, name, date,
 key, filename, path, source fragment, or regex is sufficient. For mixed tasks,
 start with `zvec_grep_search`, then use native grep or rg for focused follow-up.
+For an exact callers, shortest-call-path, or callgraph-community question, use
+the corresponding `zvec_grep_callgraph_*` tool with the intended worktree root.
 When semantic discovery is selected because no sufficient exact anchor is
 available and the user asks whether conceptually related material exists
 locally, agents make at most one focused search probe and stop when its results
@@ -49,6 +56,10 @@ open-world knowledge, current external facts, and web content that does not
 depend on local evidence use the appropriate external source instead.
 
 Every workspace tool input uses an absolute `root` visible to the daemon.
+Graph operations refresh a sidecar from current Go, Rust, TypeScript/TSX, and
+Python source before querying. The sidecar and in-memory query cache are scoped
+to the canonical root, so separate worktrees do not share graph state. Added,
+modified, deleted, and uncommitted source changes are reflected incrementally.
 
 ## `zvec_grep_search`
 
@@ -76,6 +87,19 @@ Explicit query routes and scope:
   "fileTypes": ["ts"],
   "fuse": true,
   "limit": 10
+}
+```
+
+For a composite question, keep the original query as the primary hybrid group
+and add one focused supplemental group. Leave `fuse` unset when the agent needs
+to inspect each facet's own ranked results:
+
+```json
+{
+  "root": "/absolute/path/to/workspace",
+  "query": "Where is discovery state validated after list_workflows?",
+  "vector": ["Where is discovery state created and attached to context?"],
+  "limit": 5
 }
 ```
 
@@ -164,11 +188,15 @@ zg --server off
 zg --server on --mcp-toolset full
 ```
 
-The `full` toolset exposes six tools:
+The `full` toolset exposes ten tools:
 
 | Tool | Purpose |
 | --- | --- |
 | `zvec_grep_search` | Indexed retrieval |
+| `zvec_grep_callgraph_blast_radius` | Root-scoped callers and impact radius |
+| `zvec_grep_callgraph_shortest_path` | Root-scoped call path between two functions |
+| `zvec_grep_callgraph_cluster` | Callgraph community for a function |
+| `zvec_grep_callgraph_communities` | All callgraph communities |
 | `zvec_grep_rg` | No-index exhaustive search |
 | `zvec_grep_index` | Create, update, rebuild, or explicitly drop an index |
 | `zvec_grep_index_drop` | Explicitly delete an index |
