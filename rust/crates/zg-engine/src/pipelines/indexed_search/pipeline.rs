@@ -33,6 +33,14 @@ use super::{
 
 const DEFAULT_LIMIT: usize = 7;
 const RRF_K: f64 = 60.0;
+// Give lexical matches a modest tie preference for code-oriented queries.
+const FTS_RRF_WEIGHT: f64 = 1.1;
+const VECTOR_RRF_WEIGHT: f64 = 1.0;
+// Discordant routes and candidates straddling the result budget use a dominant route.
+const DISCORDANT_ROUTE_RRF_WEIGHT: f64 = 0.07;
+const ROUTE_RANK_AGREEMENT_FACTOR: f64 = 2.5;
+const MAX_CORROBORATION_RATIO: f64 = 0.25;
+const FULL_FUSION_TAIL_MULTIPLIER: usize = 2;
 const RECALL_INITIAL_DEPTH: usize = 200;
 const RECALL_MAX_DEPTH: usize = 2_000;
 const RECALL_GROWTH_FACTOR: usize = 2;
@@ -218,7 +226,7 @@ pub(crate) async fn search_workspace_index(
     let recall_duration = recall_started.elapsed();
 
     let fusion_started = Instant::now();
-    let fused = fuse_candidates(candidates);
+    let fused = fuse_candidates(candidates, limit);
     let selected = fused.into_iter().take(limit).collect::<Vec<_>>();
     let fusion_duration = fusion_started.elapsed();
 
@@ -490,16 +498,11 @@ fn add_or_update_recall(recall: &mut Vec<SearchRecallTrace>, next: SearchRecallT
     }
 }
 
-fn fuse_candidates(candidates: HashMap<EntityId, Candidate>) -> Vec<Candidate> {
+fn fuse_candidates(candidates: HashMap<EntityId, Candidate>, limit: usize) -> Vec<Candidate> {
     let mut fused = candidates
         .into_values()
         .map(|mut candidate| {
-            candidate.score = candidate
-                .recall
-                .iter()
-                .filter_map(|trace| trace.rank)
-                .map(|rank| 1.0 / (RRF_K + rank_as_f64(rank)))
-                .sum();
+            candidate.score = candidate_fusion_score(&candidate.recall, limit);
             candidate
         })
         .collect::<Vec<_>>();
@@ -513,6 +516,61 @@ fn fuse_candidates(candidates: HashMap<EntityId, Candidate>) -> Vec<Candidate> {
         candidate.rank = index + 1;
     }
     fused
+}
+
+fn candidate_fusion_score(recall: &[SearchRecallTrace], limit: usize) -> f64 {
+    let mut best_rank_by_route = HashMap::<SearchRouteMode, usize>::new();
+    for trace in recall {
+        let Some(rank) = trace.rank else {
+            continue;
+        };
+        best_rank_by_route
+            .entry(trace.path)
+            .and_modify(|best| *best = (*best).min(rank))
+            .or_insert(rank);
+    }
+
+    let route_scores = best_rank_by_route
+        .iter()
+        .map(|(mode, rank)| {
+            let weight = match mode {
+                SearchRouteMode::Fts => FTS_RRF_WEIGHT,
+                SearchRouteMode::Vector => VECTOR_RRF_WEIGHT,
+            };
+            (*mode, *rank, weight / (RRF_K + rank_as_f64(*rank)))
+        })
+        .collect::<Vec<_>>();
+    let Some((primary_mode, _, primary_score)) = route_scores
+        .iter()
+        .max_by(|left, right| left.2.total_cmp(&right.2))
+    else {
+        return 0.0;
+    };
+
+    // FTS and vector ranks are not calibrated to each other. Corroborate close
+    // routes in the same rank band, but cap that bonus so deep-tail agreement
+    // cannot outvote a strong hit from one route. If routes disagree or straddle
+    // a band boundary, let the strongest route lead and discount the weaker rank.
+    let min_rank = route_scores.iter().map(|(_, rank, _)| *rank).min();
+    let max_rank = route_scores.iter().map(|(_, rank, _)| *rank).max();
+    let routes_agree = route_scores.len() > 1
+        && min_rank.zip(max_rank).is_some_and(|(min, max)| {
+            let deep_cutoff = limit.saturating_mul(FULL_FUSION_TAIL_MULTIPLIER);
+            let same_fusion_band = max <= limit || min > deep_cutoff;
+            let close_ranks = rank_as_f64(max) <= rank_as_f64(min) * ROUTE_RANK_AGREEMENT_FACTOR;
+            same_fusion_band && close_ranks
+        });
+    let route_corroboration = route_scores
+        .iter()
+        .filter(|(mode, _, _)| mode != primary_mode)
+        .map(|(_, _, score)| score)
+        .sum::<f64>();
+    let corroboration = if routes_agree {
+        route_corroboration.min(*primary_score * MAX_CORROBORATION_RATIO)
+    } else {
+        DISCORDANT_ROUTE_RRF_WEIGHT * route_corroboration
+    };
+    *primary_score + corroboration
 }
 
 fn load_candidates(
@@ -841,9 +899,27 @@ mod tests {
     };
 
     use super::{
-        GlobMatcher, MatchedBy, QueryFilter, SearchEmbeddingRuntime, SearchPlan, SearchRoute,
-        SearchRouteMode, SearchStorage, compile_path_filter, search_workspace_index,
+        GlobMatcher, MatchedBy, QueryFilter, SearchEmbeddingRuntime, SearchPlan, SearchRecallTrace,
+        SearchRoute, SearchRouteMode, SearchStorage, candidate_fusion_score, compile_path_filter,
+        search_workspace_index,
     };
+
+    fn recall(path: SearchRouteMode, rank: usize) -> SearchRecallTrace {
+        SearchRecallTrace {
+            path,
+            route_id: match path {
+                SearchRouteMode::Fts => "fts",
+                SearchRouteMode::Vector => "vector",
+            }
+            .to_owned(),
+            query: "query".to_owned(),
+            found: true,
+            rank: Some(rank),
+            score: None,
+            forced: false,
+            reason: None,
+        }
+    }
 
     struct FixtureModel {
         info: EmbeddingModelInfo,
@@ -1031,7 +1107,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fuses_fts_and_vector_routes_with_main_compatible_rrf() {
+    async fn weighted_fusion_prefers_the_slightly_better_fts_rank() {
         let file = file(1, "src/lib.rs", 100);
         let entity_a = entity(&file, "alpha entity");
         let entity_b = entity(&file, "beta entity");
@@ -1073,10 +1149,8 @@ mod tests {
         .expect("hybrid search");
 
         assert_eq!(result.hits.len(), 2);
-        let mut expected_ids = [entity_a.entity.id, entity_b.entity.id];
-        expected_ids.sort();
-        assert_eq!(result.hits[0].entity.id, expected_ids[0]);
-        assert_eq!(result.hits[1].entity.id, expected_ids[1]);
+        assert_eq!(result.hits[0].entity.id, entity_a.entity.id);
+        assert_eq!(result.hits[1].entity.id, entity_b.entity.id);
         assert!(
             result
                 .hits
@@ -1094,6 +1168,131 @@ mod tests {
         assert_eq!(
             model.calls.lock().expect("query calls").as_slice(),
             &[vec!["alpha".to_owned()]]
+        );
+    }
+
+    #[test]
+    fn strong_route_rank_survives_conflicting_weak_route_evidence() {
+        let retry_membership = [
+            recall(SearchRouteMode::Fts, 1),
+            recall(SearchRouteMode::Vector, 84),
+        ];
+        let unrelated_crd_retry = [
+            recall(SearchRouteMode::Fts, 10),
+            recall(SearchRouteMode::Vector, 2),
+        ];
+        assert!(
+            candidate_fusion_score(&retry_membership, 10)
+                > candidate_fusion_score(&unrelated_crd_retry, 10)
+        );
+
+        let lexical_query_winner = [
+            recall(SearchRouteMode::Fts, 1),
+            recall(SearchRouteMode::Vector, 84),
+        ];
+        let semantic_retry_winner = [
+            recall(SearchRouteMode::Fts, 14),
+            recall(SearchRouteMode::Vector, 10),
+        ];
+        assert!(
+            candidate_fusion_score(&lexical_query_winner, 10)
+                > candidate_fusion_score(&semantic_retry_winner, 10)
+        );
+        let same_kind_retry = [
+            recall(SearchRouteMode::Fts, 26),
+            recall(SearchRouteMode::Vector, 12),
+        ];
+        assert!(
+            candidate_fusion_score(&lexical_query_winner, 10)
+                > candidate_fusion_score(&same_kind_retry, 10)
+        );
+
+        let strong_lexical_result = [
+            recall(SearchRouteMode::Fts, 2),
+            recall(SearchRouteMode::Vector, 47),
+        ];
+        let deep_rank_agreement = [
+            recall(SearchRouteMode::Fts, 30),
+            recall(SearchRouteMode::Vector, 25),
+        ];
+        assert!(
+            candidate_fusion_score(&strong_lexical_result, 10)
+                > candidate_fusion_score(&deep_rank_agreement, 10)
+        );
+
+        let validator_guard = [
+            recall(SearchRouteMode::Fts, 2),
+            recall(SearchRouteMode::Vector, 36),
+        ];
+        let unrelated_selection_result = [
+            recall(SearchRouteMode::Fts, 3),
+            recall(SearchRouteMode::Vector, 11),
+        ];
+        assert!(
+            candidate_fusion_score(&validator_guard, 10)
+                > candidate_fusion_score(&unrelated_selection_result, 10)
+        );
+
+        let validator_explanation = [
+            recall(SearchRouteMode::Fts, 4),
+            recall(SearchRouteMode::Vector, 6),
+        ];
+        let validator_fetch = [
+            recall(SearchRouteMode::Fts, 5),
+            recall(SearchRouteMode::Vector, 1),
+        ];
+        assert!(
+            candidate_fusion_score(&validator_explanation, 10)
+                > candidate_fusion_score(&validator_fetch, 10)
+        );
+    }
+
+    #[test]
+    fn a_second_route_is_corroborating_but_does_not_dominate_the_best_route() {
+        let fts_only = [recall(SearchRouteMode::Fts, 1)];
+        let both_routes = [
+            recall(SearchRouteMode::Fts, 1),
+            recall(SearchRouteMode::Vector, 1),
+        ];
+        let fts_conflicts_with_lower_vector = [
+            recall(SearchRouteMode::Fts, 2),
+            recall(SearchRouteMode::Vector, 36),
+        ];
+        let unrelated_selection_result = [
+            recall(SearchRouteMode::Fts, 3),
+            recall(SearchRouteMode::Vector, 11),
+        ];
+
+        assert!(candidate_fusion_score(&both_routes, 10) > candidate_fusion_score(&fts_only, 10));
+        assert!(
+            candidate_fusion_score(&fts_conflicts_with_lower_vector, 10)
+                > candidate_fusion_score(&unrelated_selection_result, 10)
+        );
+
+        let moderately_ranked_agreement = [
+            recall(SearchRouteMode::Fts, 76),
+            recall(SearchRouteMode::Vector, 39),
+        ];
+        let vector_rank = 1.0 / (60.0 + 39.0);
+        assert!(
+            (candidate_fusion_score(&moderately_ranked_agreement, 10)
+                - (vector_rank + vector_rank * super::MAX_CORROBORATION_RATIO))
+                .abs()
+                < 1e-12
+        );
+
+        let transition_band_agreement = [
+            recall(SearchRouteMode::Fts, 26),
+            recall(SearchRouteMode::Vector, 12),
+        ];
+        let fts_transition_rank = 1.1 / (60.0 + 26.0);
+        let vector_transition_rank = 1.0 / (60.0 + 12.0);
+        assert!(
+            (candidate_fusion_score(&transition_band_agreement, 10)
+                - (vector_transition_rank
+                    + super::DISCORDANT_ROUTE_RRF_WEIGHT * fts_transition_rank))
+                .abs()
+                < 1e-12
         );
     }
 

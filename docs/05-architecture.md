@@ -60,10 +60,17 @@ The engine exposes two complementary paths behind the same product boundary:
 | Indexed retrieval | Intent, related concepts, and ranked keywords | BM25/FTS and vector data in the workspace index |
 | Managed ripgrep | Known text, symbols, paths, and regular expressions | Workspace files scanned directly |
 
-Indexed search can combine lexical and vector candidates and fuse their ranks
-with reciprocal rank fusion (RRF). Managed ripgrep is exhaustive by default and
-does not require an Embedding model. Both paths apply workspace-aware filtering
-and return file-oriented results suitable for terminal reading or agent context.
+Indexed search can combine lexical and vector candidates using reciprocal rank
+fusion (RRF). The strongest route contribution leads each candidate; other
+route modes add corroboration because their raw ranks are not cross-calibrated.
+The default hybrid weights are 1.1 for FTS and 1.0 for vector. If both routes
+are within the result window, or both rank deeper than twice the result limit,
+and their ranks are within 2.5x, secondary-route corroboration is capped at 25%
+of the strongest route score. Ranks in the transition band use the strongest
+weighted route as primary and give weaker routes a 7% contribution. Managed
+ripgrep is exhaustive by default and does not require an Embedding model. Both
+paths apply workspace-aware filtering and return file-oriented results suitable
+for terminal reading or agent context.
 
 The [Retrieval pipeline](./04-pipeline.md) covers indexing, freshness, filters,
 and route selection in detail.

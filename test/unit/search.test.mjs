@@ -5,6 +5,7 @@ import {
   diagnoseFileSearch,
   searchWorkspaceIndex,
 } from "../../dist/engine/pipeline/search/index.js";
+import { candidateFusionScore } from "../../dist/engine/pipeline/search/fusion.js";
 import { FakeEmbeddingModel } from "../helpers/fake-embedding.mjs";
 
 function file(id, relativePath, lastModifiedTime = 100) {
@@ -54,6 +55,13 @@ function fragment(storedEntity, options = {}) {
     content: storedEntity.content,
     metadata: storedEntity.metadata,
   };
+}
+
+function routeRecall(ftsRank, vectorRank) {
+  return [
+    { path: "fts", found: ftsRank !== undefined, rank: ftsRank },
+    { path: "vector", found: vectorRank !== undefined, rank: vectorRank },
+  ];
 }
 
 function createFixture() {
@@ -157,6 +165,34 @@ function createFixture() {
   };
 }
 
+test("hybrid fusion preserves strong route hits and rewards close agreement", () => {
+  const score = (recall) => candidateFusionScore(recall, 10);
+  const retryMembership = score(routeRecall(1, 84));
+  const unrelatedRetry = score(routeRecall(10, 2));
+  assert.ok(retryMembership > unrelatedRetry);
+
+  const validatorGuard = score(routeRecall(2, 36));
+  const unrelatedSelection = score(routeRecall(3, 11));
+  assert.ok(validatorGuard > unrelatedSelection);
+
+  const discoveryGuard = score(routeRecall(4, 6));
+  const catalogFetch = score(routeRecall(5, 1));
+  assert.ok(discoveryGuard > catalogFetch);
+
+  const moderatelyRankedAgreement = score(routeRecall(76, 39));
+  const vectorOnly = score([{ path: "vector", found: true, rank: 39 }]);
+  assert.ok(
+    Math.abs(moderatelyRankedAgreement - (1 / 99 + (1 / 99) * 0.25)) < 1e-12,
+  );
+  assert.ok(moderatelyRankedAgreement > vectorOnly);
+
+  const transitionBandAgreement = score(routeRecall(26, 12));
+  assert.ok(
+    Math.abs(transitionBandAgreement - (1 / 72 + 0.07 * (1.1 / 86))) < 1e-12,
+  );
+  assert.ok(retryMembership > transitionBandAgreement);
+});
+
 test("search plan rejects malformed routes, filters, time ranges, and missing models", async () => {
   const { context } = createFixture();
   await assert.rejects(searchWorkspaceIndex({ routes: [] }, context), /route/);
@@ -257,6 +293,26 @@ test("hybrid search filters, deduplicates, fuses, traces, prefers symbols, and t
   );
   assert.equal(fixture.calls.vector.length >= 2, true);
   assert.ok(result.timings.some((entry) => entry.name === "search_total"));
+});
+
+test("route-aware fusion protects discordant high-rank results and rewards close routes", () => {
+  const recall = (path, rank) => ({ path, found: true, rank });
+  const score = (ftsRank, vectorRank, limit = 10) =>
+    candidateFusionScore(
+      [recall("fts", ftsRank), recall("vector", vectorRank)],
+      limit,
+    );
+
+  assert.ok(score(1, 84) > score(10, 2));
+  assert.ok(score(1, 84) > score(14, 10));
+  assert.ok(score(2, 36) > score(3, 11));
+  assert.ok(score(2, 47) > score(30, 25));
+  assert.ok(score(4, 6) > score(1, 178));
+
+  const agreeing = score(76, 39);
+  const expected = (1 / (60 + 39)) * 1.25;
+  assert.ok(Math.abs(agreeing - expected) < 1e-12);
+  assert.ok(score(8, 4) > score(1, undefined));
 });
 
 test("search plans short-circuit empty path filters and force-track no-file reasons", async () => {

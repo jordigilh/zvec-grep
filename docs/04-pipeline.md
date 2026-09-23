@@ -169,6 +169,18 @@ The shortest query uses hybrid ranked retrieval:
 zg "where theme preferences are restored"
 ```
 
+Hybrid fusion uses the strongest reciprocal-rank contribution for each
+retrieval candidate as its primary score. Other route modes add a small
+corroboration bonus. Lexical and vector ranks are not assumed to be calibrated
+to each other, so a very weak rank from one mode cannot outweigh a much stronger
+hit from another. FTS has a 1.1 route weight and vector a 1.0 route weight. If
+both routes are within the result window, or both are deeper than twice the
+result limit, and their ranks are within 2.5x, the secondary-route corroboration
+is capped at 25% of the strongest route score. Ranks between those bands are
+treated as transitional: the strongest weighted route leads and the weaker
+route contributes 7%. Single-route queries keep their normal reciprocal-rank
+ordering.
+
 Choose an explicit route only when you need more control:
 
 | Route | Use it for | Coverage |
