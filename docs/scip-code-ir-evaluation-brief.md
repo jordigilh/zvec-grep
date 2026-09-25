@@ -3,6 +3,8 @@
 **Resume point:** [Code IR + SCIP work status](./code-ir-scip-work-status.md)
 links issue #8, the owning design/implementation plan, measured outcomes,
 upstream PR dependency and ordered next steps.
+The [semantic-index design](./code-ir-semantic-index-design.md) records the
+intent, planned data path, query contract and delivery gates.
 
 **Purpose:** Determine with reproducible evidence whether SCIP indexers can
 enrich [Code IR issue #8](https://github.com/jordigilh/zvec-grep/issues/8) with

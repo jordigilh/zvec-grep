@@ -9,6 +9,9 @@ producer and fixtures actually evaluated.
 
 ## Plan and ownership
 
+- The [dedicated semantic-index design](./code-ir-semantic-index-design.md)
+  states this spike's intended pipeline, query behavior, snapshot lifecycle and
+  phased acceptance gates. Read it with the issue #8 IR schema and plan below.
 - [Issue #8](https://github.com/jordigilh/zvec-grep/issues/8) is the project
   objective and decision tracker: a language-neutral, versioned, source-mapped
   Code IR for Go, Python, Rust and TypeScript, with source bytes as evidence and
