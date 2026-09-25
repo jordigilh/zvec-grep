@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 import { readFile, mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { augmentSourceProjection, collectSourceBackedMetadata } from "./source_backed_ir_metadata.mjs";
+import { applyRetrievalUnitPolicy } from "./ir_retrieval_unit_policy.mjs";
 
 function option(name, required = true) {
   const index = process.argv.indexOf(name);
@@ -27,6 +29,8 @@ const scipIndexPath = option("--scip-index", false);
 const scipBinaryPath = option("--scip-binary", false);
 const scipProducer = option("--scip-producer", false);
 const expectedScipFacts = option("--expected-scip-facts", false);
+const sourceParity = process.argv.includes("--source-parity");
+const entityParity = process.argv.includes("--entity-parity");
 
 const dist = join(runtimeRoot, "dist/engine");
 const [{ createZvecGrep }, { createEmbeddingModel }, { publishIR, readPublishedIR },
@@ -85,11 +89,12 @@ const bytesByPath = new Map(files.map((file) => [file.relative_path, Buffer.from
 const irFileById = new Map(published.snapshot.files.map((file) => [file.file_id, file]));
 let joinedFacts = [];
 let shadowSnapshot = null;
+let shadowRecord = null;
 let actualIndexSha = null;
 if (scipShadowPath) {
   if (!scipIndexPath || !scipBinaryPath)
     throw new Error("SCIP qeval needs --scip-index and --scip-binary provenance");
-  const shadowRecord = JSON.parse(await readFile(resolve(scipShadowPath), "utf8"));
+  shadowRecord = JSON.parse(await readFile(resolve(scipShadowPath), "utf8"));
   shadowSnapshot = shadowRecord.snapshot ?? shadowRecord;
   actualIndexSha = await sha256File(resolve(scipIndexPath));
   const attestedIndexSha = shadowRecord.scip_sha256 ??
@@ -142,6 +147,9 @@ const baselineService = await createZvecGrep({
   embeddingModelOwnership: "borrowed",
 });
 const rawArms = [];
+let sourceMetadataStats = null;
+let sourceMetadata = null;
+let entityParityStats = null;
 try {
   const indexResult = await baselineService.index({
     rebuild: true,
@@ -188,17 +196,89 @@ try {
     modelIdentity,
   }));
 
+  if (sourceParity) {
+    const { CodeExtractor } = await import(pathToFileURL(join(dist, "extraction/code/extractor.js")));
+    sourceMetadata = await collectSourceBackedMetadata(published.snapshot, files, CodeExtractor);
+    sourceMetadataStats = sourceMetadata.stats;
+    const units = new Map(published.snapshot.units.map((unit) => [unit.id, unit]));
+    for (const [name, fields] of [
+      ["code-ir-source-signatures", { signature: true }],
+      ["code-ir-source-docs", { doc: true }],
+      ["code-ir-source-signature-docs", { signature: true, doc: true }],
+    ]) {
+      const records = baseRecords.map((record) => {
+        const unit = units.get(record.unit_id);
+        const file = irFileById.get(record.source.file_id);
+        return augmentSourceProjection(record, unit, bytesByPath.get(file.relative_path),
+          sourceMetadata.byUnit.get(record.unit_id), fields);
+      });
+      const changed = records.filter((record, index) => record !== baseRecords[index]).length;
+      rawArms.push(await runProjectionArm({
+        name,
+        records,
+        storagePath: join(indexRoot, name),
+        model,
+        snapshot: published.snapshot,
+        queries: truth.queries,
+        modelIdentity,
+      }));
+      rawArms.at(-1).source_attested_records_added = changed;
+    }
+  }
+
+  if (entityParity) {
+    const { records, excluded } = applyRetrievalUnitPolicy(
+      published.projection.records, published.snapshot.units, "legacy-entity-parity");
+    entityParityStats = { excluded, indexed_records: records.length };
+    rawArms.push(await runProjectionArm({
+      name: "code-ir-entity-parity",
+      records,
+      storagePath: join(indexRoot, "code-ir-entity-parity"),
+      model,
+      snapshot: published.snapshot,
+      queries: truth.queries,
+      modelIdentity,
+    }));
+    if (sourceParity) {
+      const units = new Map(published.snapshot.units.map((unit) => [unit.id, unit]));
+      for (const [name, route] of [
+        ["code-ir-entity-parity-source-metadata", "both"],
+        ["code-ir-entity-parity-source-fts", "fts"],
+        ["code-ir-entity-parity-source-vector", "vector"],
+      ]) {
+        const enriched = records.map((record) => {
+          const unit = units.get(record.unit_id);
+          const file = irFileById.get(record.source.file_id);
+          return augmentSourceProjection(record, unit, bytesByPath.get(file.relative_path),
+            sourceMetadata.byUnit.get(record.unit_id), { signature: true, doc: true, route });
+        });
+        rawArms.push(await runProjectionArm({
+          name,
+          records: enriched,
+          storagePath: join(indexRoot, name),
+          model,
+          snapshot: published.snapshot,
+          queries: truth.queries,
+          modelIdentity,
+        }));
+        rawArms.at(-1).source_attested_records_added = enriched.filter((record, index) => record !== records[index]).length;
+        if (joinedFacts.length && route === "both") {
+          rawArms.push(await runProjectionArm({
+            name: "code-ir-entity-parity-source-metadata-scip",
+            records: enriched.map(withScipReferences),
+            storagePath: join(indexRoot, "code-ir-entity-parity-source-metadata-scip"),
+            model,
+            snapshot: published.snapshot,
+            queries: truth.queries,
+            modelIdentity,
+          }));
+        }
+      }
+    }
+  }
+
   if (joinedFacts.length) {
-    const scipRecords = baseRecords.map((record) => {
-      const references = [...(referencesBySubject.get(record.unit_id) ?? [])].sort();
-      if (references.length === 0) return record;
-      const line = `scip_references: ${references.join(" ")}`;
-      return {
-        ...record,
-        lexical_text: `${record.lexical_text}\n${line}`,
-        vector_input: `${record.vector_input}\n${line}`,
-      };
-    });
+    const scipRecords = baseRecords.map(withScipReferences);
     rawArms.push(await runProjectionArm({
       name: "code-ir-plus-scip-references",
       records: scipRecords,
@@ -212,6 +292,17 @@ try {
 } finally {
   await baselineService.close();
   await model.dispose();
+}
+
+function withScipReferences(record) {
+  const references = [...(referencesBySubject.get(record.unit_id) ?? [])].sort();
+  if (references.length === 0) return record;
+  const line = `scip_references: ${references.join(" ")}`;
+  return {
+    ...record,
+    lexical_text: `${record.lexical_text}\n${line}`,
+    vector_input: `${record.vector_input}\n${line}`,
+  };
 }
 
 const runtime = {
@@ -237,6 +328,8 @@ const provenance = {
   model_identity: modelIdentity,
   runtime,
   code_ir: codeIR,
+  ...(sourceParity ? { source_metadata: sourceMetadataStats } : {}),
+  ...(entityParity ? { retrieval_policy: entityParityStats } : {}),
   scip: scipShadowPath ? {
     producer: scipProducer ?? shadowRecord.producer ?? "unspecified SCIP producer",
     binary_sha256: await sha256File(resolve(scipBinaryPath)),

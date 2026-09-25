@@ -212,6 +212,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "--model", args.model,
         "--output", str(raw_path),
     ]
+    if args.source_parity:
+        command.append("--source-parity")
+    if args.entity_parity:
+        command.append("--entity-parity")
     scip_provenance = None
     if args.scip_shadow:
         scip_shadow = args.scip_shadow.resolve(strict=True)
@@ -295,6 +299,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "cache_files": tree_digest(model_cache)[1],
         },
         "code_ir": raw["provenance"]["code_ir"],
+        "projection_experiment": {
+            "source_parity": args.source_parity,
+            "implementation_sha256": sha256_file(REPOSITORY / "scripts/source_backed_ir_metadata.mjs") if args.source_parity else None,
+            "extraction_diagnostics": raw["provenance"].get("source_metadata"),
+            "entity_parity": args.entity_parity,
+            "unit_policy_sha256": sha256_file(REPOSITORY / "scripts/ir_retrieval_unit_policy.mjs") if args.entity_parity else None,
+            "unit_policy_diagnostics": raw["provenance"].get("retrieval_policy"),
+        },
         "go_ast_inventory_sha256": sha256_file(inventory_path) if inventory_path else None,
         "go_ast_exact_unit_matches": conformance["exact_span_kind_and_token_matches"] if conformance else None,
         "go_ast_inventory_units": conformance["inventory_units"] if conformance else None,
@@ -320,6 +332,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "output_dir": str(output_dir),
         "metrics": metrics["runs"],
         "comparison": comparison,
+        "projection_metadata": raw["provenance"].get("source_metadata"),
+        "retrieval_policy": raw["provenance"].get("retrieval_policy"),
         "go_ir_conformance": {
             "exact": conformance["counts"]["exact"],
             "units": conformance["inventory_units"],
@@ -342,11 +356,24 @@ def main() -> int:
     parser.add_argument("--scip-binary", type=Path)
     parser.add_argument("--expected-scip-facts", type=int)
     parser.add_argument("--scip-producer")
+    parser.add_argument("--source-parity", action="store_true", help="add source-attested signature and documentation projection arms")
+    parser.add_argument("--entity-parity", action="store_true", help="keep fine-grained Go fields and Python class attributes in IR but not ranked as standalone hits")
+    parser.add_argument("--summary", action="store_true", help="print aggregate metrics and gates; full results remain in output-dir")
     args = parser.parse_args()
     if bool(args.scip_shadow) != bool(args.scip_index) or bool(args.scip_shadow) != bool(args.scip_binary):
         parser.error("--scip-shadow, --scip-index and --scip-binary must be supplied together")
     result = run(args)
-    print(json.dumps(result, indent=2))
+    if args.summary:
+        print(json.dumps({
+            "output_dir": result["output_dir"],
+            "overall": {row["backend"]: row["overall"] for row in result["metrics"]},
+            "gates": [{key: comparison[key] for key in ("candidate", "no_regression_gate", "improvement_gate")}
+                      for comparison in result["comparison"]["comparisons"]],
+            "projection_metadata": result.get("projection_metadata"),
+            "retrieval_policy": result.get("retrieval_policy"),
+        }, indent=2))
+    else:
+        print(json.dumps(result, indent=2))
     return 0
 
 
