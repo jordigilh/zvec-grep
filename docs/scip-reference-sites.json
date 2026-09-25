@@ -1,0 +1,32 @@
+{
+  "schema": "scip-spike-authored-sites-v1",
+  "note": "Manually selected by reading the frozen fixture source. Lines 1-based, occurrence index 0-based within the line. These are reference sites, not samples inferred from SCIP output.",
+  "typescript": [
+    {"site": ["selection/validator.ts", 1, "WorkflowState", 0], "definition": ["discovery/state.ts", 1, "WorkflowState", 0], "kind": "imported type"},
+    {"site": ["selection/validator.ts", 16, "contains", 0], "definition": ["discovery/state.ts", 10, "contains", 0], "kind": "cross-file method call"},
+    {"site": ["tools/workflows.ts", 15, "listWorkflows", 0], "definition": ["discovery/catalog.ts", 10, "listWorkflows", 0], "kind": "same-name cross-file method call"},
+    {"site": ["tools/workflows.ts", 21, "add", 0], "definition": ["discovery/state.ts", 4, "add", 0], "kind": "cross-file method call"},
+    {"site": ["tools/workflows.ts", 42, "authorizeSelectionDriver", 0], "definition": ["tools/workflows.ts", 31, "authorizeSelectionDriver", 0], "kind": "same-file function call"}
+  ],
+  "python": [
+    {"site": ["selection/retry.py", 3, "Validator", 0], "definition": ["selection/validator.py", 10, "Validator", 0], "kind": "imported class"},
+    {"site": ["selection/retry.py", 8, "validate", 0], "definition": ["selection/validator.py", 23, "validate", 0], "kind": "cross-file method call"},
+    {"site": ["selection/validator.py", 21, "contains", 0], "definition": ["discovery/state.py", 15, "contains", 0], "kind": "cross-file method call"},
+    {"site": ["tools/workflows.py", 22, "list_workflows", 0], "definition": ["discovery/catalog.py", 17, "list_workflows", 0], "kind": "same-name cross-file method call"},
+    {"site": ["tools/workflows.py", 28, "add", 0], "definition": ["discovery/state.py", 12, "add", 0], "kind": "cross-file method call"}
+  ],
+  "rust": [
+    {"site": ["src/selection/validator.rs", 1, "WorkflowState", 0], "definition": ["src/discovery/state.rs", 4, "WorkflowState", 0], "kind": "imported struct"},
+    {"site": ["src/selection/validator.rs", 30, "contains", 0], "definition": ["src/discovery/state.rs", 14, "contains", 0], "kind": "cross-file method call"},
+    {"site": ["src/selection/validator.rs", 34, "is_allowed", 0], "definition": ["src/selection/validator.rs", 25, "is_allowed", 0], "kind": "same-file method call"},
+    {"site": ["src/tools/workflows.rs", 17, "list_workflows", 0], "definition": ["src/discovery/catalog.rs", 24, "list_workflows", 0], "kind": "same-name cross-file method call"},
+    {"site": ["src/tools/workflows.rs", 27, "add", 0], "definition": ["src/discovery/state.rs", 9, "add", 0], "kind": "cross-file method call"}
+  ],
+  "go": [
+    {"site": ["internal/tools/list_workflows.go", 10, "ListWorkflows", 0], "definition": ["internal/discovery/catalog.go", 15, "ListWorkflows", 0], "kind": "same-name cross-file method call"},
+    {"site": ["internal/tools/list_workflows.go", 21, "Add", 0], "definition": ["internal/discovery/state.go", 20, "Add", 0], "kind": "cross-file method call"},
+    {"site": ["internal/selection/validator.go", 41, "Contains", 0], "definition": ["internal/discovery/state.go", 36, "Contains", 0], "kind": "cross-file method call"},
+    {"site": ["internal/selection/validator.go", 45, "IsAllowed", 0], "definition": ["internal/selection/validator.go", 37, "IsAllowed", 0], "kind": "same-file method call"},
+    {"site": ["internal/tools/list_workflows.go", 15, "RecordDiscovered", 0], "definition": ["internal/tools/list_workflows.go", 19, "RecordDiscovered", 0], "kind": "same-file function call"}
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "schema": "lsp-to-byte-spike-v1",
+  "method": "scripts/lsp_code_ir_spike.py ROOT; pre/post full selected-file and config hashing; LSP 3.17 negotiated positions converted against original UTF-8 bytes; five authored target seeds per lane",
+  "note": "Symbol counts are not distinct manifest units; find-references counts cover five selected targets, not the whole source-set relation inventory. The Go manifest lacks line bounds.",
+  "lanes": {
+    "typescript": {
+      "server": "typescript-language-server@6.0.1/typescript@5.9.3",
+      "position_encoding": "utf-16",
+      "encoding_defaulted": true,
+      "snapshot_key": "50e4c9808ad936017dd139b398029ab208cf0970fe24afe989805c2bdcad3265",
+      "document_symbols_byte_mapped": 70,
+      "document_symbol_range_errors": 0,
+      "manifest_name_line_proxy": "31/33",
+      "authored_definition_links": "5/5",
+      "find_references_distinct_source_sites": 14
+    },
+    "python": {
+      "server": "pyright@1.1.414",
+      "position_encoding": "utf-16",
+      "encoding_defaulted": true,
+      "snapshot_key": "4b45ed8fdea254a23a02cf2393fceed4f2cadfcbc6952bb888f3aceab8d4243d",
+      "document_symbols_byte_mapped": 93,
+      "document_symbol_range_errors": 0,
+      "manifest_name_line_proxy": "33/33",
+      "authored_definition_links": "5/5",
+      "find_references_distinct_source_sites": 9
+    },
+    "rust": {
+      "server": "rust-analyzer@f938641be5",
+      "position_encoding": "utf-16",
+      "encoding_defaulted": false,
+      "snapshot_key": "1e565a90bd50df650c9f020bca5b90c149e07ccbcf117c0fde2f012808e7bcbc",
+      "document_symbols_byte_mapped": 65,
+      "document_symbol_range_errors": 0,
+      "manifest_name_line_proxy": "33/39 (six aggregate module-declaration units excluded)",
+      "authored_definition_links": "5/5",
+      "find_references_distinct_source_sites": 14
+    },
+    "go": {
+      "server": "gopls@v0.23.0",
+      "position_encoding": "utf-16",
+      "encoding_defaulted": true,
+      "snapshot_key": "3a734e382864fc376b34c54c89faa0bd8fb7e961e62f3432b4212d1babed6b08",
+      "document_symbols_byte_mapped": 58,
+      "document_symbol_range_errors": 0,
+      "manifest_path_name_proxy_no_line_bounds": "38/38",
+      "authored_definition_links": "5/5",
+      "find_references_distinct_source_sites": 6
+    }
+  },
+  "real_unicode_crlf_control": {
+    "server": "typescript-language-server@6.0.1/typescript@5.9.3",
+    "encoding": "utf-16",
+    "source_set_sha256": "58826a77fd92163096b8b05268229a02f54d4f2e0438abfb85632fa4069972cb",
+    "declaration": "target.ts [41,47) -> target",
+    "reference": "consumer.ts [79,85) -> target",
+    "reference_count": 2
+  }
+}

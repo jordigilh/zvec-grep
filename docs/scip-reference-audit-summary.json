@@ -1,0 +1,63 @@
+{
+  "schema": "scip-spike-reference-audit-v1",
+  "fixture_label_sha256": "49bc02494ac7b1d48f5b768aa9022ec111fb75d5d3f35b4d28dca8e36b42eafd",
+  "method": "scripts/scip_reference_probe.py ROOT --audit-all; ASCII-only diagnostic coordinates for producers declaring SCIP encoding 0; precise nonempty single-target cross-file definitions only; LSP go-to-definition comparison",
+  "languages": {
+    "typescript": {
+      "index_sha256": "eccaf05b3289f8545497d799b5496d73e71dea359d3b933a0ab7a1902af3f415",
+      "lsp": "typescript-language-server 6.0.1 / TypeScript 5.9.3",
+      "labeled_scip_and_lsp_correct": 5,
+      "labeled_total": 5,
+      "lsp_references_contains_first_labeled_site": true,
+      "cross_file_candidates": 28,
+      "cross_file_tested": 24,
+      "cross_file_lsp_agree": 24,
+      "cross_file_wrong": 0,
+      "cross_file_no_lsp_result": 0,
+      "excluded_coarse_or_empty": 4,
+      "excluded_ambiguous_target": 0
+    },
+    "python": {
+      "index_sha256": "8aa4748c1896a1b0336814c863bf0068c450062f0df1f8a5e9f660eb909c759b",
+      "lsp": "Pyright 1.1.414",
+      "labeled_scip_and_lsp_correct": 5,
+      "labeled_total": 5,
+      "lsp_references_contains_first_labeled_site": true,
+      "cross_file_candidates": 28,
+      "cross_file_tested": 24,
+      "cross_file_lsp_agree": 24,
+      "cross_file_wrong": 0,
+      "cross_file_no_lsp_result": 0,
+      "excluded_coarse_or_empty": 4,
+      "excluded_ambiguous_target": 0
+    },
+    "rust": {
+      "index_sha256": "2f69e3ce533fb2b2ff9d8043eeb6beb74315235ef738768f0e17b107291e55ef",
+      "lsp": "rust-analyzer f938641be5 2026-08-10, 20-second workspace warm-up",
+      "labeled_scip_and_lsp_correct": 5,
+      "labeled_total": 5,
+      "lsp_references_contains_first_labeled_site": true,
+      "cross_file_candidates": 56,
+      "cross_file_tested": 30,
+      "cross_file_lsp_agree": 30,
+      "cross_file_wrong": 0,
+      "cross_file_no_lsp_result": 0,
+      "excluded_coarse_or_empty": 26,
+      "excluded_ambiguous_target": 0
+    },
+    "go": {
+      "index_sha256": "b58bcdab9d3e12f43f2e34265928d885e3a788ed66d7133c5278c964bf6d2649",
+      "lsp": "gopls v0.23.0",
+      "labeled_scip_and_lsp_correct": 5,
+      "labeled_total": 5,
+      "lsp_references_contains_first_labeled_site": true,
+      "cross_file_candidates": 45,
+      "cross_file_tested": 31,
+      "cross_file_lsp_agree": 31,
+      "cross_file_wrong": 0,
+      "cross_file_no_lsp_result": 0,
+      "excluded_coarse_or_empty": 0,
+      "excluded_ambiguous_target": 14
+    }
+  }
+}
