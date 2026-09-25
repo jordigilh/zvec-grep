@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tree_sitter::{Node, Parser};
 
-const FRONTEND: &str = "tree-sitter-rust-ir-v1.2";
+const FRONTEND: &str = "tree-sitter-rust-ir-v1.4";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Position {
@@ -430,6 +430,49 @@ pub fn validate(snapshot: &Snapshot, sources: &BTreeMap<String, Vec<u8>>) -> Res
         {
             return Err("unit language mismatch".into());
         }
+        if let Some(extension) = &unit.extensions {
+            let data = extension
+                .data
+                .as_object()
+                .ok_or("unit extension data must be an object")?;
+            if let Some(identifier) = data.get("identifier_source") {
+                let ref_: SourceRef = serde_json::from_value(identifier.clone())
+                    .map_err(|_| "invalid identifier source")?;
+                check(&ref_)?;
+                if ref_.file_id != unit.source.file_id
+                    || ref_.start_byte < unit.source.start_byte
+                    || ref_.end_byte > unit.source.end_byte
+                    || unit.name.as_deref()
+                        != std::str::from_utf8(
+                            &sources[&ref_.file_id][ref_.start_byte..ref_.end_byte],
+                        )
+                        .ok()
+                {
+                    return Err("identifier is not source-backed by its unit".into());
+                }
+            }
+            if let Some(syntax) = data.get("syntax_source") {
+                let ref_: SourceRef = serde_json::from_value(syntax.clone())
+                    .map_err(|_| "invalid alternate syntax source")?;
+                check(&ref_)?;
+                if unit.origin.language != "go"
+                    || unit.kind != "type"
+                    || !["type_spec", "type_alias"].contains(&unit.origin.syntax_kind.as_str())
+                    || unit.name.as_deref().is_none_or(str::is_empty)
+                    || ref_.file_id != unit.source.file_id
+                    || ref_.start_byte < unit.source.start_byte
+                    || ref_.end_byte != unit.source.end_byte
+                    || !sources[&ref_.file_id][ref_.start_byte..ref_.end_byte].starts_with(
+                        unit.name
+                            .as_deref()
+                            .ok_or("Go type name missing")?
+                            .as_bytes(),
+                    )
+                {
+                    return Err("alternate syntax source is not contained by a Go type".into());
+                }
+            }
+        }
         for anchored in [&unit.signature, &unit.documentation].into_iter().flatten() {
             check(&anchored.source)?;
             if anchored.source.file_id != unit.source.file_id
@@ -760,6 +803,73 @@ fn named_children(node: Node<'_>) -> Vec<Node<'_>> {
     let mut cursor = node.walk();
     node.named_children(&mut cursor).collect()
 }
+fn go_declared_names(node: Node<'_>) -> Vec<Node<'_>> {
+    let names: Vec<_> = named_children(node)
+        .into_iter()
+        .filter(|child| {
+            child.kind()
+                == if node.kind() == "field_declaration" {
+                    "field_identifier"
+                } else {
+                    "identifier"
+                }
+        })
+        .collect();
+    if !names.is_empty() || node.kind() != "field_declaration" {
+        return names;
+    }
+    let Some(type_node) = node.child_by_field_name("type") else {
+        return Vec::new();
+    };
+    let name = if type_node.kind() == "qualified_type" {
+        type_node.child_by_field_name("name")
+    } else {
+        Some(type_node)
+    };
+    name.filter(|node| node.kind() == "type_identifier")
+        .into_iter()
+        .collect()
+}
+fn attached_declaration_start(node: Node<'_>, bytes: &[u8], language: &str) -> usize {
+    let Some(parent) = node.parent() else {
+        return node.start_byte();
+    };
+    let siblings = named_children(parent);
+    let Some(index) = siblings.iter().position(|sibling| {
+        sibling.kind() == node.kind()
+            && sibling.start_byte() == node.start_byte()
+            && sibling.end_byte() == node.end_byte()
+    }) else {
+        return node.start_byte();
+    };
+    let mut start = node.start_byte();
+    for previous in siblings[..index].iter().rev() {
+        let source = &bytes[previous.start_byte()..previous.end_byte()];
+        let attached = if language == "go" {
+            previous.kind() == "comment" && (source.starts_with(b"//") || source.starts_with(b"/*"))
+        } else {
+            previous.kind() == "attribute_item"
+                || (["line_comment", "block_comment"].contains(&previous.kind())
+                    && (source.starts_with(b"///") || source.starts_with(b"/**")))
+        };
+        let gap = &bytes[previous.end_byte()..start];
+        let gap = gap
+            .strip_prefix(b"\r\n")
+            .or_else(|| gap.strip_prefix(b"\n"));
+        let already_terminated = source.ends_with(b"\n")
+            && bytes[previous.end_byte()..start]
+                .iter()
+                .all(|byte| *byte == b' ' || *byte == b'\t');
+        if !attached
+            || (!already_terminated
+                && gap.is_none_or(|rest| !rest.iter().all(|byte| *byte == b' ' || *byte == b'\t')))
+        {
+            break;
+        }
+        start = previous.start_byte();
+    }
+    start
+}
 fn collect_error_ranges(node: Node<'_>, out: &mut Vec<(usize, usize)>) {
     if node.is_error() || node.is_missing() {
         if node.start_byte() < node.end_byte() {
@@ -813,8 +923,31 @@ fn walk(
             }) == parent.name.as_deref();
         let local_variable =
             syntax == "variable_declarator" && !["file", "module"].contains(&parent.kind.as_str());
+        let go_field = file.language == "go"
+            && syntax == "field_declaration"
+            && child
+                .parent()
+                .is_some_and(|node| node.kind() == "field_declaration_list")
+            && ["type", "value"].contains(&parent.kind.as_str());
+        let go_package_value = file.language == "go"
+            && ["var_spec", "const_spec"].contains(&syntax)
+            && parent.kind == "file";
+        let python_class_attribute = file.language == "python"
+            && syntax == "assignment"
+            && parent.kind == "type"
+            && child
+                .child_by_field_name("left")
+                .is_some_and(|node| node.kind() == "identifier")
+            && child.parent().is_some_and(|node| {
+                node.kind() == "expression_statement"
+                    && node
+                        .parent()
+                        .is_some_and(|ancestor| ancestor.kind() == "block")
+            });
         let kind = if uncertain_region || wrapped_python_child || local_variable {
             None
+        } else if go_field || go_package_value || python_class_attribute {
+            Some("value")
         } else {
             match semantic_syntax {
                 "function_declaration"
@@ -858,91 +991,180 @@ fn walk(
         };
         let mut owner = parent.clone();
         if let Some(kind) = kind {
-            let name_node = python_inner
-                .and_then(|inner| inner.child_by_field_name("name"))
-                .or_else(|| child.child_by_field_name("name"))
-                .or_else(|| child.child_by_field_name("declarator"))
-                .or_else(|| {
-                    (syntax == "impl_item")
-                        .then(|| child.child_by_field_name("type"))
-                        .flatten()
+            let identifiers: Vec<Option<Node<'_>>> = if go_field || go_package_value {
+                go_declared_names(child).into_iter().map(Some).collect()
+            } else if python_class_attribute {
+                child
+                    .child_by_field_name("left")
+                    .into_iter()
+                    .map(Some)
+                    .collect()
+            } else {
+                vec![None]
+            };
+            for identifier in identifiers {
+                let name_node = identifier.or_else(|| {
+                    python_inner
+                        .and_then(|inner| inner.child_by_field_name("name"))
+                        .or_else(|| child.child_by_field_name("name"))
+                        .or_else(|| child.child_by_field_name("declarator"))
+                        .or_else(|| {
+                            (syntax == "impl_item")
+                                .then(|| child.child_by_field_name("type"))
+                                .flatten()
+                        })
                 });
-            let mut name = name_node
-                .and_then(|n| std::str::from_utf8(&bytes[n.start_byte()..n.end_byte()]).ok())
-                .map(str::to_owned);
-            let receiver = (syntax == "method_declaration")
-                .then(|| child.child_by_field_name("receiver"))
-                .flatten()
-                .and_then(|node| {
-                    std::str::from_utf8(&bytes[node.start_byte()..node.end_byte()]).ok()
-                })
-                .and_then(|text| {
-                    text.rsplit_once(' ').map(|(_, ty)| {
-                        ty.trim_matches(|c: char| !c.is_alphanumeric() && c != '_')
-                            .to_owned()
+                let mut name = name_node
+                    .and_then(|n| std::str::from_utf8(&bytes[n.start_byte()..n.end_byte()]).ok())
+                    .map(str::to_owned);
+                let receiver = (syntax == "method_declaration")
+                    .then(|| child.child_by_field_name("receiver"))
+                    .flatten()
+                    .and_then(|node| {
+                        std::str::from_utf8(&bytes[node.start_byte()..node.end_byte()]).ok()
                     })
+                    .and_then(|text| {
+                        text.rsplit_once(' ').map(|(_, ty)| {
+                            ty.trim_matches(|c: char| !c.is_alphanumeric() && c != '_')
+                                .to_owned()
+                        })
+                    });
+                let receiver = receiver.filter(|value| !value.is_empty());
+                let go_type_declaration = (file.language == "go"
+                    && ["type_spec", "type_alias"].contains(&syntax))
+                .then(|| child.parent())
+                .flatten()
+                .filter(|wrapper| {
+                    wrapper.kind() == "type_declaration"
+                        && named_children(*wrapper)
+                            .iter()
+                            .filter(|node| ["type_spec", "type_alias"].contains(&node.kind()))
+                            .count()
+                            == 1
                 });
-            let receiver = receiver.filter(|value| !value.is_empty());
-            let key = format!("{kind}:{}:{}", child.start_byte(), child.end_byte());
-            let ordinal = *ordinals.entry(key.clone()).or_default();
-            *ordinals.get_mut(&key).ok_or("ordinal missing")? += 1;
-            let mut unit = make_unit(
-                file,
-                bytes,
-                lines,
-                kind,
-                child.start_byte(),
-                child.end_byte(),
-                ordinal,
-                syntax,
-                name.clone(),
-            )?;
-            unit.subtype = Some(semantic_syntax.into());
-            unit.parent_id = Some(parent.id.clone());
-            unit.scope_id = Some(parent.id.clone());
-            if let Some(receiver_type) = receiver.as_ref() {
-                name = name.map(|method| format!("{receiver_type}::{method}"));
-            }
-            let qualified_parts =
-                if let Some(full_name) = name.as_ref().filter(|name| name.contains("::")) {
-                    full_name.split("::").map(str::to_owned).collect::<Vec<_>>()
+                let declaration = go_type_declaration.unwrap_or(child);
+                let rust_attached = file.language == "rust"
+                    && [
+                        "struct_item",
+                        "enum_item",
+                        "trait_item",
+                        "type_item",
+                        "union_item",
+                        "function_item",
+                    ]
+                    .contains(&syntax);
+                let start = if go_type_declaration.is_some() || rust_attached {
+                    attached_declaration_start(declaration, bytes, &file.language)
+                } else if file.language == "typescript"
+                    && child.parent().is_some_and(|wrapper| {
+                        wrapper.kind() == "export_statement"
+                            && wrapper
+                                .child_by_field_name("declaration")
+                                .is_some_and(|inner| {
+                                    inner.start_byte() == child.start_byte()
+                                        && inner.end_byte() == child.end_byte()
+                                })
+                    })
+                {
+                    child
+                        .parent()
+                        .ok_or("export parent disappeared")?
+                        .start_byte()
                 } else {
-                    breadcrumb
-                        .iter()
-                        .cloned()
-                        .chain(name.clone())
-                        .collect::<Vec<_>>()
+                    declaration.start_byte()
                 };
-            if !qualified_parts.is_empty() {
-                unit.qualified_name = Some(qualified_parts.join("::"));
+                let end = declaration.end_byte();
+                let key = format!("{kind}:{start}:{end}");
+                let ordinal = *ordinals.entry(key.clone()).or_default();
+                *ordinals.get_mut(&key).ok_or("ordinal missing")? += 1;
+                let mut unit = make_unit(
+                    file,
+                    bytes,
+                    lines,
+                    kind,
+                    start,
+                    end,
+                    ordinal,
+                    syntax,
+                    name.clone(),
+                )?;
+                unit.subtype = Some(
+                    if go_field {
+                        "struct_field"
+                    } else if python_class_attribute {
+                        "class_attribute"
+                    } else {
+                        semantic_syntax
+                    }
+                    .into(),
+                );
+                unit.parent_id = Some(parent.id.clone());
+                unit.scope_id = Some(parent.id.clone());
+                if let Some(identifier) = identifier {
+                    let identifier_source = source_ref(
+                        file,
+                        bytes,
+                        lines,
+                        identifier.start_byte(),
+                        identifier.end_byte(),
+                    )?;
+                    unit.extensions = Some(Extension {
+                        language: file.language.clone(),
+                        data: serde_json::json!({ "identifier_source": identifier_source }),
+                    });
+                }
+                if go_type_declaration.is_some() {
+                    let syntax_source =
+                        source_ref(file, bytes, lines, child.start_byte(), child.end_byte())?;
+                    unit.extensions = Some(Extension {
+                        language: "go".into(),
+                        data: serde_json::json!({ "syntax_source": syntax_source }),
+                    });
+                }
+                if let Some(receiver_type) = receiver.as_ref() {
+                    name = name.map(|method| format!("{receiver_type}::{method}"));
+                }
+                let qualified_parts =
+                    if let Some(full_name) = name.as_ref().filter(|name| name.contains("::")) {
+                        full_name.split("::").map(str::to_owned).collect::<Vec<_>>()
+                    } else {
+                        breadcrumb
+                            .iter()
+                            .cloned()
+                            .chain(name.clone())
+                            .collect::<Vec<_>>()
+                    };
+                if !qualified_parts.is_empty() {
+                    unit.qualified_name = Some(qualified_parts.join("::"));
+                }
+                if receiver.is_some() || syntax == "decorated_definition" || syntax == "impl_item" {
+                    let mut data = serde_json::Map::new();
+                    if let Some(receiver_type) = receiver {
+                        data.insert("receiver".into(), receiver_type.into());
+                    }
+                    if syntax == "decorated_definition" {
+                        data.insert("decorated_definition".into(), true.into());
+                    }
+                    if syntax == "impl_item" {
+                        data.insert("impl".into(), true.into());
+                    }
+                    unit.extensions = Some(Extension {
+                        language: file.language.clone(),
+                        data: data.into(),
+                    });
+                }
+                add_fact(
+                    snapshot,
+                    "contains",
+                    parent,
+                    &unit.source,
+                    Some(&unit),
+                    None,
+                    ordinals,
+                );
+                snapshot.units.push(unit.clone());
+                owner = unit;
             }
-            if receiver.is_some() || syntax == "decorated_definition" || syntax == "impl_item" {
-                let mut data = serde_json::Map::new();
-                if let Some(receiver_type) = receiver {
-                    data.insert("receiver".into(), receiver_type.into());
-                }
-                if syntax == "decorated_definition" {
-                    data.insert("decorated_definition".into(), true.into());
-                }
-                if syntax == "impl_item" {
-                    data.insert("impl".into(), true.into());
-                }
-                unit.extensions = Some(Extension {
-                    language: file.language.clone(),
-                    data: data.into(),
-                });
-            }
-            add_fact(
-                snapshot,
-                "contains",
-                parent,
-                &unit.source,
-                Some(&unit),
-                None,
-                ordinals,
-            );
-            snapshot.units.push(unit.clone());
-            owner = unit;
         }
         if !uncertain_region
             && ["call_expression", "call"].contains(&syntax)
@@ -1254,6 +1476,147 @@ mod tests {
                 );
             }
             validate(&snapshot, &sources).expect("language IR validates");
+        }
+    }
+
+    #[test]
+    fn go_declaration_and_field_bytes_keep_unique_names_and_exact_tokens() {
+        let text = "package demo\r\n// Attached.\r\ntype Widget struct {\r\n  ID, Name string\r\n  *Other\r\n  pkg.External\r\n}\r\ntype Alias = Widget\r\nvar First, Second = 1, 2\r\n";
+        let (snapshot, sources) = extract(
+            "demo",
+            &[InputFile {
+                root_id: "root",
+                relative_path: "widget.go",
+                language: "go",
+                bytes: text.as_bytes(),
+            }],
+        )
+        .expect("Go IR extraction");
+        validate(&snapshot, &sources).expect("source-backed fields");
+        let named = |name: &str| {
+            snapshot
+                .units
+                .iter()
+                .find(|unit| unit.name.as_deref() == Some(name))
+                .expect("declared unit")
+        };
+        let widget = named("Widget");
+        assert_eq!(
+            &text[widget.source.start_byte..widget.source.end_byte],
+            "// Attached.\r\ntype Widget struct {\r\n  ID, Name string\r\n  *Other\r\n  pkg.External\r\n}"
+        );
+        let syntax: SourceRef = serde_json::from_value(
+            widget.extensions.as_ref().expect("syntax alternative").data["syntax_source"].clone(),
+        )
+        .expect("verified syntax source");
+        assert_eq!(
+            &text[syntax.start_byte..syntax.end_byte],
+            "Widget struct {\r\n  ID, Name string\r\n  *Other\r\n  pkg.External\r\n}"
+        );
+        let alias = named("Alias");
+        assert_eq!(
+            &text[alias.source.start_byte..alias.source.end_byte],
+            "type Alias = Widget"
+        );
+        for name in ["ID", "Name", "Other", "External", "First", "Second"] {
+            let unit = named(name);
+            assert_eq!(unit.kind, "value");
+            let extension = unit.extensions.as_ref().expect("token provenance");
+            let token: SourceRef =
+                serde_json::from_value(extension.data["identifier_source"].clone())
+                    .expect("token source ref");
+            assert_eq!(&text[token.start_byte..token.end_byte], name);
+            assert_eq!(
+                unit.parent_id.as_deref(),
+                Some(if ["First", "Second"].contains(&name) {
+                    snapshot
+                        .units
+                        .iter()
+                        .find(|unit| unit.kind == "file")
+                        .expect("file unit")
+                        .id
+                        .as_str()
+                } else {
+                    widget.id.as_str()
+                })
+            );
+        }
+        assert_eq!(
+            named("ID").source.start_byte,
+            named("Name").source.start_byte
+        );
+        assert_ne!(named("ID").id, named("Name").id);
+        let mut forged = snapshot.clone();
+        let fake_widget = forged
+            .units
+            .iter_mut()
+            .find(|unit| unit.name.as_deref() == Some("Widget"))
+            .expect("cloned type unit");
+        fake_widget
+            .extensions
+            .as_mut()
+            .expect("alternate source")
+            .data["syntax_source"]["start_byte"] = serde_json::json!(syntax.start_byte + 1);
+        assert!(validate(&forged, &sources).is_err());
+    }
+
+    #[test]
+    fn class_attributes_and_attached_declaration_ranges_preserve_source() {
+        for (language, text, prefix) in [
+            (
+                "python",
+                "@registered\nclass Service:\n    count: int = 1\n    ready = True\n    def run(self):\n        local = 2\n",
+                "@registered\nclass Service",
+            ),
+            (
+                "typescript",
+                "/** Docs */\nexport class Service { run() {} }\n",
+                "export class Service",
+            ),
+            (
+                "rust",
+                "/// Docs\n#[derive(Clone)]\npub struct Service { value: i32 }\n",
+                "/// Docs\n#[derive(Clone)]\npub struct Service",
+            ),
+        ] {
+            let (snapshot, sources) = extract(
+                "demo",
+                &[InputFile {
+                    root_id: "root",
+                    relative_path: "fixture",
+                    language,
+                    bytes: text.as_bytes(),
+                }],
+            )
+            .expect("syntax IR");
+            validate(&snapshot, &sources).expect("anchored evidence");
+            let unit = snapshot
+                .units
+                .iter()
+                .find(|unit| unit.name.as_deref() == Some("Service"))
+                .expect("Service unit");
+            assert!(
+                text[unit.source.start_byte..unit.source.end_byte].starts_with(prefix),
+                "{language}: {:?}",
+                &text[unit.source.start_byte..unit.source.end_byte]
+            );
+            if language == "python" {
+                for name in ["count", "ready"] {
+                    let attr = snapshot
+                        .units
+                        .iter()
+                        .find(|unit| unit.name.as_deref() == Some(name))
+                        .expect("class attribute");
+                    assert_eq!(attr.kind, "value");
+                    assert_eq!(attr.parent_id.as_deref(), Some(unit.id.as_str()));
+                }
+                assert!(
+                    !snapshot
+                        .units
+                        .iter()
+                        .any(|unit| unit.name.as_deref() == Some("local"))
+                );
+            }
         }
     }
 }

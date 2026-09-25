@@ -305,3 +305,156 @@ test("four frontends retain methods, receiver/decorator scopes, overloads and ne
     );
   }
 });
+
+test("Go declarations retain type/doc bytes and source-backed struct fields with distinct token spans", async () => {
+  const text = [
+    "package demo",
+    "// A type's attached documentation.",
+    "type Widget struct {",
+    '  ID, Name string `json:"name"`',
+    "  *Other",
+    "  pkg.External",
+    "  nested struct { child int }",
+    "}",
+    "type Alias = Widget",
+    "var First, Second = 1, 2",
+    "",
+  ].join("\r\n");
+  const bytes = Buffer.from(text);
+  const { snapshot, sources } = await extractSnapshot("demo", [
+    {
+      root_id: "root",
+      relative_path: "widget.go",
+      language: "go",
+      bytes,
+    },
+  ]);
+  validateSnapshot(snapshot, sources);
+  const named = (name) => snapshot.units.find((unit) => unit.name === name);
+  assert.equal(
+    bytes
+      .subarray(
+        named("Widget").source.start_byte,
+        named("Widget").source.end_byte,
+      )
+      .toString(),
+    text.slice(text.indexOf("// A type's"), text.indexOf("\r\ntype Alias")),
+  );
+  assert.equal(named("Widget").source.start.line, 2);
+  assert.equal(named("Alias").source.start.column_byte, 0);
+  assert.equal(
+    bytes
+      .subarray(
+        named("Alias").source.start_byte,
+        named("Alias").source.end_byte,
+      )
+      .toString(),
+    "type Alias = Widget",
+  );
+  const widgetSyntax = named("Widget").extensions.data.syntax_source;
+  assert.equal(
+    bytes.subarray(widgetSyntax.start_byte, widgetSyntax.end_byte).toString(),
+    text.slice(text.indexOf("Widget struct"), text.indexOf("\r\ntype Alias")),
+  );
+  const fields = ["ID", "Name", "Other", "External", "nested", "child"];
+  for (const field of fields) {
+    const unit = named(field);
+    assert.equal(unit.kind, "value", field);
+    assert.equal(unit.extensions.language, "go");
+    const token = unit.extensions.data.identifier_source;
+    assert.equal(
+      bytes.subarray(token.start_byte, token.end_byte).toString(),
+      field,
+    );
+    assert.equal(
+      snapshot.units.find((candidate) => candidate.id === unit.parent_id)?.kind,
+      field === "child" ? "value" : "type",
+    );
+  }
+  assert.equal(named("ID").source.start_byte, named("Name").source.start_byte);
+  assert.equal(named("ID").source.end_byte, named("Name").source.end_byte);
+  assert.notEqual(named("ID").id, named("Name").id);
+  assert.equal(named("child").qualified_name, "Widget::nested::child");
+  assert.equal(
+    named("First").source.start_byte,
+    named("Second").source.start_byte,
+  );
+  assert.equal(
+    named("First").parent_id,
+    snapshot.units.find((unit) => unit.kind === "file").id,
+  );
+  const tampered = structuredClone(snapshot);
+  const target = tampered.units.find((unit) => unit.name === "ID");
+  target.extensions.data.identifier_source.start_byte += 1;
+  assert.throws(
+    () => validateSnapshot(tampered, sources),
+    /source map|identifier/,
+  );
+  const fakeSyntax = structuredClone(snapshot);
+  fakeSyntax.units.find(
+    (unit) => unit.name === "Widget",
+  ).extensions.data.syntax_source.start_byte += 1;
+  assert.throws(
+    () => validateSnapshot(fakeSyntax, sources),
+    /source map|syntax/,
+  );
+});
+
+test("class attributes and attached export/attribute spans remain source-backed without guessing local variables", async () => {
+  const samples = [
+    [
+      "python",
+      "@registered\nclass Service:\n    count: int = 1\n    ready = True\n    def run(self):\n        local = 2\n        self.dynamic = 3\n",
+      ["count", "ready"],
+      ["local", "dynamic"],
+      "@registered\nclass Service:",
+    ],
+    [
+      "typescript",
+      "/** Docs */\nexport class Service { run() {} }\n",
+      [],
+      [],
+      "export class Service",
+    ],
+    [
+      "rust",
+      "/// Docs\n#[derive(Clone)]\npub struct Service { value: i32 }\n",
+      [],
+      [],
+      "/// Docs\n#[derive(Clone)]\npub struct Service",
+    ],
+  ];
+  for (const [language, text, present, absent, header] of samples) {
+    const { snapshot, sources } = await extractSnapshot("demo", [
+      {
+        root_id: "root",
+        relative_path: `fixture.${language}`,
+        language,
+        bytes: Buffer.from(text),
+      },
+    ]);
+    validateSnapshot(snapshot, sources);
+    const service = snapshot.units.find((unit) => unit.name === "Service");
+    assert.ok(service);
+    const full = Buffer.from(text)
+      .subarray(service.source.start_byte, service.source.end_byte)
+      .toString();
+    assert.ok(full.startsWith(header), `${language}: ${full}`);
+    for (const name of present) {
+      const unit = snapshot.units.find((candidate) => candidate.name === name);
+      assert.equal(unit.kind, "value");
+      assert.equal(unit.parent_id, service.id);
+      assert.equal(
+        Buffer.from(text)
+          .subarray(
+            unit.extensions.data.identifier_source.start_byte,
+            unit.extensions.data.identifier_source.end_byte,
+          )
+          .toString(),
+        name,
+      );
+    }
+    for (const name of absent)
+      assert.ok(!snapshot.units.some((unit) => unit.name === name));
+  }
+});

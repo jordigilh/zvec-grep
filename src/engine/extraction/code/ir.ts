@@ -90,7 +90,7 @@ export type InputFile = {
   language: string;
   bytes: Uint8Array;
 };
-export const FRONTEND_VERSION = "web-tree-sitter-ir-v1.3";
+export const FRONTEND_VERSION = "web-tree-sitter-ir-v1.5";
 const LANGUAGES = new Set(["go", "python", "rust", "typescript", "tsx"]);
 const encoder = new TextEncoder();
 const lineStartCache = new WeakMap<Uint8Array, number[]>();
@@ -255,6 +255,42 @@ export function validateSnapshot(
       (unit.extensions && unit.extensions.language !== unit.origin.language)
     )
       throw new Error("IR language mismatch");
+    if (unit.extensions?.data.identifier_source !== undefined) {
+      const ref = unit.extensions.data.identifier_source as SourceRef;
+      check(ref);
+      if (
+        !unit.name ||
+        ref.file_id !== unit.source.file_id ||
+        ref.start_byte < unit.source.start_byte ||
+        ref.end_byte > unit.source.end_byte ||
+        new TextDecoder("utf-8", { fatal: true }).decode(
+          sources.get(ref.file_id)!.subarray(ref.start_byte, ref.end_byte),
+        ) !== unit.name
+      )
+        throw new Error("IR identifier is not source-backed by its unit");
+    }
+    if (unit.extensions?.data.syntax_source !== undefined) {
+      const ref = unit.extensions.data.syntax_source as SourceRef;
+      check(ref);
+      const name = Buffer.from(unit.name ?? "", "utf8");
+      if (
+        unit.origin.language !== "go" ||
+        unit.kind !== "type" ||
+        !["type_spec", "type_alias"].includes(unit.origin.syntax_kind) ||
+        name.length === 0 ||
+        ref.file_id !== unit.source.file_id ||
+        ref.start_byte < unit.source.start_byte ||
+        ref.end_byte !== unit.source.end_byte ||
+        !Buffer.from(
+          sources
+            .get(ref.file_id)!
+            .subarray(ref.start_byte, ref.start_byte + name.length),
+        ).equals(name)
+      )
+        throw new Error(
+          "IR alternate syntax source is not contained by a Go type",
+        );
+    }
     for (const anchored of [unit.signature, unit.documentation])
       if (anchored) {
         check(anchored.source);
@@ -411,6 +447,54 @@ export function snapshotIdentity(
       .map((f) => `${f.root_id}\0${f.relative_path}\0${f.sha256}`)
       .sort(),
   );
+}
+
+// Go's field names are sibling nodes sharing one declaration span. A separate
+// ordinal keeps `A, B string` distinct; the token ref disambiguates the names.
+function goDeclaredNames(node: TSNode): TSNode[] {
+  const names = node.namedChildren.filter((child) =>
+    node.type === "field_declaration"
+      ? child.type === "field_identifier"
+      : child.type === "identifier",
+  );
+  if (names.length || node.type !== "field_declaration") return names;
+  // An embedded field has no `name` field; the terminal type identifier is
+  // its syntactic name. Abstain on unsupported/anonymous embedded types.
+  const type = node.childForFieldName("type");
+  const named =
+    type?.type === "qualified_type" ? type.childForFieldName("name") : type;
+  return named?.type === "type_identifier" ? [named] : [];
+}
+
+function attachedDeclarationStart(
+  node: TSNode,
+  text: string,
+  language: string,
+): number {
+  const siblings = node.parent?.namedChildren ?? [];
+  const index = siblings.findIndex(
+    (sibling) =>
+      sibling.startIndex === node.startIndex &&
+      sibling.endIndex === node.endIndex &&
+      sibling.type === node.type,
+  );
+  let start = node.startIndex;
+  for (let i = index - 1; i >= 0; i--) {
+    const previous = siblings[i];
+    const attached =
+      language === "go"
+        ? previous.type === "comment" && /^(?:\/\/|\/\*)/u.test(previous.text)
+        : previous.type === "attribute_item" ||
+          (["line_comment", "block_comment"].includes(previous.type) &&
+            /^(?:\/\/\/|\/\*\*)/u.test(previous.text));
+    if (
+      !attached ||
+      !/^\r?\n[\t ]*$/u.test(text.slice(previous.endIndex, start))
+    )
+      break;
+    start = previous.startIndex;
+  }
+  return start;
 }
 
 // web-tree-sitter 0.20 indexes JS UTF-16 code units. Reject any midpoint in a
@@ -592,16 +676,38 @@ export async function extractSnapshot(
             ["field_definition", "public_field_definition"].includes(
               child.type,
             );
+          const goField =
+            input.language === "go" &&
+            child.type === "field_declaration" &&
+            child.parent?.type === "field_declaration_list" &&
+            ["type", "value"].includes(parent.kind);
+          const goPackageValue =
+            input.language === "go" &&
+            ["var_spec", "const_spec"].includes(child.type) &&
+            parent.kind === "file";
+          const pythonClassAttribute =
+            input.language === "python" &&
+            child.type === "assignment" &&
+            child.parent?.type === "expression_statement" &&
+            child.parent.parent?.type === "block" &&
+            parent.kind === "type" &&
+            child.childForFieldName("left")?.type === "identifier";
           const isEntity =
             !uncertainRegion &&
             (adapter.entityTypes.has(child.type) ||
+              goField ||
+              goPackageValue ||
+              pythonClassAttribute ||
               ((input.language === "typescript" || input.language === "tsx") &&
                 child.type === "function_signature") ||
               (input.language === "rust" && child.type === "mod_item")) &&
             (adapter.shouldIndexEntity?.(child) !== false ||
               typescriptOverload ||
               typescriptTopLevelValue ||
-              typescriptFieldValue) &&
+              typescriptFieldValue ||
+              goField ||
+              goPackageValue ||
+              pythonClassAttribute) &&
             !(
               input.language === "python" &&
               parent.origin.syntax_kind === "decorated_definition" &&
@@ -609,10 +715,24 @@ export async function extractSnapshot(
               ["class_definition", "function_definition"].includes(child.type)
             );
           if (isEntity)
-            for (const entity of adapter.resolveEntities?.(child) ?? [
-              adapter.resolveEntity?.(child) ?? child,
-            ]) {
-              const name = adapter.extractName(entity);
+            for (const { entity, identifier } of goField || goPackageValue
+              ? goDeclaredNames(child).map((identifier) => ({
+                  entity: child,
+                  identifier,
+                }))
+              : pythonClassAttribute
+                ? [
+                    {
+                      entity: child,
+                      identifier: child.childForFieldName("left")!,
+                    },
+                  ]
+                : (
+                    adapter.resolveEntities?.(child) ?? [
+                      adapter.resolveEntity?.(child) ?? child,
+                    ]
+                  ).map((entity) => ({ entity, identifier: undefined }))) {
+              const name = identifier?.text ?? adapter.extractName(entity);
               const entityBreadcrumb =
                 adapter.scopeBreadcrumb?.(entity, breadcrumb) ?? breadcrumb;
               const symbol = adapter.classifyNode?.(entity, breadcrumb);
@@ -625,41 +745,73 @@ export async function extractSnapshot(
                     )
                   : undefined;
               const kind: Unit["kind"] =
-                child.type.includes("method") ||
-                child.type.includes("constructor") ||
-                child.type === "method_spec" ||
-                child.type === "function_signature_item" ||
-                (input.language === "python" &&
-                  parent.kind === "type" &&
-                  (child.type.includes("function") ||
-                    pythonDefinition?.type === "function_definition")) ||
-                (input.language === "rust" &&
-                  parent.kind === "type" &&
-                  child.type === "function_item")
-                  ? "method"
-                  : pythonDefinition?.type === "class_definition" ||
-                      symbol === "class" ||
-                      symbol === "interface" ||
-                      symbol === "alias" ||
-                      child.type.includes("type_") ||
-                      child.type.includes("class") ||
-                      child.type.includes("interface") ||
-                      child.type.includes("struct") ||
-                      child.type.includes("trait") ||
-                      child.type.includes("enum") ||
-                      child.type.includes("union") ||
-                      child.type.includes("alias") ||
-                      child.type === "impl_item"
-                    ? "type"
-                    : symbol === "module" || child.type === "mod_item"
-                      ? "module"
-                      : pythonDefinition?.type === "function_definition" ||
-                          symbol === "function" ||
-                          child.type.includes("function")
-                        ? "function"
-                        : "value";
-              const start = byteOffset(entity.startIndex),
-                end = byteOffset(entity.endIndex);
+                goField || goPackageValue || pythonClassAttribute
+                  ? "value"
+                  : child.type.includes("method") ||
+                      child.type.includes("constructor") ||
+                      child.type === "method_spec" ||
+                      child.type === "function_signature_item" ||
+                      (input.language === "python" &&
+                        parent.kind === "type" &&
+                        (child.type.includes("function") ||
+                          pythonDefinition?.type === "function_definition")) ||
+                      (input.language === "rust" &&
+                        parent.kind === "type" &&
+                        child.type === "function_item")
+                    ? "method"
+                    : pythonDefinition?.type === "class_definition" ||
+                        symbol === "class" ||
+                        symbol === "interface" ||
+                        symbol === "alias" ||
+                        child.type.includes("type_") ||
+                        child.type.includes("class") ||
+                        child.type.includes("interface") ||
+                        child.type.includes("struct") ||
+                        child.type.includes("trait") ||
+                        child.type.includes("enum") ||
+                        child.type.includes("union") ||
+                        child.type.includes("alias") ||
+                        child.type === "impl_item"
+                      ? "type"
+                      : symbol === "module" || child.type === "mod_item"
+                        ? "module"
+                        : pythonDefinition?.type === "function_definition" ||
+                            symbol === "function" ||
+                            child.type.includes("function")
+                          ? "function"
+                          : "value";
+              const declaration =
+                input.language === "go" &&
+                ["type_spec", "type_alias"].includes(entity.type) &&
+                entity.parent?.type === "type_declaration" &&
+                entity.parent.namedChildren.filter((node) =>
+                  ["type_spec", "type_alias"].includes(node.type),
+                ).length === 1
+                  ? entity.parent
+                  : entity;
+              const rustAttributed =
+                input.language === "rust" &&
+                [
+                  "struct_item",
+                  "enum_item",
+                  "trait_item",
+                  "type_item",
+                  "union_item",
+                  "function_item",
+                ].includes(entity.type);
+              const declarationStart =
+                (input.language === "go" && declaration !== entity) ||
+                rustAttributed
+                  ? attachedDeclarationStart(declaration, text, input.language)
+                  : (input.language === "typescript" ||
+                        input.language === "tsx") &&
+                      entity.parent?.type === "export_statement" &&
+                      entity.parent.childForFieldName("declaration")
+                        ?.startIndex === entity.startIndex
+                    ? entity.parent.startIndex
+                    : declaration.startIndex;
+              const start = byteOffset(declarationStart),
+                end = byteOffset(declaration.endIndex);
               const key = `${kind}:${start}:${end}`;
               const ordinal = occurrences.get(key) ?? 0;
               occurrences.set(key, ordinal + 1);
@@ -675,7 +827,39 @@ export async function extractSnapshot(
               unit.scope_id = parent.id;
               if (name)
                 unit.qualified_name = [...entityBreadcrumb, name].join("::");
-              unit.subtype = symbol ?? entity.type;
+              unit.subtype = goField
+                ? "struct_field"
+                : goPackageValue
+                  ? child.type
+                  : pythonClassAttribute
+                    ? "class_attribute"
+                    : (symbol ?? entity.type);
+              if (identifier) {
+                unit.extensions = {
+                  language: input.language,
+                  data: {
+                    identifier_source: sourceRef(
+                      file,
+                      input.bytes,
+                      byteOffset(identifier.startIndex),
+                      byteOffset(identifier.endIndex),
+                    ),
+                  },
+                };
+              }
+              if (input.language === "go" && declaration !== entity) {
+                unit.extensions = {
+                  language: "go",
+                  data: {
+                    syntax_source: sourceRef(
+                      file,
+                      input.bytes,
+                      byteOffset(entity.startIndex),
+                      byteOffset(entity.endIndex),
+                    ),
+                  },
+                };
+              }
               if (
                 input.language === "go" &&
                 child.type === "method_declaration" &&
