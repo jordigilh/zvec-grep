@@ -1,0 +1,51 @@
+{
+  "schema": "scip-shadow-relationship-query-summary-v1",
+  "date": "2026-09-25",
+  "method": "scripts/shadow_ir_relationships.mjs: validate pinned shadow/index/source/config/compiled IR, then query source-anchored selected-local references by unit ID or byte site; Go labels replayed with scripts/replay_go_relationship_labels.mjs",
+  "relationship_reader_sha256": "874fb0870961f6ec1f844683929b34a56706026b649bff0d055bfc3ac31632f2",
+  "label_replay_script_sha256": "9c2ef194daa3851a8ca71919a6569763b291fad542d2f79c746ce839619e45bf",
+  "resolution_scope": "validated_shadow_candidate; references only; no inferred calls, implementations or external object IDs",
+  "go": {
+    "fixture": "go-workflow-discovery-v1",
+    "selected_files": 10,
+    "selected_source_set_sha256": "13ca96abdeb8ef919a746f1ec1afb3ae5b6d59e8b0282d98109bc2b6a8c4f53d",
+    "ir_snapshot_id": "38924ec8adb36ec929b2a9ac01f3ec09ce786fe8d355fad98e17a42507dc6be6",
+    "scip_index_sha256": "994e177b83353f9f5c3a1b7bc45a9f7a8171aeb66ddde463acb3575222b55e82",
+    "shadow_sha256": "7697906e0355c193e78c111bc75afe453926ece6cd53a74b0099c4f8fde0d30a",
+    "producer_binary_sha256": "eb09bc8ca1315c474308b9f6ca356f4ec744b45f9986519d65319c825b214e0e",
+    "selected_local_reference_facts": 117,
+    "authored_positive_correct": 20,
+    "authored_positive_total": 20,
+    "authored_negative_abstentions": 3,
+    "authored_negative_total": 3,
+    "positive_labels_sha256": "4bb2a47ee2aa5cf0a9818abf90f716ab1fb3ec6c12e99d687a6d0bcb370b8efb",
+    "negative_labels_sha256": "faa944a07e9752558428caabcef7fef2c535a89bf66cd57b5a98814c34fea846",
+    "replay_artifact_sha256": "5ae73f26a5e36baf2097fffb9e2170ca32844c4f7d8366697834b1091d0ed85f"
+  },
+  "other_language_smokes": {
+    "python": {
+      "scip_index_sha256": "d3c3e717c6f9c7113c746d0d43e08e6fa902ae261cae99132628ca78f83d8743",
+      "selected_local_reference_facts": 49,
+      "example": "selection/validator.py::Validator::is_allowed",
+      "incoming": 1,
+      "outgoing": 1,
+      "position_encoding": "version-pinned UTF-16 compatibility; producer emits unspecified"
+    },
+    "rust": {
+      "scip_index_sha256": "840d57ff93f918317641f6c9c782f1dffec07b5b2fe24bac9c329ee8a85dbaf4",
+      "selected_local_reference_facts": 58,
+      "example": "src/selection/validator.rs::WorkflowValidator::is_allowed",
+      "incoming": 1,
+      "outgoing": 1,
+      "position_encoding": "producer-declared UTF-8"
+    },
+    "typescript": {
+      "scip_index_sha256": "2bf933467b8f0bf3b41d0b66b78f061376f0bdc114617c492af29d47c1e938ff",
+      "selected_local_reference_facts": 47,
+      "example": "selection/validator.ts::WorkflowValidator::isAllowed",
+      "incoming": 1,
+      "outgoing": 1,
+      "position_encoding": "version-pinned UTF-16 compatibility; producer emits unspecified"
+    }
+  }
+}

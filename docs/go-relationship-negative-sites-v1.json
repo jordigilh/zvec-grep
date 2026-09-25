@@ -1,0 +1,11 @@
+{
+  "schema": "go-selected-local-negative-sites-v1",
+  "fixture_id": "go-workflow-discovery-v1",
+  "selected_source_set_sha256": "13ca96abdeb8ef919a746f1ec1afb3ae5b6d59e8b0282d98109bc2b6a8c4f53d",
+  "note": "Independently source-selected negative controls: external stdlib references and a package import whose package symbol has multiple candidate files. Absence of a selected-local Code IR object does not mean the source is semantically unresolved.",
+  "go": [
+    { "site": ["internal/selection/validator.go", 15, "Sprintf", 0], "reason": "external fmt function" },
+    { "site": ["internal/selection/retry.go", 6, "discovery", 0], "reason": "multi-file imported package symbol" },
+    { "site": ["internal/metrics/validator.go", 11, "IsLetter", 0], "reason": "external unicode function" }
+  ]
+}

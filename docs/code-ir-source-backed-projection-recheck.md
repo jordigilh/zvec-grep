@@ -1,5 +1,10 @@
 # Compiler-style Code IR projection: source-backed parity recheck (2026-09-25)
 
+**Relationship lookup follow-up:** A [snapshot-bound, read-only SCIP/IR reference
+query](./scip-shadow-relationship-query.md) now retrieves validated sites after
+unit discovery. It passes 20/20 source-authored Go links and abstains on 3/3
+selected-local negative controls without changing search ranks.
+
 ## Decision
 
 The compiler-style split is feasible on the measured Go fixture: Code IR v1.5
@@ -139,12 +144,12 @@ SCIP flags when testing projection parity alone.
 2. Preserve semantic field/attribute units as join endpoints but make
    answerable retrieval-unit selection an explicit, versioned projection
    policy, tested against more than one fixture and real Kubernaut source.
-3. Implement a snapshot-scoped relationship query/diagnostic layer so SCIP
-   facts can be inspected after target discovery, rather than copying
-   qualified target strings into every embedding/FTS field. Independently
-   judge reference/type/implementation sites (including negatives, ambiguous
-   and external targets) and account for toolchain/build configuration and
-   dependencies in the snapshot attestation.
+3. Extend the now-tested snapshot-scoped relationship lookup toward a
+   deliberately scoped runtime interface, after independent reference/type/
+   implementation inventories cover negatives, ambiguity and external
+   targets. Version the full dependency/build configuration in the producer
+   attestation; do not copy qualified target strings into every embedding/FTS
+   field.
 4. Build real Kubernaut qrels and replay paired same-engine arms on one
    immutable revision, with source citations, per-query failure breakdown,
    model/index provenance, and unchanged default retrieval until gates pass.
