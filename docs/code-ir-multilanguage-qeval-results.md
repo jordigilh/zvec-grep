@@ -1,5 +1,10 @@
 # Code IR projection qevals: four independent language lanes (2026-09-25)
 
+**Follow-up:** The [source-backed projection and retrieval-unit parity recheck](./code-ir-source-backed-projection-recheck.md)
+adds signature/comment and standalone-entity ablations to these frozen controls.
+It narrows the Go/Python retrieval gap but does not pass either lane's gate;
+flat SCIP reference-name text still regresses the Go result.
+
 ## Summary
 
 The same-engine Code IR projection ablation has now been run against all four
