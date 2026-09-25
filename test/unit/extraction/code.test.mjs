@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CodeExtractor } from "../../../dist/engine/extraction/code/extractor.js";
 import { extractForIndexing } from "../../../dist/engine/extraction/runtime.js";
-import { vectorContentForFragment } from "../../../dist/engine/extraction/vector-content.js";
+import {
+  identifierParts,
+  lexicalTextForFragment,
+  vectorContentForFragment,
+} from "../../../dist/engine/extraction/vector-content.js";
 
 function codeSource(format, text, relativePath = `fixture.${format}`) {
   return {
@@ -37,6 +41,31 @@ function assertSourceBackedFragment(source, fragment) {
     source.text.slice(fragment.range.startOffset, fragment.range.endOffset),
   );
 }
+
+test("identifier parts normalize language-independent symbol syntax", () => {
+  assert.deepEqual(identifierParts("HTTPServer::WorkflowState.Add"), [
+    "http",
+    "server",
+    "workflow",
+    "state",
+    "add",
+  ]);
+  assert.deepEqual(identifierParts("workflow_state"), ["workflow", "state"]);
+});
+
+test("lexical text preserves source while adding structural metadata", async () => {
+  const source = codeSource(
+    "go",
+    "// Adds IDs.\nfunc (s *WorkflowState) Add(workflowIDs ...string) {}",
+    "state.go",
+  );
+  const [fragment] = await new CodeExtractor().extract(source);
+  const lexicalText = lexicalTextForFragment(fragment);
+
+  assert.match(lexicalText, /name_parts: workflow state add/u);
+  assert.match(lexicalText, /Adds IDs/u);
+  assert.match(lexicalText, /func \(s \*WorkflowState\) Add/u);
+});
 
 test("code extractor preserves TypeScript metadata, scope, and source ranges", async () => {
   const source = codeSource(

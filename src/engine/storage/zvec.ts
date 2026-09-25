@@ -28,6 +28,7 @@ import type {
   Range,
 } from "../types.js";
 import { normalizePath } from "../utils/path.js";
+import { lexicalTextForFragment } from "../extraction/index.js";
 import type {
   WorkspaceIndexStorage,
   WorkspaceIndexStorageOptions,
@@ -68,6 +69,7 @@ type StorageSearchHit = {
 
 const ENTITY_VECTOR_FIELD = "embedding";
 const ENTITY_TEXT_FIELD = "text";
+const ENTITY_LEXICAL_TEXT_FIELD = "lexical_text";
 const ZVEC_LOCK_FILE = "LOCK";
 const NO_MATCH_FILTER = "file_id = '__zvec_grep_no_match__'";
 const ZVEC_UPSERT_BATCH_SIZE = 1024;
@@ -307,7 +309,7 @@ class ZvecWorkspaceIndexStorage implements WorkspaceIndexStorage {
   ): StorageSearchHit[] {
     const zvecFilter = buildFilter(filter);
     const docs = this.collection.querySync({
-      fieldName: ENTITY_TEXT_FIELD,
+      fieldName: ENTITY_LEXICAL_TEXT_FIELD,
       fts: { matchString: query },
       ...(zvecFilter ? { filter: zvecFilter } : {}),
       topk: limit,
@@ -936,6 +938,16 @@ function createSchema(
         },
       },
       {
+        name: ENTITY_LEXICAL_TEXT_FIELD,
+        dataType: ZVecDataType.STRING,
+        nullable: false,
+        indexParams: {
+          indexType: ZVecIndexType.FTS,
+          tokenizerName: "jieba",
+          filters: ["lowercase"],
+        },
+      },
+      {
         name: "fragment_index",
         dataType: ZVecDataType.INT32,
         nullable: false,
@@ -1007,6 +1019,7 @@ function fragmentToFields(
     file_id: file.id,
     content_kind: fragment.content.kind,
     ...metadataToFields(fragment.metadata),
+    [ENTITY_LEXICAL_TEXT_FIELD]: lexicalTextForFragment(fragment),
     fragment_index: fragmentIndex,
     range_json: JSON.stringify(fragment.range),
     ...contentFields,

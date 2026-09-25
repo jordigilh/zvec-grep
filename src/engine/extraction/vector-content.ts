@@ -26,6 +26,32 @@ export function vectorContentForFragment(
   };
 }
 
+/**
+ * Return the source and structural metadata used by lexical retrieval.
+ *
+ * Keep this separate from vector content: search results must still expose
+ * the exact source fragment rather than an embedding-only metadata prefix.
+ */
+export function lexicalTextForFragment(fragment: EntityFragment): string {
+  const content = textForContent(fragment.content);
+  const metadata = lexicalMetadataText(fragment.metadata);
+  return metadata.length > 0 ? `${metadata}\n${content}` : content;
+}
+
+/** Split language-independent identifier syntax into searchable name parts. */
+export function identifierParts(value: string): string[] {
+  const tokens = value.normalize("NFKC").match(/[\p{L}\p{N}]+/gu) ?? [];
+  const parts = tokens.flatMap((token) =>
+    token
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+      .replace(/([a-z\d])([A-Z])/g, "$1 $2")
+      .split(/\s+/u)
+      .map((part) => part.toLowerCase())
+      .filter((part) => part.length > 0),
+  );
+  return [...new Set(parts)];
+}
+
 export function chunkOptionsForMetadata(
   options: Required<ChunkOptions>,
   metadata: EntityMetadata | undefined,
@@ -74,20 +100,7 @@ function vectorMetadataText(
   }
 
   if (metadata.kind === "code") {
-    return compactMetadataLines(
-      [
-        metadata.symbolName
-          ? `symbol: ${metadata.symbolType} ${metadata.symbolName}`
-          : `symbol: ${metadata.symbolType}`,
-        metadata.scope ? `scope: ${metadata.scope}` : null,
-        metadata.signature ? `signature: ${oneLine(metadata.signature)}` : null,
-        metadata.modifiers.length > 0
-          ? `modifiers: ${metadata.modifiers.join(" ")}`
-          : null,
-        metadata.doc ? `doc: ${oneLine(metadata.doc)}` : null,
-      ],
-      maxChars,
-    );
+    return compactMetadataLines(codeMetadataLines(metadata), maxChars);
   }
 
   return compactMetadataLines(
@@ -100,6 +113,54 @@ function vectorMetadataText(
     ],
     maxChars,
   );
+}
+
+function lexicalMetadataText(metadata: EntityMetadata | undefined): string {
+  if (!metadata) {
+    return "";
+  }
+
+  if (metadata.kind === "code") {
+    return compactMetadataLines(codeMetadataLines(metadata, true));
+  }
+
+  return compactMetadataLines([
+    metadata.heading ? `heading: ${metadata.heading}` : null,
+    typeof metadata.level === "number"
+      ? `heading_level: ${metadata.level}`
+      : null,
+    metadata.scope ? `scope: ${metadata.scope}` : null,
+  ]);
+}
+
+function codeMetadataLines(
+  metadata: Extract<EntityMetadata, { kind: "code" }>,
+  includeLexicalNames = false,
+): (string | null)[] {
+  const qualified = [metadata.scope, metadata.symbolName]
+    .filter((value): value is string => Boolean(value))
+    .join("::");
+  const nameParts = identifierParts(qualified);
+
+  return [
+    metadata.symbolName
+      ? `symbol: ${metadata.symbolType} ${metadata.symbolName}`
+      : `symbol: ${metadata.symbolType}`,
+    includeLexicalNames && qualified ? `qualified: ${qualified}` : null,
+    includeLexicalNames && nameParts.length > 0
+      ? `name_parts: ${nameParts.join(" ")}`
+      : null,
+    metadata.scope ? `scope: ${metadata.scope}` : null,
+    metadata.signature ? `signature: ${oneLine(metadata.signature)}` : null,
+    metadata.modifiers.length > 0
+      ? `modifiers: ${metadata.modifiers.join(" ")}`
+      : null,
+    metadata.doc ? `doc: ${oneLine(metadata.doc)}` : null,
+  ];
+}
+
+function textForContent(content: Content): string {
+  return content.kind === "text" ? content.text : `[image:${content.format}]`;
 }
 
 function metadataBudget(maxChars: number | undefined): number | undefined {

@@ -8,6 +8,7 @@ import {
   ZVecCreateAndOpen,
   ZVecDataType,
 } from "@zvec/zvec";
+import { CodeExtractor } from "../../dist/engine/extraction/code/extractor.js";
 import { createWorkspaceIndexStorage } from "../../dist/engine/storage/index.js";
 import { queryFileMetadataDocs } from "../../dist/engine/storage/zvec.js";
 
@@ -342,6 +343,65 @@ test("unfinalized FTS writes survive close and can be optimized after reopen", a
     assert.equal(reopened.listFiles().length, 2);
   } finally {
     reopened.close();
+  }
+});
+
+test("qualified-name FTS tokenization works across Java, Python, Go, Rust, and TypeScript", async (t) => {
+  const parent = await mkdtemp(join(tmpdir(), "zvec-grep-qualified-fts-"));
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const fixtures = [
+    ["java", "class WorkflowState { void add() {} }\n"],
+    ["python", "class WorkflowState:\n    def add(self):\n        return 1\n"],
+    ["go", "type WorkflowState struct{}\nfunc (s *WorkflowState) Add() {}\n"],
+    [
+      "rust",
+      "struct WorkflowState;\nimpl WorkflowState { fn add(&self) {} }\n",
+    ],
+    ["typescript", "class WorkflowState { add() {} }\n"],
+  ];
+  const files = fixtures.map(([format], index) => ({
+    id: String.fromCharCode(106 + index).repeat(64),
+    absolutePath: join(parent, `state.${format}`),
+    relativePath: `state.${format}`,
+    rootPath: parent,
+    sizeBytes: 1,
+    lastModifiedTime: 1,
+    kind: "code",
+    format,
+  }));
+  const storage = createWorkspaceIndexStorage(storageOptions(parent));
+
+  try {
+    for (const [index, file] of files.entries()) {
+      const fragments = await new CodeExtractor().extract({
+        kind: "text",
+        text: fixtures[index][1],
+        file,
+      });
+      storage.replaceFile(
+        file,
+        fragments.map((fragment) => ({ fragment, vector: [1, 0] })),
+      );
+    }
+    await storage.finalizeWrites();
+
+    for (const query of ["WorkflowState::add", "WorkflowState.add"]) {
+      const hits = storage.searchFts(query, 5);
+      assert.equal(hits.length, 5);
+      assert.equal(
+        hits.every((hit) => hit.fragment.metadata?.scope === "WorkflowState"),
+        true,
+      );
+    }
+
+    const decomposed = storage.searchFts("workflow_state", 5);
+    assert.equal(decomposed.length, 5);
+    assert.equal(
+      decomposed.every((hit) => hit.fragment.metadata?.symbolName),
+      true,
+    );
+  } finally {
+    storage.close();
   }
 });
 
