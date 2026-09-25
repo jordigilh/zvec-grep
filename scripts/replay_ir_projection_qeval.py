@@ -161,8 +161,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(f"unsupported frozen qeval lane: {language!r}")
     if manifest.get("fixture_id") != f"{language}-workflow-discovery-v1":
         raise ValueError("fixture ID and source language do not match")
-    if args.scip_shadow and language != "go":
-        raise ValueError("the current custom scip-go enrichment arm is Go-only")
     if build_qrels(fixture) != qrels:
         raise ValueError("frozen source, manifest, truth and qrels disagree")
     source_digest, selected, source_bytes = snapshot(fixture, manifest)
@@ -223,9 +221,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "--scip-shadow", str(scip_shadow),
             "--scip-index", str(scip_index),
             "--scip-binary", str(scip_binary),
-            "--expected-scip-facts", str(args.expected_scip_facts),
+            "--scip-producer", args.scip_producer or f"SCIP producer for {language}",
         ])
+        if args.expected_scip_facts is not None:
+            command.extend(["--expected-scip-facts", str(args.expected_scip_facts)])
         scip_provenance = {
+            "producer": args.scip_producer or f"SCIP producer for {language}",
             "binary": str(scip_binary),
             "binary_sha256": sha256_file(scip_binary),
             "index": str(scip_index),
@@ -339,7 +340,8 @@ def main() -> int:
     parser.add_argument("--scip-shadow", type=Path)
     parser.add_argument("--scip-index", type=Path)
     parser.add_argument("--scip-binary", type=Path)
-    parser.add_argument("--expected-scip-facts", type=int, default=117)
+    parser.add_argument("--expected-scip-facts", type=int)
+    parser.add_argument("--scip-producer")
     args = parser.parse_args()
     if bool(args.scip_shadow) != bool(args.scip_index) or bool(args.scip_shadow) != bool(args.scip_binary):
         parser.error("--scip-shadow, --scip-index and --scip-binary must be supplied together")

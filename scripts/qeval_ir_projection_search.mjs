@@ -25,6 +25,7 @@ const modelIdentity = option("--model", false) ?? "local/potion-code-16m-v2";
 const scipShadowPath = option("--scip-shadow", false);
 const scipIndexPath = option("--scip-index", false);
 const scipBinaryPath = option("--scip-binary", false);
+const scipProducer = option("--scip-producer", false);
 const expectedScipFacts = option("--expected-scip-facts", false);
 
 const dist = join(runtimeRoot, "dist/engine");
@@ -45,8 +46,6 @@ const qrels = JSON.parse(await readFile(join(fixtureRoot, "qrels.json"), "utf8")
 const language = manifest.language;
 if (!["go", "python", "rust", "typescript"].includes(language))
   throw new Error(`unsupported qeval language: ${language}`);
-if (scipShadowPath && language !== "go")
-  throw new Error("the custom scip-go reference arm is currently Go-only");
 const selectedPaths = [...new Set(manifest.units.map((unit) => unit.path))].sort();
 const files = [];
 for (const relativePath of selectedPaths) {
@@ -86,11 +85,18 @@ const bytesByPath = new Map(files.map((file) => [file.relative_path, Buffer.from
 const irFileById = new Map(published.snapshot.files.map((file) => [file.file_id, file]));
 let joinedFacts = [];
 let shadowSnapshot = null;
+let actualIndexSha = null;
 if (scipShadowPath) {
   if (!scipIndexPath || !scipBinaryPath)
     throw new Error("SCIP qeval needs --scip-index and --scip-binary provenance");
   const shadowRecord = JSON.parse(await readFile(resolve(scipShadowPath), "utf8"));
   shadowSnapshot = shadowRecord.snapshot ?? shadowRecord;
+  actualIndexSha = await sha256File(resolve(scipIndexPath));
+  const attestedIndexSha = shadowRecord.scip_sha256 ??
+    shadowRecord.scip_artifact_sha256 ??
+    shadowRecord.producer_artifact_sha256;
+  if (!attestedIndexSha || attestedIndexSha !== actualIndexSha)
+    throw new Error("SCIP shadow is not attested to the supplied index artifact");
   const sources = new Map(published.snapshot.files.map((file) => [
     file.file_id,
     bytesByPath.get(file.relative_path),
@@ -232,8 +238,9 @@ const provenance = {
   runtime,
   code_ir: codeIR,
   scip: scipShadowPath ? {
+    producer: scipProducer ?? shadowRecord.producer ?? "unspecified SCIP producer",
     binary_sha256: await sha256File(resolve(scipBinaryPath)),
-    index_sha256: await sha256File(resolve(scipIndexPath)),
+    index_sha256: actualIndexSha,
     shadow_sha256: await sha256File(resolve(scipShadowPath)),
     strict_reference_facts: joinedFacts.length,
   } : null,
