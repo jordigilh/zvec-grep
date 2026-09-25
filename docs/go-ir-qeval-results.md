@@ -87,7 +87,7 @@ runtime and producer artifacts. Key values:
 - Normalized ranks: `59dfcb511bb7cd1ff1dd575082acf2e3443fabc0624cef3523d4f8f357ec55d7`
 - Metrics: `7632bdb7bd70d24fa55f5c21d3c0dc801347118434d0ff2f86586b67bcf8e776`
 
-Run artifacts are under `/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/code-ir-qeval-final-go-20260925/results/` on the evaluation host. Reproduce with a new empty work/output pair:
+Run artifacts are under `/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/code-ir-scip-qeval-matrix-go-20260925/results/` on the evaluation host. Reproduce with a new empty work/output pair:
 
 ```sh
 python3 scripts/replay_ir_projection_qeval.py \
@@ -99,10 +99,14 @@ python3 scripts/replay_ir_projection_qeval.py \
   --output-dir /tmp/go-ir-qeval-NEW/results \
   --scip-shadow /path/to/staged-root/shadow-ir-go-v15.json \
   --scip-index /path/to/staged-root/go/index.scip \
-  --scip-binary /path/to/custom/scip-go-spike
+  --scip-binary /path/to/custom/scip-go-spike \
+  --scip-producer "scip-go@0.2.7 custom PR #298" \
+  --expected-scip-facts 117
 ```
 
-The same runner now accepts all four fixtures. The complete Code IR projection
-matrix is recorded in [`code-ir-multilanguage-qeval-results.md`](./code-ir-multilanguage-qeval-results.md).
-The additional SCIP-reference-text arm remains Go-only for now. No result here
-changes product defaults or enables a SCIP-backed search path.
+The same runner was used for the full four-lane Code IR and SCIP-reference-text
+matrix, summarized in [`code-ir-multilanguage-qeval-results.md`](./code-ir-multilanguage-qeval-results.md).
+The producer-attributed Go rerun in that matrix has raw-evidence SHA-256
+`6de08e062c7f2000c0a1c5691ce623cbbd9f0cecfb2a3fb70366e7ed11ad477b` (same
+normalized-rank and metric hashes above). No result here changes product
+defaults or enables a SCIP-backed search path.
