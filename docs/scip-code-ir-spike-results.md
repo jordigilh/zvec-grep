@@ -9,6 +9,13 @@ query-level losses. Adding flat SCIP target names fails the Go gate even after
 projection parity improves. These newer measurements do not change the
 source-fidelity conclusions below or enable default ranking.
 
+**Current scip-go PR revision:** The maintainer's review prompted a new
+[PR #298 head `c1926a3` revalidation](scip-go-pr298-revalidation-20260925.md).
+The frozen Go primary sites and strict IR facts are unchanged, while the
+immutable Kubernaut producer run gains 367 valid declaration enclosures.
+All checks pass; review approval is still pending. Historical binary/index
+hashes and results below remain pinned to their original builds.
+
 **Upstream Go contribution:** After the separate Code IR v1.5 branch was committed and a same-source strict join revalidated, a focused [scip-go issue #297](https://github.com/scip-code/scip-go/issues/297) and [PR #298](https://github.com/scip-code/scip-go/pull/298) were created at the user's request. The PR remains subject to upstream CI/review and changes no zvec-grep defaults. See [post-commit measurements](scip-go-post-code-ir-v15-revalidation.md).
 
 **Prototype direction (all producers reassessed):** All four official SCIP indexers exist and produced real indexes on the frozen fixtures. [Rust's native output](rust-scip-reassessment.md) is self-describing with explicit UTF-8 positions; [the other three](scip-nonrust-producer-reassessment.md) remain protocol-ambiguous (`position_encoding=0`) but real Unicode/CRLF controls identify a **version-pinned compatibility candidate** (TypeScript/Python UTF-16; Go UTF-8). That does not authorize a generic guessing rule. Separately, a from-scratch four-language LSP rebuild demonstrated 286 source-mapped document symbols and 454 candidate references; its **strict join against the real syntax-backed IR** validated 179/454 as schema/runtime-valid shadow facts. The non-Rust pinned SCIP compatibility experiment yielded 8 TypeScript, 49 Python and 18 Go strict shadow facts on different producer reference populations. Select one optional semantic producer per language and workload after exact source/snapshot/conformance gates; avoid duplicate indexing by default. No lane is enabled in search or ranking, and syntax-backed Code IR remains primary.

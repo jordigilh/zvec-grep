@@ -1,0 +1,41 @@
+{
+  "schema": "scip-go-pr298-revision-revalidation-v1",
+  "date": "2026-09-25",
+  "old_commit": "23715d7823417867536a17b82c9b39fa629fd11a",
+  "new_commit": "c1926a380beef870dde29ded54e4f8655bb875f9",
+  "old_binary_sha256": "eb09bc8ca1315c474308b9f6ca356f4ec744b45f9986519d65319c825b214e0e",
+  "new_binary_sha256": "19dd50f17f0a58733cd5993578708853fff26f9c7fc98c7f98a6d93482c80289",
+  "frozen_go_fixture": {
+    "selected_source_set_sha256": "13ca96abdeb8ef919a746f1ec1afb3ae5b6d59e8b0282d98109bc2b6a8c4f53d",
+    "documents": 10,
+    "primary_occurrences": 471,
+    "primary_site_role_symbol_equal": true,
+    "old_definition_enclosures": 58,
+    "new_definition_enclosures": 58,
+    "old_scip_sha256": "9f073e847663c6859fac865f3b51e8acc838552ffd53b223572b9e127d413b91",
+    "new_scip_sha256": "96b2f7cc078e8c2f31021c4ae3dfd539b82d580cc7d7c0ebf0c418d9226f3614",
+    "code_ir_snapshot_id": "38924ec8adb36ec929b2a9ac01f3ec09ce786fe8d355fad98e17a42507dc6be6",
+    "new_shadow_sha256": "9d81bf8a56e023e4ae4dca001130f549937c341d5f8c5df09e20f99cceea0120",
+    "strict_reference_joins": 117,
+    "shadow_factset_equal": true,
+    "shadow_factset_sha256": "b69865da05a6d4508cd6dd889ecbcff7a0942cb75dc8f718b140e19b783f916b",
+    "source_labeled_correct": "20/20",
+    "selected_local_negative_abstentions": "3/3"
+  },
+  "kubernaut": {
+    "revision": "9dcc3816d0eeb75174b86b5f45e4c7d5efc95c17",
+    "selected_source_set_sha256": "d857f85a7522845e34dd197b08202a5a627c9c0a8c5b10d4bb30638552e5a9b0",
+    "documents": 1070,
+    "source_bytes": 13633512,
+    "primary_occurrences": 498542,
+    "primary_site_role_symbol_equal": true,
+    "old_definition_enclosures": 30559,
+    "new_definition_enclosures": 30926,
+    "added_definition_enclosures": 367,
+    "removed_or_changed_enclosures": 0,
+    "all_new_primary_and_enclosing_source_spans_valid": true,
+    "old_scip_sha256": "7dce2bf1407a8de29c4df0f3896ac64f1b459e5ab5178cbda32608798fb1d85c",
+    "new_scip_sha256": "f882285e4c0c7ac64977701dfb9dac368cecdd0573a1c2af9330068f5a67b1d2"
+  },
+  "scope": "SCIP producer/source-map revalidation, frozen Go strict IR join and selected labels; no Kubernaut relation-precision or retrieval-quality claim"
+}

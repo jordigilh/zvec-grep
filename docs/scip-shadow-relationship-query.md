@@ -1,5 +1,12 @@
 # Snapshot-bound Code IR relationship lookup (2026-09-25)
 
+**Producer revision:** This report pins the original PR #298 custom binary.
+The [review-response revision `c1926a3` was independently revalidated](./scip-go-pr298-revalidation-20260925.md):
+its frozen Go Code IR factset is identical, it passes the same 20 positive and
+three negative lookup controls, and it adds 367 valid declaration enclosures
+on an immutable Kubernaut revision without changing primary sites. Use the
+binary/index/shadow hashes of the specific revision being queried.
+
 ## Outcome
 
 The compiler-like pipeline can keep semantic links as **validated relationships**
