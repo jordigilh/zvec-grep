@@ -1,0 +1,108 @@
+{
+  "schema": "scip-spike-authored-go-sites-v2",
+  "fixture_id": "go-workflow-discovery-v1",
+  "source_set_sha256": "94183663d9e5f81b753dde7c460428c2414c46867b936b5cc42f9827dab0827f",
+  "note": "Twenty source-authored Go reference sites, manually selected from the frozen ten-file fixture before checking SCIP/LSP answers. Lines are 1-based; occurrence indexes are 0-based within the line. This supplements the original five-site-per-language v1 inventory without changing it or the frozen qrels.",
+  "go": [
+    {
+      "site": ["internal/tools/list_workflows.go", 10, "ListWorkflows", 0],
+      "definition": ["internal/discovery/catalog.go", 15, "ListWorkflows", 0],
+      "kind": "same-name cross-file method call"
+    },
+    {
+      "site": ["internal/tools/list_workflows.go", 21, "Add", 0],
+      "definition": ["internal/discovery/state.go", 20, "Add", 0],
+      "kind": "cross-file method call"
+    },
+    {
+      "site": ["internal/selection/validator.go", 41, "Contains", 0],
+      "definition": ["internal/discovery/state.go", 36, "Contains", 0],
+      "kind": "cross-file method call"
+    },
+    {
+      "site": ["internal/selection/validator.go", 45, "IsAllowed", 0],
+      "definition": ["internal/selection/validator.go", 37, "IsAllowed", 0],
+      "kind": "same-file method call"
+    },
+    {
+      "site": ["internal/tools/list_workflows.go", 15, "RecordDiscovered", 0],
+      "definition": ["internal/tools/list_workflows.go", 19, "RecordDiscovered", 0],
+      "kind": "same-file function call"
+    },
+    {
+      "site": ["internal/discovery/catalog.go", 27, "ListWorkflows", 0],
+      "definition": ["internal/discovery/catalog.go", 15, "ListWorkflows", 0],
+      "kind": "same-file method call"
+    },
+    {
+      "site": ["internal/discovery/catalog.go", 27, "ApplyLabelFilters", 0],
+      "definition": ["internal/discovery/filters.go", 23, "ApplyLabelFilters", 0],
+      "kind": "cross-file function call"
+    },
+    {
+      "site": ["internal/selection/retry.go", 10, "WorkflowStateFromContext", 0],
+      "definition": ["internal/discovery/state.go", 52, "WorkflowStateFromContext", 0],
+      "kind": "cross-file function call"
+    },
+    {
+      "site": ["internal/selection/retry.go", 12, "SetWorkflowState", 0],
+      "definition": ["internal/selection/validator.go", 31, "SetWorkflowState", 0],
+      "kind": "cross-file method call"
+    },
+    {
+      "site": ["internal/selection/retry.go", 14, "Validate", 0],
+      "definition": ["internal/selection/validator.go", 44, "Validate", 0],
+      "kind": "cross-file method call"
+    },
+    {
+      "site": ["internal/selection/retry.go", 18, "SelfCorrectSelection", 0],
+      "definition": ["internal/selection/retry.go", 9, "SelfCorrectSelection", 0],
+      "kind": "same-file function call"
+    },
+    {
+      "site": ["internal/selection/retry.go", 19, "retrySelection", 0],
+      "definition": ["internal/selection/retry.go", 24, "retrySelection", 0],
+      "kind": "same-file function call"
+    },
+    {
+      "site": ["internal/selection/retry.go", 25, "SelfCorrectSelection", 0],
+      "definition": ["internal/selection/retry.go", 9, "SelfCorrectSelection", 0],
+      "kind": "same-file function call"
+    },
+    {
+      "site": ["internal/selection/validator.go", 20, "WorkflowState", 0],
+      "definition": ["internal/discovery/state.go", 10, "WorkflowState", 0],
+      "kind": "cross-file imported type reference"
+    },
+    {
+      "site": ["internal/selection/validator.go", 48, "ValidationError", 0],
+      "definition": ["internal/selection/validator.go", 9, "ValidationError", 0],
+      "kind": "same-file type reference"
+    },
+    {
+      "site": ["internal/tools/select_workflow.go", 28, "isWorkflowInDiscoveryResult", 0],
+      "definition": ["internal/tools/select_workflow.go", 15, "isWorkflowInDiscoveryResult", 0],
+      "kind": "same-file function call"
+    },
+    {
+      "site": ["internal/tools/select_workflow.go", 35, "authorizeSelectionDriver", 0],
+      "definition": ["internal/tools/select_workflow.go", 27, "authorizeSelectionDriver", 0],
+      "kind": "same-file function call"
+    },
+    {
+      "site": ["internal/tools/select_workflow.go", 38, "GetWorkflow", 0],
+      "definition": ["internal/discovery/catalog.go", 30, "GetWorkflow", 0],
+      "kind": "cross-file method call"
+    },
+    {
+      "site": ["internal/tools/select_workflow.go", 42, "applySelectedWorkflow", 0],
+      "definition": ["internal/tools/select_workflow.go", 50, "applySelectedWorkflow", 0],
+      "kind": "same-file function call"
+    },
+    {
+      "site": ["internal/tools/select_workflow.go", 51, "lookupDiscoveredParameters", 0],
+      "definition": ["internal/tools/select_workflow.go", 54, "lookupDiscoveredParameters", 0],
+      "kind": "same-file function call"
+    }
+  ]
+}

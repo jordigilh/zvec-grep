@@ -3,6 +3,7 @@
 Usage: python3 scripts/scip_reference_probe.py ROOT
 Writes one compact JSON object/line to stdout; never changes the fixture roots.
 """
+import argparse
 import hashlib
 import json
 import os
@@ -208,10 +209,10 @@ def audit_cross_file(server, index, lane):
     return {'counts': counts, 'discrepancies': discrepancies, 'excluded_examples': excluded_examples}
 
 
-def run(root, languages=LANGS, audit=False):
+def run(root, languages=LANGS, audit=False, labels_path=LABELS):
     sys.path.insert(0, str(root))
     import scip_pb2
-    labels_data = LABELS.read_bytes()
+    labels_data = pathlib.Path(labels_path).read_bytes()
     labels = json.loads(labels_data)
     tools = root / 'lsp-tools/node_modules'
     commands = {
@@ -220,8 +221,10 @@ def run(root, languages=LANGS, audit=False):
         'rust': ['rust-analyzer'],
         'go': ['gopls', 'serve'],
     }
-    print(json.dumps({'label_sha256': hashlib.sha256(labels_data).hexdigest(), 'labels_per_language': {lang: len(labels[lang]) for lang in LANGS}}), flush=True)
+    print(json.dumps({'label_sha256': hashlib.sha256(labels_data).hexdigest(), 'labels_per_language': {lang: len(labels.get(lang, [])) for lang in languages}}), flush=True)
     for lang in languages:
+        if lang not in labels:
+            raise ValueError(f'no source-authored labels for language {lang!r} in {labels_path}')
         lane = (root / lang).resolve()
         assert digest(lane, selected(lang)[2]) == SOURCE_DIGESTS[lang], f'{lang} staged source changed'
         msg = scip_pb2.Index()
@@ -270,5 +273,15 @@ def run(root, languages=LANGS, audit=False):
 
 
 if __name__ == '__main__':
-    args = sys.argv[2:]
-    run(pathlib.Path(sys.argv[1]).resolve(), tuple(arg for arg in args if arg != '--audit-all') or LANGS, '--audit-all' in args)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('root', type=pathlib.Path)
+    parser.add_argument('languages', nargs='*', choices=LANGS)
+    parser.add_argument('--audit-all', action='store_true')
+    parser.add_argument('--labels', type=pathlib.Path, default=LABELS)
+    arguments = parser.parse_args()
+    run(
+        arguments.root.resolve(),
+        tuple(arguments.languages) or LANGS,
+        arguments.audit_all,
+        arguments.labels.resolve(),
+    )
