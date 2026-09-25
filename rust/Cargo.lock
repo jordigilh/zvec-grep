@@ -4028,6 +4028,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "zg-code-ir"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tree-sitter",
+ "tree-sitter-go",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+]
+
+[[package]]
 name = "zg-codegraph"
 version = "0.0.1"
 dependencies = [

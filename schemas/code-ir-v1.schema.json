@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jordigilh/zvec-grep/schemas/code-ir-v1.schema.json",
+  "title": "zvec-grep Code IR v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "schema_version",
+    "repository_id",
+    "root_set",
+    "snapshot_id",
+    "frontend_versions",
+    "files",
+    "units",
+    "facts"
+  ],
+  "properties": {
+    "schema": { "const": "zvec-grep.code-ir" },
+    "schema_version": { "const": 1 },
+    "repository_id": { "type": "string", "minLength": 1 },
+    "root_set": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "revision": { "type": "string" },
+    "snapshot_id": { "$ref": "#/$defs/digest" },
+    "frontend_versions": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "files": { "type": "array", "items": { "$ref": "#/$defs/file" } },
+    "units": { "type": "array", "items": { "$ref": "#/$defs/unit" } },
+    "facts": { "type": "array", "items": { "$ref": "#/$defs/fact" } }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "position": {
+      "type": "object",
+      "required": ["line", "column_byte"],
+      "properties": {
+        "line": { "type": "integer", "minimum": 1 },
+        "column_byte": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "file_id",
+        "sha256",
+        "start_byte",
+        "end_byte",
+        "start",
+        "end"
+      ],
+      "properties": {
+        "file_id": { "type": "string" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "start_byte": { "type": "integer", "minimum": 0 },
+        "end_byte": { "type": "integer", "minimum": 1 },
+        "start": { "$ref": "#/$defs/position" },
+        "end": { "$ref": "#/$defs/position" }
+      },
+      "additionalProperties": false
+    },
+    "file": {
+      "type": "object",
+      "required": [
+        "file_id",
+        "root_id",
+        "relative_path",
+        "language",
+        "sha256",
+        "byte_length",
+        "extraction"
+      ],
+      "properties": {
+        "file_id": { "type": "string" },
+        "root_id": { "type": "string" },
+        "relative_path": { "type": "string" },
+        "language": { "type": "string" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "byte_length": { "type": "integer", "minimum": 0 },
+        "extraction": {
+          "type": "object",
+          "required": ["status", "frontend_version"],
+          "properties": {
+            "status": { "enum": ["complete", "partial", "opaque", "failed"] },
+            "reason": { "type": "string" },
+            "frontend_version": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "extension": {
+      "type": "object",
+      "required": ["language", "data"],
+      "properties": {
+        "language": { "type": "string" },
+        "data": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "unit": {
+      "type": "object",
+      "required": ["id", "kind", "source", "origin"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": {
+          "enum": [
+            "file",
+            "module",
+            "type",
+            "function",
+            "method",
+            "value",
+            "opaque"
+          ]
+        },
+        "subtype": { "type": "string" },
+        "name": { "type": "string" },
+        "qualified_name": { "type": "string" },
+        "parent_id": { "type": "string" },
+        "scope_id": { "type": "string" },
+        "signature": { "$ref": "#/$defs/anchored_text" },
+        "documentation": { "$ref": "#/$defs/anchored_text" },
+        "source": { "$ref": "#/$defs/source" },
+        "origin": {
+          "type": "object",
+          "required": ["language", "frontend", "syntax_kind"],
+          "properties": {
+            "language": { "type": "string" },
+            "frontend": { "type": "string" },
+            "syntax_kind": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "extensions": { "$ref": "#/$defs/extension" }
+      },
+      "additionalProperties": false
+    },
+    "anchored_text": {
+      "type": "object",
+      "required": ["text", "source"],
+      "properties": {
+        "text": { "type": "string" },
+        "source": { "$ref": "#/$defs/source" }
+      },
+      "additionalProperties": false
+    },
+    "fact": {
+      "type": "object",
+      "required": ["id", "kind", "subject_id", "site", "status", "provenance"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": {
+          "enum": [
+            "contains",
+            "calls",
+            "references",
+            "reads",
+            "writes",
+            "returns",
+            "throws",
+            "implements",
+            "tests",
+            "guards",
+            "imports"
+          ]
+        },
+        "subject_id": { "type": "string" },
+        "object_id": { "type": "string" },
+        "target_spelling": { "type": "string" },
+        "candidate_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "site": { "$ref": "#/$defs/source" },
+        "status": {
+          "enum": [
+            "observed",
+            "name_candidate",
+            "ambiguous",
+            "type_resolved",
+            "unresolved"
+          ]
+        },
+        "provenance": {
+          "type": "object",
+          "required": ["frontend", "method"],
+          "properties": {
+            "frontend": { "type": "string" },
+            "method": { "type": "string" },
+            "resolver": { "type": "string" },
+            "resolver_version": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "extensions": { "$ref": "#/$defs/extension" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
