@@ -49,6 +49,17 @@
             "id": "82ac4afc4f2aa5fb2f54a878ea4fc263a55784dee79f9eb41db59f8b08295026",
             "kind": "function",
             "name": "add",
+            "signature": {
+              "text": "func add()",
+              "source": {
+                "file_id": "fd3f3effada04934dd88671181460f05759ea47c6aeed91398df39e89e851f2e",
+                "sha256": "df26235505695db870561db55f78b595d2130f5499f38063dd8e6d5b06eafe60",
+                "start_byte": 13,
+                "end_byte": 23,
+                "start": { "line": 2, "column_byte": 0 },
+                "end": { "line": 2, "column_byte": 10 }
+              }
+            },
             "source": {
               "file_id": "fd3f3effada04934dd88671181460f05759ea47c6aeed91398df39e89e851f2e",
               "sha256": "df26235505695db870561db55f78b595d2130f5499f38063dd8e6d5b06eafe60",
@@ -157,6 +168,17 @@
             "id": "8fa8e489664e61e100197aadbc528706d93738e3e400e41d2066715af581e9ee",
             "kind": "function",
             "name": "add",
+            "signature": {
+              "text": "def add():",
+              "source": {
+                "file_id": "1199090c0271f8b1f3f02ce8ae3473481fbe752b6c298d653d7d1e5693ad78e2",
+                "sha256": "61a887bb078454c091d84d21e393845236c19a063e0dad43ceaf79e1fe33ac71",
+                "start_byte": 0,
+                "end_byte": 10,
+                "start": { "line": 1, "column_byte": 0 },
+                "end": { "line": 1, "column_byte": 10 }
+              }
+            },
             "source": {
               "file_id": "1199090c0271f8b1f3f02ce8ae3473481fbe752b6c298d653d7d1e5693ad78e2",
               "sha256": "61a887bb078454c091d84d21e393845236c19a063e0dad43ceaf79e1fe33ac71",
@@ -265,6 +287,17 @@
             "id": "ffca5208f4bd3a1bff7bde6088c31d30cfe66da9b83c81d2e932922cb6e3cf0d",
             "kind": "function",
             "name": "add",
+            "signature": {
+              "text": "fn add()",
+              "source": {
+                "file_id": "1ae8585efbd00a4937133afbe566d875470bb31c903d2126820a20db12fce3a6",
+                "sha256": "19d25913e7bca05189ed065fe5cd9998ccd73ccee28f6862b9ed06d0ecb2c010",
+                "start_byte": 0,
+                "end_byte": 8,
+                "start": { "line": 1, "column_byte": 0 },
+                "end": { "line": 1, "column_byte": 8 }
+              }
+            },
             "source": {
               "file_id": "1ae8585efbd00a4937133afbe566d875470bb31c903d2126820a20db12fce3a6",
               "sha256": "19d25913e7bca05189ed065fe5cd9998ccd73ccee28f6862b9ed06d0ecb2c010",
@@ -373,6 +406,17 @@
             "id": "cba24cadc0ee12fea5918b490b864773dc0e1242b6f71734ce2ed881eb842b59",
             "kind": "function",
             "name": "add",
+            "signature": {
+              "text": "function add()",
+              "source": {
+                "file_id": "5b4de68cc8e721946e01a7dd2ca3190adcd5f96542c0bfc8e0d4959850df7cd3",
+                "sha256": "2157b9ac8c5c5dd8b562e5e97f831ce85248502a559b1d105374da0c47968c6e",
+                "start_byte": 0,
+                "end_byte": 14,
+                "start": { "line": 1, "column_byte": 0 },
+                "end": { "line": 1, "column_byte": 14 }
+              }
+            },
             "source": {
               "file_id": "5b4de68cc8e721946e01a7dd2ca3190adcd5f96542c0bfc8e0d4959850df7cd3",
               "sha256": "2157b9ac8c5c5dd8b562e5e97f831ce85248502a559b1d105374da0c47968c6e",
