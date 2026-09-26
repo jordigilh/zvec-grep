@@ -4,7 +4,8 @@
 
 PRs [#9–#12](./code-ir-worktree-and-dependency-map.md#review-stack-on-the-fork)
 are merged into fork `integration/zvec-live-code-intelligence` at `acb3abc`.
-This follow-up tests v1.6 signature/documentation **against independently
+Follow-up [PR #14](https://github.com/jordigilh/zvec-grep/pull/14) tests v1.6
+signature/documentation **against independently
 authored source-site labels**, instead of interpreting emitted metadata counts
 as ground truth. It does not change the frontend, the retrieval projection, or
 default search ranking.

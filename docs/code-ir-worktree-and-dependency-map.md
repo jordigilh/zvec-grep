@@ -26,7 +26,7 @@ Engram frozen source/manifests/qrels ──read-only inputs──▶ conformance
 | Role | Branch / observed commit | Checkout on this host | What it contains | Action |
 |---|---|---|---|---|
 | **Merged Code IR base** | `integration/zvec-live-code-intelligence` / `acb3abc` | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-fork` | [Contract](./code-ir-design-issue-8.md), [staged plan](./code-ir-implementation-plan-issue-8.md), opt-in IR/projection and v1.6 source metadata (PRs #9–#12) | Base new PRs on this branch, not the rewritten historical spike heads. Fork `main` remains a separate integration decision. |
-| **Active coverage review** | `spike/code-ir-metadata-coverage` / based on `acb3abc` | Same checkout as above; switched branch after fast-forward | Source-authored labels, verifier tests and [per-lane report](./code-ir-metadata-coverage-results-20260926.md) | Finish checks and open a PR against merged integration; do not edit frozen fixture repositories. |
+| **Active coverage review** | [`spike/code-ir-metadata-coverage`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-metadata-coverage) / based on `acb3abc` | Same checkout as above; switched branch after fast-forward | Source-authored labels, verifier tests and [per-lane report](./code-ir-metadata-coverage-results-20260926.md) | Review [PR #14](https://github.com/jordigilh/zvec-grep/pull/14) against merged integration; do not edit frozen fixture repositories. |
 | Historical IR checkout | `spike/code-ir-design` / local `139fe4e` | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-code-ir-design` | Earlier IR authoring branch; merged through #11 with rewritten remote commits | Leave untouched; use integration for current code. |
 | Inventory backup | [`spike/code-ir-metadata-inventory-wip`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-metadata-inventory-wip) / `b1d4e5a` | No separate checkout | Original unverified script/test snapshot | Preserved, no PR; the active branch reuses those two files without inheriting the old pre-merge history. |
 | Historical one-pass checkout | `spike/code-ir-one-pass-evidence` / local `e96bec9` | `/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/code-ir-one-pass-evidence-20260926` | Original PR #12 worktree; remote was rewritten by the merge flow | Leave untouched. The merged integration tip is authoritative. |
@@ -89,11 +89,11 @@ prerequisite.
 
 ## Next handoff
 
-- **Now (on `spike/code-ir-metadata-coverage`):** Review the [source-authored
-  metadata inventory](./code-ir-metadata-coverage-results-20260926.md), run its
-  byte/hash-verified per-language replay and checks, then open a PR targeting
-  `integration/zvec-live-code-intelligence`. Report the selected-case
-  denominator rather than claiming whole-fixture coverage.
+- **Now (on `spike/code-ir-metadata-coverage`):** Review [PR
+  #14](https://github.com/jordigilh/zvec-grep/pull/14) and the [source-authored
+  metadata inventory](./code-ir-metadata-coverage-results-20260926.md). Its
+  byte/hash-verified per-language replay and checks passed. Report the
+  selected-case denominator rather than claiming whole-fixture coverage.
 - **Then:** Add an explicit, versioned retrieval-unit policy and source-ref
   projection in an opt-in path; drive it with tests before paired per-language
   qeval. Keep source citations on original bytes and preserve the default
