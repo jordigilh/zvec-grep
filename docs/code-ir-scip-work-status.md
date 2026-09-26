@@ -7,11 +7,26 @@ Update the prior experiment commit, upstream PR head, evidence and next step
 when work resumes; earlier result reports remain immutable records of the
 producer and fixtures actually evaluated.
 
-## Latest status check (2026-09-26)
+## Syntax frontend milestone (2026-09-26)
 
-- The last spike design checkpoint is `ce13a69`; no later spike code or
-  evaluation has been recorded. The owning `spike/code-ir-design` checkout
-  remains at `139fe4e` and is clean.
+The independent branch
+[`spike/code-ir-one-pass-evidence`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-one-pass-evidence)
+now derives byte-verified signature headers and adjacent documentation from the
+**same** Go, Python, Rust and TypeScript frontend parse that creates Code IR
+units. See its [TDD and read-only fixture results](https://github.com/jordigilh/zvec-grep/blob/spike/code-ir-one-pass-evidence/docs/code-ir-one-pass-metadata-results-20260926.md).
+The v1.6 frontend keeps frozen-fixture unit/fact IDs unchanged but creates new
+snapshot identities; default retrieval and the owning `spike/code-ir-design`
+checkout are untouched. The code/tests commit is `87718f7` and the evidence
+commit is `73b424c`, pushed to the fork. This syntax milestone is independent
+of scip-go and has **not** rerun paired retrieval qevals or judged real-
+Kubernaut retrieval cases. Next: independently inventory metadata coverage,
+then version the retrieval-unit projection policy and rerun each language's
+frozen qeval before considering enablement.
+
+## Earlier upstream status check (2026-09-26)
+
+- At this earlier check, the last SCIP-spike design checkpoint was `ce13a69`;
+  the owning `spike/code-ir-design` checkout remained at `139fe4e` and clean.
   [Issue #8](https://github.com/jordigilh/zvec-grep/issues/8) is open.
 - Upstream scip-go PR #298 is still **open** at `c1926a3`. All reported checks
   pass, but the review remains `CHANGES_REQUESTED` / `BLOCKED`; no maintainer
