@@ -44,8 +44,9 @@ authorization to turn on a lane.
 These controls match the previously recorded syntax-only baseline scores for
 all four languages. Direct v2 text is *not identical* to the earlier
 second-extractor experimental metadata arm: the in-frontend Go documentation
-coverage, signature formatting and v2 bounded text differ. Hence Go's v2
-nDCG (0.577130) differs from the old source-parity experiment (0.586157).
+coverage, signature formatting and v2 bounded text differ. Go's v2 nDCG
+(0.577130) therefore cannot be treated as a repeat of the old source-parity
+experiment (0.586157); these differences have **not** been isolated as causes.
 No older experiment is substituted for this run.
 
 ## All eight query-level deltas
@@ -76,6 +77,66 @@ Rust's `handle_select_workflow` drops from rank 4 to 5 for
 TypeScript's `WorkflowCatalog.listActions` drops from 5 to 6 for
 `forward-labels-to-discovery`. These are diagnostic observations, **not**
 query-specific ranking adjustments.
+
+## Follow-up: ingestion-gap versus ranking triage
+
+**The measured losses do not show a missing declaration/source range in these
+frozen cases.** This run has no SCIP input, so scip-go enclosing-range omissions
+cannot affect its indexes. Rechecking the *current* Go sidecar against the
+independently Go-AST-derived, source-hash-pinned 38-unit inventory produced
+**38 exact declaration byte-span/kind/identifier matches; zero missing or
+ambiguous**. The inventory artifact is
+`code-ir-final-source-parity-go-results-20260925/go-source-unit-inventory-v1.json`
+(SHA-256 `42b7fef4f79bc84ec891666caea94696f3cf40e41d522d60eaf0d7268c977faf`)
+under the external artifact root below; its `source_set_sha256` matches the
+current Go run. This is an independent producer check of the **selected Go
+fixture**, not whole-repository or cross-language conformance.
+
+In each of the four fixtures, the 23 **distinct positive qrel units** have a
+matching, v2-ranked IR record by file, declaration name and overlapping line
+range; no positive unit was excluded by the Go-field/Python-attribute policy.
+The sampled records below also round-trip their original byte slices and
+include the source-backed signature when present. For Python, Rust and
+TypeScript this presence test uses manifest source lines and name, **not** an
+independently authored exact byte-span/kind inventory. Rust's `WorkflowState`
+manifest label spans both the struct and its `impl`; six Rust module-declaration
+labels have no standalone IR unit but are grade 0. These limitations must not
+be hidden by the positive-unit count.
+
+Raw hit and route traces show *ranking displacement* in the largest losses:
+
+| Lane/query | Attested source unit and observed change | Interpretation |
+|---|---|---|
+| Go `interactive-selection-guard` | `DiscoveryResult` has exact Go AST span `[109,183)` and its own v2 record, but moves from **raw rank 9 to outside @10**. Grade-0 `WorkflowState` enters v2 at rank 2 (FTS 4, vector 4); `HandleSelectWorkflow` and `isWorkflowInDiscoveryResult` move 2/3 → 3/4. | Not a missing byte range or excluded unit. A non-answer competes more effectively, but source-text versus embedding contributions are not yet isolated. |
+| Python `preserve-membership-on-retry` | Grade-0 `WorkflowState.contains` moves **raw rank 9 → 3**: FTS rank 8 in both arms, vector rank 11 → 9, fusion score 0.017162 → 0.020221. Relevant `self_correct_selection` moves raw 5 → 6; the broad `Validator` class hit moves 6 → 7. | A small vector-order change crosses the hybrid corroboration rule (`both ranks <= 10`), boosting a non-answer ahead of relevant results. |
+| Python `validate-workflow-parameters` | Grade-0 `apply_selected_workflow` moves **raw rank 7 → 1** although FTS stays 5 and vector gets worse, 1 → 2. Fusion score rises 0.018071 → 0.021154; `validate_workflow_parameters` moves 5 → 6. | With route ranks 5/1 the rank-agreement ratio exceeds 2.5; at 5/2 it meets 2.5, switching from a 0.07-weighted discordant bonus to a capped 25% corroboration bonus. This is a concrete ranking threshold effect, **not** an ingestion omission. |
+| Rust / TypeScript | Relevant declarations behind their query losses have eligible v2 records; raw ranks shift by one or more slots (e.g. Rust `handle_select_workflow` 4 → 5; TypeScript `WorkflowCatalog.listActions` has a hit 3 → 4). | Ordering loss, not evidence of a missing selected positive unit; independent byte-span adjudication is still incomplete. |
+
+The Python threshold is defined in
+[`candidateFusionScore`](../src/engine/pipeline/search/fusion.ts): a route pair
+must be in the same fusion band *and* have maximum rank no more than 2.5 times
+minimum rank to earn full corroboration. The route traces above cross those
+boundaries; the text or unit-selection change that moved the route ranks still
+needs a controlled ablation.
+
+The scorer maps each raw hit to **every manifest unit whose source lines
+intersect it**. This matters: Python's `Validator` class hit at lines 10–25
+gets credit for the nested `set_workflow_state` method even when the method's
+own IR record is not a top-ten hit. Rust's `WorkflowState` label covers both
+struct and `impl`, and TypeScript outlines can overlap methods. Reported
+normalized source-unit ranks (such as Python 5/8 → 7/10 above) need not equal
+raw hit ranks (5/6 → 6/7). We have **not** shown that exact fine-grained
+endpoint retrieval would yield the same metric deltas; that requires
+independently authored span/identity judgments, not rewriting frozen qrels
+after seeing candidate results.
+
+**Next diagnostic, not a proposed fix yet:** Hold source, scorer and model
+fixed while separately ablating unit selection, signatures, docs and window
+text. Audit the hybrid fusion threshold against general queries and inspect
+real-repository negative results. Avoid query-specific boosts and keep baseline
+discovery as fallback. Extend independently source-labelled byte-span coverage
+before claiming that ingestion gaps *cannot* matter on other corpora. An
+updated scip-go binary is irrelevant to this syntax-only loss investigation.
 
 ## Provenance, artifacts and reproduction
 
