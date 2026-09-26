@@ -155,6 +155,11 @@ judged queries without fitting the eight frozen queries. Independently label
 real-Kubernaut retrieval and negative/ambiguous relationship cases. Keep the
 existing discovery fallback while these gates are open.
 
+**Subsequent diagnosis:** The [baseline-to-v1 gap inventory and exact-unit
+Python text replay](./code-ir-v1-gap-diagnostic-results-20260926.md) identifies
+why the Python v1 view lost ground without changing this ablation's result or
+enabling default ranking. Go's range mismatches still require a separate test.
+
 ## Reproduction and artifact hashes
 
 Run committed adapter/code at `66bd334` after `npm run build`; example Go
