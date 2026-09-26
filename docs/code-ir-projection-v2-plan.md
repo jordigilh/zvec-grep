@@ -1,7 +1,7 @@
 # Code IR v2 opt-in retrieval policy plan (issue #8)
 
-**Base:** `spike/code-ir-projection-policy-v2` branches from metadata coverage
-[PR #14](https://github.com/jordigilh/zvec-grep/pull/14), itself based on the
+**Review:** [PR #15](https://github.com/jordigilh/zvec-grep/pull/15) branches
+from metadata coverage [PR #14](https://github.com/jordigilh/zvec-grep/pull/14), itself based on the
 merged integration tip `acb3abc`. This is the **next review unit**, not a
 change to the default index. Frozen source/manifests/truth/qrels stay read-only.
 
