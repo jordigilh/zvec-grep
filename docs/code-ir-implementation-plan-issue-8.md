@@ -10,10 +10,11 @@ records the opt-in v1.6 milestone and remaining conformance/retrieval gates.
 
 **Issue:** https://github.com/jordigilh/zvec-grep/issues/8
 
-**Implementation checkout:** `spike/code-ir-design` at
-`/Users/jgil/go/src/github.com/jordigilh/zvec-grep-code-ir-design`, based on
-`5f2c5e490c93652619b3661faa42a439981517fb`. The design document is
-currently untracked work in this checkout: keep it intact.
+**Current implementation base (2026-09-26):** PRs #9–#12 were merged into
+`integration/zvec-live-code-intelligence` at `acb3abc`. The historical
+`spike/code-ir-design` checkout remains separate; continue new review units
+from merged integration. The [metadata coverage assessment](./code-ir-metadata-coverage-results-20260926.md)
+is the next opt-in gate; fork `main` has not received these PRs.
 
 ## Objective and sequence
 
