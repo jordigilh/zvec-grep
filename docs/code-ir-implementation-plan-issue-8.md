@@ -14,7 +14,8 @@ records the opt-in v1.6 milestone and remaining conformance/retrieval gates.
 `integration/zvec-live-code-intelligence` at `acb3abc`. The historical
 `spike/code-ir-design` checkout remains separate; continue new review units
 from merged integration. The [metadata coverage assessment](./code-ir-metadata-coverage-results-20260926.md)
-is the next opt-in gate; fork `main` has not received these PRs.
+is reviewed in PR #14; the [versioned v2 projection policy](./code-ir-projection-v2-plan.md)
+is a stacked, opt-in follow-up. Fork `main` has not received these PRs.
 
 ## Objective and sequence
 
