@@ -1,6 +1,7 @@
 # Controlled synthetic Code IR pilot — decision and evidence
 
-**Decision:** Keep existing syntax search as the discovery fallback and the
+**Decision ([PR #19](https://github.com/jordigilh/zvec-grep/pull/19)):**
+Keep existing syntax search as the discovery fallback and the
 IR projection **opt-in**. This tiny, source-pinned pilot demonstrates a bounded
 syntax→IR *evidence* path across Go, Python, Rust and TypeScript; it does **not**
 show a retrieval gain or warrant default ranking. On every lane, the

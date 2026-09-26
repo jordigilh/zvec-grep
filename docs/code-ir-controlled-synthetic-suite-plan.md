@@ -1,6 +1,7 @@
 # Controlled synthetic Code IR evaluation (issue #8)
 
-**Review slice:** `spike/code-ir-controlled-synthetic-suite`, child of [PR
+**Review slice:** [PR #19](https://github.com/jordigilh/zvec-grep/pull/19),
+branch `spike/code-ir-controlled-synthetic-suite`, child of [PR
 #18](https://github.com/jordigilh/zvec-grep/pull/18). No default indexing,
 ranking, API, or SCIP changes. Do not edit the four earlier frozen Engram
 fixtures, their source, manifests, truth, or qrels. This is a **new** suite in
