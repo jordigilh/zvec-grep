@@ -20,6 +20,20 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def tree_digest(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise ValueError(f"model cache symlink is not pinned: {path}")
+        if not path.is_file():
+            continue
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(bytes.fromhex(sha(path)))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def run(args: argparse.Namespace) -> dict:
     fixture = args.fixture.resolve(strict=True)
     cache = args.model_cache.resolve(strict=True)
@@ -34,6 +48,7 @@ def run(args: argparse.Namespace) -> dict:
     truth = json.loads((fixture / "truth.json").read_text())
     if truth["schema_version"] != 1 or truth["fixture_id"] != f"controlled-{truth['language']}-v1":
         raise ValueError("unsupported controlled fixture")
+    cache_sha = tree_digest(cache)
     for relative, digest in truth["files"].items():
         if relative not in (f"core.{dict(go='go', python='py', rust='rs', typescript='ts')[truth['language']]}",
                             f"decoy.{dict(go='go', python='py', rust='rs', typescript='ts')[truth['language']]}"):
@@ -62,6 +77,8 @@ def run(args: argparse.Namespace) -> dict:
         "node", str(REPOSITORY / "scripts/score_code_ir_controlled.mjs"),
         str(fixture), str(work), str(output), args.model,
     ], cwd=REPOSITORY, check=True)
+    if tree_digest(cache) != cache_sha:
+        raise ValueError("model cache changed during controlled replay")
     report = json.loads((output / "strict-results.json").read_text())
     manifest = {
         "schema": "code-ir-controlled-run-v1",
@@ -72,6 +89,7 @@ def run(args: argparse.Namespace) -> dict:
         "engine_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPOSITORY, text=True).strip(),
         "model": args.model,
         "model_cache": str(cache),
+        "model_cache_tree_sha256": cache_sha,
         "snapshot_id": report["provenance"]["snapshot_id"],
         "implementation_sha256": {name: sha(REPOSITORY / name) for name in (
             "scripts/code_ir_controlled_suite.mjs",
