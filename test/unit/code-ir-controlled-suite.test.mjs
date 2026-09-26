@@ -157,20 +157,30 @@ test("grounding rejects enclosing type, decoy, and non-unique same-name matches"
   });
   const guard = truth.sites.find((site) => site.id === "guard");
   const stored = [
-    entity("method", "guard", "function", guard.start_byte, 112),
-    entity("enclosing", "Vault", "class", 0, 112),
-    entity("same-name", "guard", "function", 0, 112),
+    entity("method", "guard", "function", guard.start_byte, 114),
+    entity("enclosing", "Vault", "class", 0, 114),
+    entity("same-name", "guard", "function", 0, 114),
   ];
-  const result = groundBaseline({ truth, sources, stored, audit });
+  const result = groundBaseline({ truth, sources, stored, snapshot, audit });
   assert.equal(result.get("method")?.site_id, "guard");
   assert.equal(result.get("enclosing")?.site_id, "vault");
   assert.notEqual(result.get("same-name")?.site_id, "guard");
+  const unlabeled = groundBaseline({
+    truth,
+    sources,
+    stored,
+    snapshot,
+    audit: { units: new Map() },
+  });
+  assert.equal(unlabeled.get("method")?.unit_id, audit.units.get("guard").id);
+  assert.equal(unlabeled.get("method")?.site_id, null);
   const duplicate = [
     ...stored,
-    entity("duplicate", "guard", "function", guard.start_byte, 112),
+    entity("duplicate", "guard", "function", guard.start_byte, 114),
   ];
   assert.throws(
-    () => groundBaseline({ truth, sources, stored: duplicate, audit }),
+    () =>
+      groundBaseline({ truth, sources, stored: duplicate, snapshot, audit }),
     /ambiguous|duplicate/i,
   );
 });

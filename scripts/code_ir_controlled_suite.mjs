@@ -229,15 +229,26 @@ const baselineKinds = {
   value: new Set(["field", "value", "property"]),
 };
 
-export function groundBaseline({ truth, sources, stored, audit }) {
+export function groundBaseline({ truth, sources, stored, snapshot, audit }) {
   verifyControlledTruth(truth, sources);
   const grounded = new Map();
   const occupied = new Set();
+  const irFiles = new Map(
+    snapshot.files.map((file) => [file.relative_path, file]),
+  );
+  const siteByUnit = new Map(
+    [...audit.units].map(([site, unit]) => [unit.id, site]),
+  );
   for (const { file, entity } of stored) {
     if (grounded.has(entity.id))
       throw new Error("duplicate baseline entity id");
     const bytes = sources.get(file.relativePath);
-    if (!bytes || file.contentHash !== truth.files[file.relativePath])
+    const irFile = irFiles.get(file.relativePath);
+    if (
+      !bytes ||
+      file.contentHash !== truth.files[file.relativePath] ||
+      irFile?.sha256 !== file.contentHash
+    )
       throw new Error("baseline source hash differs from pinned truth");
     const text = bytes.toString("utf8");
     const { startOffset, endOffset } = entity.range ?? {};
@@ -254,40 +265,27 @@ export function groundBaseline({ truth, sources, stored, audit }) {
       throw new Error(`baseline entity is not exact source: ${entity.id}`);
     const start = Buffer.byteLength(text.slice(0, startOffset));
     const end = Buffer.byteLength(text.slice(0, endOffset));
-    const matches = truth.sites.filter((site) => {
-      if (
-        site.kind === "call" ||
-        site.path !== file.relativePath ||
-        site.name !== entity.metadata?.symbolName ||
-        !baselineKinds[site.kind].has(entity.metadata?.symbolType) ||
-        !audit.units.has(site.id)
-      )
-        return false;
-      const identifier = site.anchor.indexOf(site.name);
-      const nameStart =
-        site.start_byte + Buffer.byteLength(site.anchor.slice(0, identifier));
-      const nameEnd = nameStart + Buffer.byteLength(site.name);
-      if (nameStart < start || nameEnd > end || end < site.end_byte)
-        return false;
-      // A broad enclosing hit is not a child answer even when its metadata
-      // happens to share a name with a nested declaration.
-      return !truth.sites.some(
-        (other) =>
-          other.id !== site.id &&
-          other.kind !== "call" &&
-          other.path === site.path &&
-          other.start_byte >= start &&
-          other.start_byte < site.start_byte,
-      );
-    });
-    if (matches.length > 1) throw new Error("ambiguous baseline source site");
-    const site = matches[0];
-    if (site && occupied.has(site.id))
-      throw new Error(`ambiguous duplicate baseline grounding: ${site.id}`);
-    if (site) occupied.add(site.id);
+    // No oracle site or answer label participates in this mapping. Requiring
+    // a shared end boundary permits an IR declaration's attested leading doc,
+    // Go `type ` or TS `export ` without treating an enclosing class/impl as
+    // a method. Anything beyond this narrow policy abstains.
+    const matches = snapshot.units.filter(
+      (unit) =>
+        unit.source.file_id === irFile.file_id &&
+        unit.name &&
+        unit.name === entity.metadata?.symbolName &&
+        baselineKinds[unit.kind]?.has(entity.metadata?.symbolType) &&
+        unit.source.start_byte <= start &&
+        unit.source.end_byte === end,
+    );
+    if (matches.length > 1) throw new Error("ambiguous baseline-to-IR unit");
+    const unit = matches[0];
+    if (unit && occupied.has(unit.id))
+      throw new Error(`ambiguous duplicate baseline grounding: ${unit.id}`);
+    if (unit) occupied.add(unit.id);
     grounded.set(entity.id, {
-      site_id: site?.id ?? null,
-      unit_id: site ? audit.units.get(site.id).id : null,
+      site_id: unit ? (siteByUnit.get(unit.id) ?? null) : null,
+      unit_id: unit?.id ?? null,
     });
   }
   return grounded;

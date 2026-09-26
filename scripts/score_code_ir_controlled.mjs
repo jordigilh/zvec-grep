@@ -73,7 +73,7 @@ try {
 } finally {
   storage.close();
 }
-const baseline = groundBaseline({ truth, sources, stored, audit });
+const baseline = groundBaseline({ truth, sources, stored, snapshot, audit });
 const report = scoreControlledRun({ truth, raw, audit, baseline, projection });
 citeControlledRun(report, sources, snapshot, audit);
 report.provenance = {
