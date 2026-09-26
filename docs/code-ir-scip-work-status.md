@@ -1,5 +1,11 @@
 # Code IR + SCIP work status and resume point
 
+**Start here to find the current checkout and dependencies:** [Code IR
+branch/worktree map](https://github.com/jordigilh/zvec-grep/blob/spike/code-ir-one-pass-evidence/docs/code-ir-worktree-and-dependency-map.md).
+Active syntax-IR work has moved to `spike/code-ir-one-pass-evidence`; the
+SCIP-related results below are historical/optional, not the current critical
+path.
+
 **Checkpoint: 2026-09-25.** This is the living handoff for the isolated SCIP
 evaluation branch `spike/code-ir-scip-evaluation` in `jordigilh/zvec-grep`.
 The measured code and reports preceding this checkpoint end at `282deb5`.
