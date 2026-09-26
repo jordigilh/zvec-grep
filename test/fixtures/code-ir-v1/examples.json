@@ -1,0 +1,438 @@
+{
+  "schema": "zvec-grep.code-ir.conformance-examples",
+  "schema_version": 1,
+  "examples": [
+    {
+      "language": "go",
+      "relative_path": "go/add.go",
+      "source": "package demo\nfunc add() { save() }\n",
+      "snapshot": {
+        "schema": "zvec-grep.code-ir",
+        "schema_version": 1,
+        "repository_id": "demo",
+        "root_set": ["demo"],
+        "snapshot_id": "52f04380daac1ad7055dc31f95e6a1c7b60e502506dab943d0054d9d4ddb485d",
+        "frontend_versions": { "go": "web-tree-sitter-ir-v1" },
+        "files": [
+          {
+            "file_id": "fd3f3effada04934dd88671181460f05759ea47c6aeed91398df39e89e851f2e",
+            "root_id": "demo",
+            "relative_path": "go/add.go",
+            "language": "go",
+            "sha256": "df26235505695db870561db55f78b595d2130f5499f38063dd8e6d5b06eafe60",
+            "byte_length": 35,
+            "extraction": {
+              "status": "complete",
+              "frontend_version": "web-tree-sitter-ir-v1"
+            }
+          }
+        ],
+        "units": [
+          {
+            "id": "41cf2c6103d09353aa557636d5ce9f70c0daa5a77e7885d328dd0c3553cff454",
+            "kind": "file",
+            "source": {
+              "file_id": "fd3f3effada04934dd88671181460f05759ea47c6aeed91398df39e89e851f2e",
+              "sha256": "df26235505695db870561db55f78b595d2130f5499f38063dd8e6d5b06eafe60",
+              "start_byte": 0,
+              "end_byte": 35,
+              "start": { "line": 1, "column_byte": 0 },
+              "end": { "line": 3, "column_byte": 0 }
+            },
+            "origin": {
+              "language": "go",
+              "frontend": "web-tree-sitter-ir-v1",
+              "syntax_kind": "source_file"
+            }
+          },
+          {
+            "id": "82ac4afc4f2aa5fb2f54a878ea4fc263a55784dee79f9eb41db59f8b08295026",
+            "kind": "function",
+            "name": "add",
+            "source": {
+              "file_id": "fd3f3effada04934dd88671181460f05759ea47c6aeed91398df39e89e851f2e",
+              "sha256": "df26235505695db870561db55f78b595d2130f5499f38063dd8e6d5b06eafe60",
+              "start_byte": 13,
+              "end_byte": 34,
+              "start": { "line": 2, "column_byte": 0 },
+              "end": { "line": 2, "column_byte": 21 }
+            },
+            "origin": {
+              "language": "go",
+              "frontend": "web-tree-sitter-ir-v1",
+              "syntax_kind": "function_declaration"
+            },
+            "parent_id": "41cf2c6103d09353aa557636d5ce9f70c0daa5a77e7885d328dd0c3553cff454",
+            "scope_id": "41cf2c6103d09353aa557636d5ce9f70c0daa5a77e7885d328dd0c3553cff454",
+            "qualified_name": "add",
+            "subtype": "function_declaration"
+          }
+        ],
+        "facts": [
+          {
+            "id": "f070632369efb785fca40873af5cd0067d1528325d026235c96986e0bfe4985d",
+            "kind": "contains",
+            "subject_id": "41cf2c6103d09353aa557636d5ce9f70c0daa5a77e7885d328dd0c3553cff454",
+            "object_id": "82ac4afc4f2aa5fb2f54a878ea4fc263a55784dee79f9eb41db59f8b08295026",
+            "site": {
+              "file_id": "fd3f3effada04934dd88671181460f05759ea47c6aeed91398df39e89e851f2e",
+              "sha256": "df26235505695db870561db55f78b595d2130f5499f38063dd8e6d5b06eafe60",
+              "start_byte": 13,
+              "end_byte": 34,
+              "start": { "line": 2, "column_byte": 0 },
+              "end": { "line": 2, "column_byte": 21 }
+            },
+            "status": "observed",
+            "provenance": {
+              "frontend": "web-tree-sitter-ir-v1",
+              "method": "syntax"
+            }
+          },
+          {
+            "id": "b00965e175bb38d03737184dbfc342502184df114aa18418562ae6c764bf6b4f",
+            "kind": "calls",
+            "subject_id": "82ac4afc4f2aa5fb2f54a878ea4fc263a55784dee79f9eb41db59f8b08295026",
+            "target_spelling": "save",
+            "site": {
+              "file_id": "fd3f3effada04934dd88671181460f05759ea47c6aeed91398df39e89e851f2e",
+              "sha256": "df26235505695db870561db55f78b595d2130f5499f38063dd8e6d5b06eafe60",
+              "start_byte": 26,
+              "end_byte": 32,
+              "start": { "line": 2, "column_byte": 13 },
+              "end": { "line": 2, "column_byte": 19 }
+            },
+            "status": "unresolved",
+            "provenance": {
+              "frontend": "web-tree-sitter-ir-v1",
+              "method": "syntax"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "language": "python",
+      "relative_path": "python/add.py",
+      "source": "def add():\n    save()\n",
+      "snapshot": {
+        "schema": "zvec-grep.code-ir",
+        "schema_version": 1,
+        "repository_id": "demo",
+        "root_set": ["demo"],
+        "snapshot_id": "6a7beb4ae4b2671580910634574c0c74302d69c725b846b8f0f7ffd514c3187f",
+        "frontend_versions": { "python": "web-tree-sitter-ir-v1" },
+        "files": [
+          {
+            "file_id": "1199090c0271f8b1f3f02ce8ae3473481fbe752b6c298d653d7d1e5693ad78e2",
+            "root_id": "demo",
+            "relative_path": "python/add.py",
+            "language": "python",
+            "sha256": "61a887bb078454c091d84d21e393845236c19a063e0dad43ceaf79e1fe33ac71",
+            "byte_length": 22,
+            "extraction": {
+              "status": "complete",
+              "frontend_version": "web-tree-sitter-ir-v1"
+            }
+          }
+        ],
+        "units": [
+          {
+            "id": "c199ae52918d5442254b545edeeeab293e3955deac052ad033b081e2ad1dd92a",
+            "kind": "file",
+            "source": {
+              "file_id": "1199090c0271f8b1f3f02ce8ae3473481fbe752b6c298d653d7d1e5693ad78e2",
+              "sha256": "61a887bb078454c091d84d21e393845236c19a063e0dad43ceaf79e1fe33ac71",
+              "start_byte": 0,
+              "end_byte": 22,
+              "start": { "line": 1, "column_byte": 0 },
+              "end": { "line": 3, "column_byte": 0 }
+            },
+            "origin": {
+              "language": "python",
+              "frontend": "web-tree-sitter-ir-v1",
+              "syntax_kind": "source_file"
+            }
+          },
+          {
+            "id": "8fa8e489664e61e100197aadbc528706d93738e3e400e41d2066715af581e9ee",
+            "kind": "function",
+            "name": "add",
+            "source": {
+              "file_id": "1199090c0271f8b1f3f02ce8ae3473481fbe752b6c298d653d7d1e5693ad78e2",
+              "sha256": "61a887bb078454c091d84d21e393845236c19a063e0dad43ceaf79e1fe33ac71",
+              "start_byte": 0,
+              "end_byte": 21,
+              "start": { "line": 1, "column_byte": 0 },
+              "end": { "line": 2, "column_byte": 10 }
+            },
+            "origin": {
+              "language": "python",
+              "frontend": "web-tree-sitter-ir-v1",
+              "syntax_kind": "function_definition"
+            },
+            "parent_id": "c199ae52918d5442254b545edeeeab293e3955deac052ad033b081e2ad1dd92a",
+            "scope_id": "c199ae52918d5442254b545edeeeab293e3955deac052ad033b081e2ad1dd92a",
+            "qualified_name": "add",
+            "subtype": "function_definition"
+          }
+        ],
+        "facts": [
+          {
+            "id": "29271fae8c01d1ff9984c448edac2860c521ae040716fa891e7c885998623891",
+            "kind": "contains",
+            "subject_id": "c199ae52918d5442254b545edeeeab293e3955deac052ad033b081e2ad1dd92a",
+            "object_id": "8fa8e489664e61e100197aadbc528706d93738e3e400e41d2066715af581e9ee",
+            "site": {
+              "file_id": "1199090c0271f8b1f3f02ce8ae3473481fbe752b6c298d653d7d1e5693ad78e2",
+              "sha256": "61a887bb078454c091d84d21e393845236c19a063e0dad43ceaf79e1fe33ac71",
+              "start_byte": 0,
+              "end_byte": 21,
+              "start": { "line": 1, "column_byte": 0 },
+              "end": { "line": 2, "column_byte": 10 }
+            },
+            "status": "observed",
+            "provenance": {
+              "frontend": "web-tree-sitter-ir-v1",
+              "method": "syntax"
+            }
+          },
+          {
+            "id": "1562d46821aabedc58fcc4a9eab760dda7aa11beddd217e146cc979d41891f93",
+            "kind": "calls",
+            "subject_id": "8fa8e489664e61e100197aadbc528706d93738e3e400e41d2066715af581e9ee",
+            "target_spelling": "save",
+            "site": {
+              "file_id": "1199090c0271f8b1f3f02ce8ae3473481fbe752b6c298d653d7d1e5693ad78e2",
+              "sha256": "61a887bb078454c091d84d21e393845236c19a063e0dad43ceaf79e1fe33ac71",
+              "start_byte": 15,
+              "end_byte": 21,
+              "start": { "line": 2, "column_byte": 4 },
+              "end": { "line": 2, "column_byte": 10 }
+            },
+            "status": "unresolved",
+            "provenance": {
+              "frontend": "web-tree-sitter-ir-v1",
+              "method": "syntax"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "language": "rust",
+      "relative_path": "rust/add.rs",
+      "source": "fn add() { save(); }\n",
+      "snapshot": {
+        "schema": "zvec-grep.code-ir",
+        "schema_version": 1,
+        "repository_id": "demo",
+        "root_set": ["demo"],
+        "snapshot_id": "37b4b431f9cb3e861df309af94caabb471c75820140cb9bec71530b6e73cf1d3",
+        "frontend_versions": { "rust": "web-tree-sitter-ir-v1" },
+        "files": [
+          {
+            "file_id": "1ae8585efbd00a4937133afbe566d875470bb31c903d2126820a20db12fce3a6",
+            "root_id": "demo",
+            "relative_path": "rust/add.rs",
+            "language": "rust",
+            "sha256": "19d25913e7bca05189ed065fe5cd9998ccd73ccee28f6862b9ed06d0ecb2c010",
+            "byte_length": 21,
+            "extraction": {
+              "status": "complete",
+              "frontend_version": "web-tree-sitter-ir-v1"
+            }
+          }
+        ],
+        "units": [
+          {
+            "id": "d7ccdd12fd819b772d8383c3fe7c5be5183cdcb910ee44beb1a21f8b5dcd6806",
+            "kind": "file",
+            "source": {
+              "file_id": "1ae8585efbd00a4937133afbe566d875470bb31c903d2126820a20db12fce3a6",
+              "sha256": "19d25913e7bca05189ed065fe5cd9998ccd73ccee28f6862b9ed06d0ecb2c010",
+              "start_byte": 0,
+              "end_byte": 21,
+              "start": { "line": 1, "column_byte": 0 },
+              "end": { "line": 2, "column_byte": 0 }
+            },
+            "origin": {
+              "language": "rust",
+              "frontend": "web-tree-sitter-ir-v1",
+              "syntax_kind": "source_file"
+            }
+          },
+          {
+            "id": "ffca5208f4bd3a1bff7bde6088c31d30cfe66da9b83c81d2e932922cb6e3cf0d",
+            "kind": "function",
+            "name": "add",
+            "source": {
+              "file_id": "1ae8585efbd00a4937133afbe566d875470bb31c903d2126820a20db12fce3a6",
+              "sha256": "19d25913e7bca05189ed065fe5cd9998ccd73ccee28f6862b9ed06d0ecb2c010",
+              "start_byte": 0,
+              "end_byte": 20,
+              "start": { "line": 1, "column_byte": 0 },
+              "end": { "line": 1, "column_byte": 20 }
+            },
+            "origin": {
+              "language": "rust",
+              "frontend": "web-tree-sitter-ir-v1",
+              "syntax_kind": "function_item"
+            },
+            "parent_id": "d7ccdd12fd819b772d8383c3fe7c5be5183cdcb910ee44beb1a21f8b5dcd6806",
+            "scope_id": "d7ccdd12fd819b772d8383c3fe7c5be5183cdcb910ee44beb1a21f8b5dcd6806",
+            "qualified_name": "add",
+            "subtype": "function_item"
+          }
+        ],
+        "facts": [
+          {
+            "id": "53ab287b11fd8a495ee6022c094735d134d2057a7740dc3b93d8f0139b938db0",
+            "kind": "contains",
+            "subject_id": "d7ccdd12fd819b772d8383c3fe7c5be5183cdcb910ee44beb1a21f8b5dcd6806",
+            "object_id": "ffca5208f4bd3a1bff7bde6088c31d30cfe66da9b83c81d2e932922cb6e3cf0d",
+            "site": {
+              "file_id": "1ae8585efbd00a4937133afbe566d875470bb31c903d2126820a20db12fce3a6",
+              "sha256": "19d25913e7bca05189ed065fe5cd9998ccd73ccee28f6862b9ed06d0ecb2c010",
+              "start_byte": 0,
+              "end_byte": 20,
+              "start": { "line": 1, "column_byte": 0 },
+              "end": { "line": 1, "column_byte": 20 }
+            },
+            "status": "observed",
+            "provenance": {
+              "frontend": "web-tree-sitter-ir-v1",
+              "method": "syntax"
+            }
+          },
+          {
+            "id": "bd5571ff5dd55d6ab9615e432e0ee55784c4f0170c49c14cb3020710ff9c49c3",
+            "kind": "calls",
+            "subject_id": "ffca5208f4bd3a1bff7bde6088c31d30cfe66da9b83c81d2e932922cb6e3cf0d",
+            "target_spelling": "save",
+            "site": {
+              "file_id": "1ae8585efbd00a4937133afbe566d875470bb31c903d2126820a20db12fce3a6",
+              "sha256": "19d25913e7bca05189ed065fe5cd9998ccd73ccee28f6862b9ed06d0ecb2c010",
+              "start_byte": 11,
+              "end_byte": 17,
+              "start": { "line": 1, "column_byte": 11 },
+              "end": { "line": 1, "column_byte": 17 }
+            },
+            "status": "unresolved",
+            "provenance": {
+              "frontend": "web-tree-sitter-ir-v1",
+              "method": "syntax"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "language": "typescript",
+      "relative_path": "typescript/add.ts",
+      "source": "function add() { save(); }\n",
+      "snapshot": {
+        "schema": "zvec-grep.code-ir",
+        "schema_version": 1,
+        "repository_id": "demo",
+        "root_set": ["demo"],
+        "snapshot_id": "9bf98bed206b8e714d4d8c85cb1d090744dd64deed8eb9e945d994fc6c863247",
+        "frontend_versions": { "typescript": "web-tree-sitter-ir-v1" },
+        "files": [
+          {
+            "file_id": "5b4de68cc8e721946e01a7dd2ca3190adcd5f96542c0bfc8e0d4959850df7cd3",
+            "root_id": "demo",
+            "relative_path": "typescript/add.ts",
+            "language": "typescript",
+            "sha256": "2157b9ac8c5c5dd8b562e5e97f831ce85248502a559b1d105374da0c47968c6e",
+            "byte_length": 27,
+            "extraction": {
+              "status": "complete",
+              "frontend_version": "web-tree-sitter-ir-v1"
+            }
+          }
+        ],
+        "units": [
+          {
+            "id": "e119119dbb1766923ad5c8d1096ef6a0527926a65e487afa0ad751d2c7f157d5",
+            "kind": "file",
+            "source": {
+              "file_id": "5b4de68cc8e721946e01a7dd2ca3190adcd5f96542c0bfc8e0d4959850df7cd3",
+              "sha256": "2157b9ac8c5c5dd8b562e5e97f831ce85248502a559b1d105374da0c47968c6e",
+              "start_byte": 0,
+              "end_byte": 27,
+              "start": { "line": 1, "column_byte": 0 },
+              "end": { "line": 2, "column_byte": 0 }
+            },
+            "origin": {
+              "language": "typescript",
+              "frontend": "web-tree-sitter-ir-v1",
+              "syntax_kind": "source_file"
+            }
+          },
+          {
+            "id": "cba24cadc0ee12fea5918b490b864773dc0e1242b6f71734ce2ed881eb842b59",
+            "kind": "function",
+            "name": "add",
+            "source": {
+              "file_id": "5b4de68cc8e721946e01a7dd2ca3190adcd5f96542c0bfc8e0d4959850df7cd3",
+              "sha256": "2157b9ac8c5c5dd8b562e5e97f831ce85248502a559b1d105374da0c47968c6e",
+              "start_byte": 0,
+              "end_byte": 26,
+              "start": { "line": 1, "column_byte": 0 },
+              "end": { "line": 1, "column_byte": 26 }
+            },
+            "origin": {
+              "language": "typescript",
+              "frontend": "web-tree-sitter-ir-v1",
+              "syntax_kind": "function_declaration"
+            },
+            "parent_id": "e119119dbb1766923ad5c8d1096ef6a0527926a65e487afa0ad751d2c7f157d5",
+            "scope_id": "e119119dbb1766923ad5c8d1096ef6a0527926a65e487afa0ad751d2c7f157d5",
+            "qualified_name": "add",
+            "subtype": "function_declaration"
+          }
+        ],
+        "facts": [
+          {
+            "id": "ebb33222090d329a9f075004bad748032106357127ebd188ccbb573fa07ad459",
+            "kind": "contains",
+            "subject_id": "e119119dbb1766923ad5c8d1096ef6a0527926a65e487afa0ad751d2c7f157d5",
+            "object_id": "cba24cadc0ee12fea5918b490b864773dc0e1242b6f71734ce2ed881eb842b59",
+            "site": {
+              "file_id": "5b4de68cc8e721946e01a7dd2ca3190adcd5f96542c0bfc8e0d4959850df7cd3",
+              "sha256": "2157b9ac8c5c5dd8b562e5e97f831ce85248502a559b1d105374da0c47968c6e",
+              "start_byte": 0,
+              "end_byte": 26,
+              "start": { "line": 1, "column_byte": 0 },
+              "end": { "line": 1, "column_byte": 26 }
+            },
+            "status": "observed",
+            "provenance": {
+              "frontend": "web-tree-sitter-ir-v1",
+              "method": "syntax"
+            }
+          },
+          {
+            "id": "48c232de7464a24a0eb5da7ac4b35d03ba662c039876c6ff8c40056f86ec8789",
+            "kind": "calls",
+            "subject_id": "cba24cadc0ee12fea5918b490b864773dc0e1242b6f71734ce2ed881eb842b59",
+            "target_spelling": "save",
+            "site": {
+              "file_id": "5b4de68cc8e721946e01a7dd2ca3190adcd5f96542c0bfc8e0d4959850df7cd3",
+              "sha256": "2157b9ac8c5c5dd8b562e5e97f831ce85248502a559b1d105374da0c47968c6e",
+              "start_byte": 17,
+              "end_byte": 23,
+              "start": { "line": 1, "column_byte": 17 },
+              "end": { "line": 1, "column_byte": 23 }
+            },
+            "status": "unresolved",
+            "provenance": {
+              "frontend": "web-tree-sitter-ir-v1",
+              "method": "syntax"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

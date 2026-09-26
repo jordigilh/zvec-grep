@@ -6,3 +6,4 @@ export {
   lexicalTextForFragment,
   vectorContentForFragment,
 } from "./vector-content.js";
+export * from "./code/ir.js";
