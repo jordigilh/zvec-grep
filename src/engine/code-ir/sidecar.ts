@@ -14,9 +14,11 @@ import {
 import { identifierParts } from "../extraction/index.js";
 
 export type IRMode = "off" | "shadow" | "projection";
+export type ProjectionPolicy = "all-units-v1" | "source-metadata-entity-v1";
 export type Projection = {
   schema: "zvec-grep.code-ir.projection";
-  version: 1;
+  version: 1 | 2;
+  policy?: "source-metadata-entity-v1";
   ir_snapshot_id: string;
   model_identity: string | null;
   records: {
@@ -32,7 +34,8 @@ export type Projection = {
 export type PublishedIR = {
   ir_snapshot_id: string;
   mode: Exclude<IRMode, "off">;
-  projection_version: 1 | null;
+  projection_version: 1 | 2 | null;
+  projection_policy?: "source-metadata-entity-v1";
   projection_model_identity?: string | null;
   source_selection: string[];
   source_hashes: Record<string, string>;
@@ -46,16 +49,25 @@ export async function publishIR(
   files: readonly InputFile[],
   mode: IRMode,
   modelIdentity: string | null = null,
+  policy: ProjectionPolicy = "all-units-v1",
 ): Promise<PublishedIR | null> {
+  if (policy !== "all-units-v1" && policy !== "source-metadata-entity-v1")
+    throw new Error("unknown IR projection policy");
+  if (mode !== "projection" && policy !== "all-units-v1")
+    throw new Error("IR projection policy requires projection mode");
   if (mode === "off") return null;
   if (mode !== "shadow" && mode !== "projection")
     throw new Error("unknown IR mode");
+  const version = policy === "source-metadata-entity-v1" ? 2 : 1;
   const { snapshot, sources } = await extractSnapshot(repositoryId, files);
   validateSnapshot(snapshot, sources);
   const manifest: PublishedIR = {
     ir_snapshot_id: snapshot.snapshot_id,
     mode,
-    projection_version: mode === "projection" ? 1 : null,
+    projection_version: mode === "projection" ? version : null,
+    ...(mode === "projection" && version === 2
+      ? { projection_policy: policy as "source-metadata-entity-v1" }
+      : {}),
     ...(mode === "projection"
       ? { projection_model_identity: modelIdentity }
       : {}),
@@ -68,82 +80,14 @@ export async function publishIR(
   await mkdir(generation, { recursive: true });
   const projection: Projection = {
     schema: "zvec-grep.code-ir.projection",
-    version: 1,
+    version,
+    ...(version === 2 ? { policy: policy as "source-metadata-entity-v1" } : {}),
     ir_snapshot_id: snapshot.snapshot_id,
     model_identity: modelIdentity,
     records: [],
   };
-  if (mode === "projection") {
-    for (const unit of snapshot.units) {
-      const bytes = sources.get(unit.source.file_id)!;
-      // Search aliases and embeddings stay in a derived record. The IR source ref
-      // (and original bytes) alone provides answerable evidence.
-      const raw = new TextDecoder("utf-8", { fatal: true }).decode(
-        bytes.subarray(unit.source.start_byte, unit.source.end_byte),
-      );
-      const symbolType = projectionSymbolType(unit.subtype, unit.kind);
-      const qualified = unit.qualified_name ?? unit.name;
-      const nameParts = qualified ? identifierParts(qualified) : [];
-      const metadataLines =
-        unit.kind === "file" || unit.kind === "opaque"
-          ? []
-          : [
-              unit.name
-                ? `symbol: ${symbolType} ${unit.name}`
-                : `symbol: ${symbolType}`,
-              qualified ? `qualified: ${qualified}` : null,
-              nameParts.length ? `name_parts: ${nameParts.join(" ")}` : null,
-              unit.qualified_name && unit.name
-                ? `scope: ${unit.qualified_name.slice(0, -(unit.name.length + 2))}`
-                : null,
-            ].filter((line): line is string => line !== null);
-      const metadata = fitMetadata(metadataLines.join("\n"), 900);
-      const vectorMetadata = fitMetadata(
-        metadataLines
-          .filter(
-            (line) =>
-              !line.startsWith("qualified:") && !line.startsWith("name_parts:"),
-          )
-          .join("\n"),
-        900,
-      );
-      const metadataLength = Math.max(metadata.length, vectorMetadata.length);
-      const sourceWindowLimit = Math.max(
-        1,
-        3_600 - metadataLength - (metadataLength ? 1 : 0),
-      );
-      for (const [window_index, window] of sourceWindows(
-        raw,
-        sourceWindowLimit,
-      ).entries()) {
-        const byteStart =
-          unit.source.start_byte +
-          Buffer.byteLength(raw.slice(0, window.start), "utf8");
-        const byteEnd =
-          unit.source.start_byte +
-          Buffer.byteLength(raw.slice(0, window.end), "utf8");
-        const windowSource = sourceRef(
-          snapshot.files.find((file) => file.file_id === unit.source.file_id)!,
-          bytes,
-          byteStart,
-          byteEnd,
-        );
-        projection.records.push({
-          unit_id: unit.id,
-          group_id: unit.id,
-          window_index,
-          unit_source: unit.source,
-          source: windowSource,
-          lexical_text: metadata.length
-            ? `${metadata}\n${window.text}`
-            : window.text,
-          vector_input: vectorMetadata
-            ? `${vectorMetadata}\n${window.text}`
-            : window.text,
-        });
-      }
-    }
-  }
+  if (mode === "projection")
+    projection.records = projectRecords(snapshot, sources, policy);
   // Immutable, content-addressed generation. Concurrent writers of identical
   // snapshots produce identical bytes; readers pin active.json only once.
   const payloads: [string, string][] = [
@@ -162,7 +106,7 @@ export async function publishIR(
   ];
   if (mode === "projection")
     payloads.push([
-      projectionFileName(modelIdentity),
+      projectionFileName(version, modelIdentity),
       JSON.stringify(projection),
     ]);
   for (const [name, content] of payloads) {
@@ -211,11 +155,21 @@ export async function readPublishedIR(directory: string): Promise<{
   )
     throw new Error("IR manifest mismatch");
   if (manifest.mode !== "projection") return { manifest, snapshot };
+  const version = manifest.projection_version;
+  if (
+    (version !== 1 && version !== 2) ||
+    (version === 2 &&
+      manifest.projection_policy !== "source-metadata-entity-v1") ||
+    (version === 1 && manifest.projection_policy !== undefined)
+  )
+    throw new Error("IR projection mismatch");
+  const policy: ProjectionPolicy =
+    version === 2 ? "source-metadata-entity-v1" : "all-units-v1";
   const projection: Projection = JSON.parse(
     await readFile(
       join(
         generation,
-        projectionFileName(manifest.projection_model_identity ?? null),
+        projectionFileName(version, manifest.projection_model_identity ?? null),
       ),
       "utf8",
     ),
@@ -228,6 +182,7 @@ export async function readPublishedIR(directory: string): Promise<{
     const bytes = sources.get(r.source.file_id);
     if (
       !unit ||
+      !ranksStandalone(unit, policy) ||
       !file ||
       !bytes ||
       r.group_id !== unit.id ||
@@ -262,37 +217,150 @@ export async function readPublishedIR(directory: string): Promise<{
     records.push(record);
     windowsByUnit.set(record.unit_id, records);
   }
-  const invalidCoverage = snapshot.units.some((unit) => {
-    const windows = windowsByUnit
-      .get(unit.id)
-      ?.sort((a, b) => a.window_index - b.window_index);
-    if (!windows?.length) return true;
-    let cursor = unit.source.start_byte;
-    for (const [index, window] of windows.entries()) {
-      if (
-        window.window_index !== index ||
-        window.source.start_byte !== cursor ||
-        window.source.end_byte <= cursor
-      )
-        return true;
-      cursor = window.source.end_byte;
-    }
-    return cursor !== unit.source.end_byte;
-  });
+  const invalidCoverage = snapshot.units
+    .filter((unit) => ranksStandalone(unit, policy))
+    .some((unit) => {
+      const windows = windowsByUnit
+        .get(unit.id)
+        ?.sort((a, b) => a.window_index - b.window_index);
+      if (!windows?.length) return true;
+      let cursor = unit.source.start_byte;
+      for (const [index, window] of windows.entries()) {
+        if (
+          window.window_index !== index ||
+          window.source.start_byte !== cursor ||
+          window.source.end_byte <= cursor
+        )
+          return true;
+        cursor = window.source.end_byte;
+      }
+      return cursor !== unit.source.end_byte;
+    });
   if (
     projection.schema !== "zvec-grep.code-ir.projection" ||
-    projection.version !== 1 ||
+    projection.version !== version ||
+    projection.policy !==
+      (version === 2 ? "source-metadata-entity-v1" : undefined) ||
     projection.ir_snapshot_id !== manifest.ir_snapshot_id ||
-    manifest.projection_version !== 1 ||
+    projection.model_identity !==
+      (manifest.projection_model_identity ?? null) ||
     invalidRecord ||
     invalidCoverage
+  )
+    throw new Error("IR projection mismatch");
+  if (
+    version === 2 &&
+    JSON.stringify(projection.records) !==
+      JSON.stringify(projectRecords(snapshot, sources, policy))
   )
     throw new Error("IR projection mismatch");
   return { manifest, snapshot, projection };
 }
 
-function projectionFileName(modelIdentity: string | null): string {
-  return `projection-v1-${digest(Buffer.from(modelIdentity ?? "none")).slice(0, 16)}.json`;
+function projectionFileName(
+  version: 1 | 2,
+  modelIdentity: string | null,
+): string {
+  return `projection-v${version}-${digest(Buffer.from(modelIdentity ?? "none")).slice(0, 16)}.json`;
+}
+
+function ranksStandalone(
+  unit: Snapshot["units"][number],
+  policy: ProjectionPolicy,
+): boolean {
+  if (policy === "all-units-v1") return true;
+  if (unit.kind === "file" || unit.kind === "opaque") return false;
+  return !(
+    unit.kind === "value" &&
+    ((unit.origin.language === "go" && unit.subtype === "struct_field") ||
+      (unit.origin.language === "python" && unit.subtype === "class_attribute"))
+  );
+}
+
+function projectRecords(
+  snapshot: Snapshot,
+  sources: Map<string, Uint8Array>,
+  policy: ProjectionPolicy,
+): Projection["records"] {
+  const records: Projection["records"] = [];
+  for (const unit of snapshot.units) {
+    if (!ranksStandalone(unit, policy)) continue;
+    const bytes = sources.get(unit.source.file_id)!;
+    // Search text is derived; the original bytes and source refs alone are evidence.
+    const raw = new TextDecoder("utf-8", { fatal: true }).decode(
+      bytes.subarray(unit.source.start_byte, unit.source.end_byte),
+    );
+    const symbolType = projectionSymbolType(unit.subtype, unit.kind);
+    const qualified = unit.qualified_name ?? unit.name;
+    const nameParts = qualified ? identifierParts(qualified) : [];
+    const sourceMetadata =
+      policy === "source-metadata-entity-v1"
+        ? [
+            unit.signature ? `signature: ${unit.signature.text}` : null,
+            unit.documentation ? `doc: ${unit.documentation.text}` : null,
+          ].filter((line): line is string => line !== null)
+        : [];
+    const metadataLines =
+      unit.kind === "file" || unit.kind === "opaque"
+        ? []
+        : [
+            unit.name
+              ? `symbol: ${symbolType} ${unit.name}`
+              : `symbol: ${symbolType}`,
+            qualified ? `qualified: ${qualified}` : null,
+            nameParts.length ? `name_parts: ${nameParts.join(" ")}` : null,
+            unit.qualified_name && unit.name
+              ? `scope: ${unit.qualified_name.slice(0, -(unit.name.length + 2))}`
+              : null,
+            ...sourceMetadata,
+          ].filter((line): line is string => line !== null);
+    const metadata = fitMetadata(metadataLines.join("\n"), 900);
+    const vectorMetadata = fitMetadata(
+      metadataLines
+        .filter(
+          (line) =>
+            !line.startsWith("qualified:") && !line.startsWith("name_parts:"),
+        )
+        .join("\n"),
+      900,
+    );
+    const metadataLength = Math.max(metadata.length, vectorMetadata.length);
+    const sourceWindowLimit = Math.max(
+      1,
+      3_600 - metadataLength - (metadataLength ? 1 : 0),
+    );
+    for (const [window_index, window] of sourceWindows(
+      raw,
+      sourceWindowLimit,
+    ).entries()) {
+      const byteStart =
+        unit.source.start_byte +
+        Buffer.byteLength(raw.slice(0, window.start), "utf8");
+      const byteEnd =
+        unit.source.start_byte +
+        Buffer.byteLength(raw.slice(0, window.end), "utf8");
+      const windowSource = sourceRef(
+        snapshot.files.find((file) => file.file_id === unit.source.file_id)!,
+        bytes,
+        byteStart,
+        byteEnd,
+      );
+      records.push({
+        unit_id: unit.id,
+        group_id: unit.id,
+        window_index,
+        unit_source: unit.source,
+        source: windowSource,
+        lexical_text: metadata.length
+          ? `${metadata}\n${window.text}`
+          : window.text,
+        vector_input: vectorMetadata
+          ? `${vectorMetadata}\n${window.text}`
+          : window.text,
+      });
+    }
+  }
+  return records;
 }
 
 function projectionSymbolType(
