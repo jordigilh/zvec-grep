@@ -1,6 +1,7 @@
 # Code IR v2 frozen retrieval gate (issue #8)
 
-**Review slice:** child of [PR #15](https://github.com/jordigilh/zvec-grep/pull/15),
+**Review slice:** [PR #16](https://github.com/jordigilh/zvec-grep/pull/16),
+child of [PR #15](https://github.com/jordigilh/zvec-grep/pull/15),
 which is stacked on [PR #14](https://github.com/jordigilh/zvec-grep/pull/14).
 Neither this adapter nor v2 changes default search ranking. SCIP is not an input.
 
