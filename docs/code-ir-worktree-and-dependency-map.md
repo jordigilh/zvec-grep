@@ -13,7 +13,8 @@ making changes.
 ```text
 5f2c5e4 (pre-spike fork integration base)
 ├── integration/zvec-live-code-intelligence @ acb3abc (PRs #9–#12 MERGED)
-│   └── spike/code-ir-metadata-coverage (CURRENT branch/checkout)
+│   └── spike/code-ir-metadata-coverage (PR #14: OPEN)
+│       └── spike/code-ir-projection-policy-v2 (CURRENT branch/checkout)
 └── spike/code-ir-scip-evaluation @ df4a856 (separate experiment + status)
 
 spike/code-ir-metadata-inventory-wip @ b1d4e5a = old unverified backup;
@@ -26,7 +27,8 @@ Engram frozen source/manifests/qrels ──read-only inputs──▶ conformance
 | Role | Branch / observed commit | Checkout on this host | What it contains | Action |
 |---|---|---|---|---|
 | **Merged Code IR base** | `integration/zvec-live-code-intelligence` / `acb3abc` | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-fork` | [Contract](./code-ir-design-issue-8.md), [staged plan](./code-ir-implementation-plan-issue-8.md), opt-in IR/projection and v1.6 source metadata (PRs #9–#12) | Base new PRs on this branch, not the rewritten historical spike heads. Fork `main` remains a separate integration decision. |
-| **Active coverage review** | [`spike/code-ir-metadata-coverage`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-metadata-coverage) / based on `acb3abc` | Same checkout as above; switched branch after fast-forward | Source-authored labels, verifier tests and [per-lane report](./code-ir-metadata-coverage-results-20260926.md) | Review [PR #14](https://github.com/jordigilh/zvec-grep/pull/14) against merged integration; do not edit frozen fixture repositories. |
+| Coverage review | [`spike/code-ir-metadata-coverage`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-metadata-coverage) / based on `acb3abc` | No longer checked out; PR head in same clone | Source-authored labels, verifier tests and [per-lane report](./code-ir-metadata-coverage-results-20260926.md) | Review [PR #14](https://github.com/jordigilh/zvec-grep/pull/14) against merged integration; do not edit frozen fixture repositories. |
+| **Active projection review** | `spike/code-ir-projection-policy-v2` / based on #14 | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-fork` | [Versioned opt-in v2 policy](./code-ir-projection-v2-plan.md), source-backed retrieval text, per-language source-only recheck | Open a child PR against #14; do not enable default ranking. |
 | Historical IR checkout | `spike/code-ir-design` / local `139fe4e` | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-code-ir-design` | Earlier IR authoring branch; merged through #11 with rewritten remote commits | Leave untouched; use integration for current code. |
 | Inventory backup | [`spike/code-ir-metadata-inventory-wip`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-metadata-inventory-wip) / `b1d4e5a` | No separate checkout | Original unverified script/test snapshot | Preserved, no PR; the active branch reuses those two files without inheriting the old pre-merge history. |
 | Historical one-pass checkout | `spike/code-ir-one-pass-evidence` / local `e96bec9` | `/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/code-ir-one-pass-evidence-20260926` | Original PR #12 worktree; remote was rewritten by the merge flow | Leave untouched. The merged integration tip is authoritative. |
@@ -89,15 +91,14 @@ prerequisite.
 
 ## Next handoff
 
-- **Now (on `spike/code-ir-metadata-coverage`):** Review [PR
-  #14](https://github.com/jordigilh/zvec-grep/pull/14) and the [source-authored
-  metadata inventory](./code-ir-metadata-coverage-results-20260926.md). Its
-  byte/hash-verified per-language replay and checks passed. Report the
-  selected-case denominator rather than claiming whole-fixture coverage.
-- **Then:** Add an explicit, versioned retrieval-unit policy and source-ref
-  projection in an opt-in path; drive it with tests before paired per-language
-  qeval. Keep source citations on original bytes and preserve the default
-  syntax-only fallback.
+- **Now (on `spike/code-ir-projection-policy-v2`):** Review [PR
+  #14](https://github.com/jordigilh/zvec-grep/pull/14) first, then the
+  [versioned opt-in projection](./code-ir-projection-v2-plan.md). The authored
+  coverage inventory reports selected-case denominators only; v2 unit counts
+  alone do not establish whole-fixture relevance or metadata coverage.
+- **Then (separate gate):** Run paired, unchanged same-engine frozen qeval per
+  language for v2 and diagnose per-query losses. Keep citations on original
+  bytes and preserve default syntax-only fallback. Do not enable failed lanes.
 - **Later:** Independently adjudicate real-Kubernaut retrieval and relation
   cases before generalizing or enabling anything by default.
 
