@@ -1,6 +1,7 @@
 # Diagnosing syntax-index to Code IR v1 retrieval gaps (issue #8)
 
-**Review slice:** `spike/code-ir-v1-gap-diagnostics`, child of the opt-in
+**Review slice:** [PR #18](https://github.com/jordigilh/zvec-grep/pull/18),
+branch `spike/code-ir-v1-gap-diagnostics`, child of the opt-in
 [factorial ablation PR #17](https://github.com/jordigilh/zvec-grep/pull/17).
 No default ranking change, query-specific boosts or SCIP. The four frozen
 fixture sources, manifests, truth and qrels are **read-only**; output belongs

@@ -137,6 +137,10 @@ python3 scripts/replay_code_ir_v2_qeval.py --ablation --text-isolation \
 
 Results on this host are under
 `/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/`.
+These are temporary external artifacts and may be cleaned between sessions;
+the committed runner, frozen-input digests, metrics and hashes below are the
+reproduction record. The earlier temporary PR #17 artifacts were cleaned, so
+this slice freshly replayed its five-arm controls before diagnosis.
 Each of the four `code-ir-v1-gap-verified-{language}-results-20260926/`
 directories holds `inventory.json`, `lexical-audit.json`,
 `query-transitions.json`, generated/read-validated `generated-v1-sidecar/` and
