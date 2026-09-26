@@ -90,7 +90,7 @@ export type InputFile = {
   language: string;
   bytes: Uint8Array;
 };
-export const FRONTEND_VERSION = "web-tree-sitter-ir-v1.5";
+export const FRONTEND_VERSION = "web-tree-sitter-ir-v1.6";
 const LANGUAGES = new Set(["go", "python", "rust", "typescript", "tsx"]);
 const encoder = new TextEncoder();
 const lineStartCache = new WeakMap<Uint8Array, number[]>();
@@ -497,6 +497,114 @@ function attachedDeclarationStart(
   return start;
 }
 
+// Keep metadata as original source slices, not the adapters' normalized
+// display strings. All positions refer to the single tree built for this file.
+function signatureRange(
+  node: TSNode,
+  language: string,
+): [number, number] | null {
+  const declaration =
+    language === "python" && node.type === "decorated_definition"
+      ? (node.namedChildren.find(
+          (child) =>
+            child.type === "class_definition" ||
+            child.type === "function_definition",
+        ) ?? node)
+      : node;
+  const bodyStart = (candidate: TSNode): number | undefined => {
+    const body =
+      candidate.childForFieldName("body") ??
+      candidate.namedChildren.find((child) =>
+        [
+          "block",
+          "statement_block",
+          "class_body",
+          "declaration_list",
+          "field_declaration_list",
+        ].includes(child.type),
+      );
+    if (body) return body.startIndex;
+    const wrapper =
+      candidate.type === "export_statement"
+        ? (candidate.childForFieldName("declaration") ??
+          candidate.namedChildren.find((child) =>
+            child.type.endsWith("_declaration"),
+          ))
+        : language === "go" && candidate.type === "type_declaration"
+          ? candidate.namedChildren.find((child) =>
+              ["type_spec", "type_alias"].includes(child.type),
+            )
+          : language === "go" &&
+              ["type_spec", "type_alias"].includes(candidate.type)
+            ? candidate.childForFieldName("type")
+            : undefined;
+    return wrapper ? bodyStart(wrapper) : undefined;
+  };
+  const body = bodyStart(declaration);
+  let end = body ?? declaration.endIndex;
+  if (body === undefined) {
+    const lineBreak = declaration.text.search(/\r?\n/u);
+    // A first line is not a complete signature when the parser provides no
+    // body boundary. Keep the unit, but omit uncertain metadata.
+    if (lineBreak >= 0) return null;
+  }
+  const candidate = declaration.text.slice(0, end - declaration.startIndex);
+  end -=
+    candidate.length -
+    candidate
+      .trimEnd()
+      .replace(/[;{]\s*$/u, "")
+      .trimEnd().length;
+  return end > declaration.startIndex && end - declaration.startIndex <= 1_200
+    ? [declaration.startIndex, end]
+    : null;
+}
+
+function documentationRange(
+  node: TSNode,
+  text: string,
+  language: string,
+): [number, number] | null {
+  const isDoc = (sibling: TSNode): boolean => {
+    if (!["comment", "line_comment", "block_comment"].includes(sibling.type))
+      return false;
+    if (language === "rust")
+      return /^(?:\/\/\/|\/\/!|\/\*\*|\/\*!)/u.test(sibling.text);
+    if (language === "typescript" || language === "tsx")
+      return /^\/\*\*/u.test(sibling.text);
+    return language === "python"
+      ? sibling.text.startsWith("#")
+      : /^(?:\/\/|\/\*)/u.test(sibling.text);
+  };
+  let earliest: number | undefined;
+  let latest: number | undefined;
+  let start = node.startIndex;
+  let sibling = node.previousNamedSibling;
+  while (
+    sibling &&
+    /^\r?\n[\t ]*$/u.test(text.slice(sibling.endIndex, start))
+  ) {
+    if (
+      language === "rust" &&
+      sibling.type === "attribute_item" &&
+      latest === undefined
+    ) {
+      start = sibling.startIndex;
+      sibling = sibling.previousNamedSibling;
+      continue;
+    }
+    if (!isDoc(sibling)) break;
+    earliest = sibling.startIndex;
+    // Some grammars include the CR preceding a CRLF in a line-comment node.
+    latest ??= sibling.endIndex - (text[sibling.endIndex - 1] === "\r" ? 1 : 0);
+    start = sibling.startIndex;
+    sibling = sibling.previousNamedSibling;
+  }
+  return earliest !== undefined && latest !== undefined
+    ? [earliest, latest]
+    : null;
+}
+
 // web-tree-sitter 0.20 indexes JS UTF-16 code units. Reject any midpoint in a
 // surrogate pair; then convert to UTF-8 offsets in the *original* byte buffer.
 function createByteOffsetMapper(text: string): (index: number) => number {
@@ -588,6 +696,23 @@ export async function extractSnapshot(
       continue;
     }
     const byteOffset = createByteOffsetMapper(text);
+    const anchoredText = (range: [number, number] | null) => {
+      if (!range) return undefined;
+      const source = sourceRef(
+        file,
+        input.bytes,
+        byteOffset(range[0]),
+        byteOffset(range[1]),
+      );
+      const raw = text.slice(range[0], range[1]);
+      if (
+        new TextDecoder("utf-8", { fatal: true }).decode(
+          input.bytes.subarray(source.start_byte, source.end_byte),
+        ) !== raw
+      )
+        throw new Error("IR metadata source slice mismatch");
+      return { text: raw, source };
+    };
     const makeUnit = (
       kind: Unit["kind"],
       start: number,
@@ -894,6 +1019,28 @@ export async function extractSnapshot(
                   data: { overload_signature: true },
                 };
               }
+              const metadataNode =
+                (input.language === "typescript" || input.language === "tsx") &&
+                entity.parent?.type === "export_statement" &&
+                entity.parent.childForFieldName("declaration")?.startIndex ===
+                  entity.startIndex
+                  ? entity.parent
+                  : declaration;
+              const signature =
+                ["type", "function", "method"].includes(kind) &&
+                ![
+                  "field_definition",
+                  "public_field_definition",
+                  "variable_declarator",
+                  "pair",
+                ].includes(entity.type)
+                  ? anchoredText(signatureRange(metadataNode, input.language))
+                  : undefined;
+              if (signature) unit.signature = signature;
+              const documentation = anchoredText(
+                documentationRange(metadataNode, text, input.language),
+              );
+              if (documentation) unit.documentation = documentation;
               snapshot.units.push(unit);
               emitFact("contains", parent, unit.source, unit);
               if (
