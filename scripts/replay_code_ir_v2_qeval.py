@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare syntax-only retrieval with the published Code IR v2 projection.
+"""Compare syntax-only retrieval with published Code IR v2 and opt-in ablations.
 
 Engram frozen fixtures/scorer are read-only; outputs and indexes must be new
 and outside both source checkouts. No SCIP inputs or default search changes.
@@ -17,6 +17,10 @@ from typing import Any
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 METRICS = ("ndcg@10", "mrr@10", "recall@10", "precision@10")
+FACTORIAL_ARMS = (
+    "syntax-only", "code-ir-v1", "code-ir-policy-only",
+    "code-ir-metadata-only", "code-ir-v2",
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -44,9 +48,12 @@ def load_engram(engram_root: Path):
     return _snapshot, build_qrels, evaluate, _dedupe_results, _map_chunk, _unit_spans
 
 
-def validate_arms(arms: list[dict[str, Any]], query_ids: list[str], query_texts: list[str] | None = None) -> None:
-    if len(arms) != 2 or [arm.get("name") for arm in arms] != ["syntax-only", "code-ir-v2"]:
-        raise ValueError("expected exactly syntax-only and code-ir-v2 arms")
+def validate_arms(
+    arms: list[dict[str, Any]], query_ids: list[str], query_texts: list[str] | None = None,
+    expected_names: tuple[str, ...] | list[str] = ("syntax-only", "code-ir-v2"),
+) -> None:
+    if len(arms) != len(expected_names) or [arm.get("name") for arm in arms] != list(expected_names):
+        raise ValueError(f"expected exactly these qeval arms: {expected_names}")
     if len(query_ids) != 8 or len(set(query_ids)) != 8:
         raise ValueError("expected eight unique frozen queries")
     for arm in arms:
@@ -104,6 +111,27 @@ def compare_metrics(metrics: dict[str, Any], language: str) -> dict[str, Any]:
     }
 
 
+def compare_ablation_metrics(metrics: dict[str, Any], language: str) -> dict[str, Any]:
+    runs = metrics["runs"]
+    if [run["backend"] for run in runs] != list(FACTORIAL_ARMS):
+        raise ValueError("factorial scorer arm names/order differ")
+    indexed = {run["backend"]: run for run in runs}
+
+    def pair(left: str, right: str) -> dict[str, Any]:
+        return compare_metrics({"runs": [indexed[left], indexed[right]]}, language)
+
+    return {
+        "language": language,
+        "vs_control": {name: pair("syntax-only", name) for name in FACTORIAL_ARMS[1:]},
+        "factor_effects": {
+            "policy_with_v1_text": pair("code-ir-v1", "code-ir-policy-only"),
+            "metadata_with_v1_units": pair("code-ir-v1", "code-ir-metadata-only"),
+            "metadata_with_v2_units": pair("code-ir-policy-only", "code-ir-v2"),
+            "policy_with_v2_text": pair("code-ir-metadata-only", "code-ir-v2"),
+        },
+    }
+
+
 def stage_sources(fixture: Path, manifest: dict[str, Any], roots: tuple[Path, Path], expected_bytes: int):
     paths = sorted({unit["path"] for unit in manifest["units"]})
     selected = {relative: (fixture / relative).read_bytes() for relative in paths}
@@ -157,15 +185,21 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if len(paths) != len(selected):
         raise ValueError("staged file count differs from frozen inventory")
     raw_path = output_dir / "raw-runs.json"
-    subprocess.run([
+    command = [
         "node", str(REPOSITORY / "scripts/qeval_code_ir_v2_search.mjs"),
         "--fixture", str(fixture), "--baseline-root", str(baseline),
         "--candidate-root", str(candidate), "--sidecar-root", str(work_dir / "ir-sidecar"),
         "--index-root", str(work_dir / "indexes"), "--model-cache", str(model_cache),
         "--model", args.model, "--output", str(raw_path),
-    ], check=True, cwd=REPOSITORY)
+    ]
+    if args.ablation:
+        command.append("--ablation")
+    subprocess.run(command, check=True, cwd=REPOSITORY)
     raw = json.loads(raw_path.read_text())
-    validate_arms(raw["arms"], query_ids, [row["query"] for row in truth["queries"]])
+    validate_arms(
+        raw["arms"], query_ids, [row["query"] for row in truth["queries"]],
+        expected_names=FACTORIAL_ARMS if args.ablation else ("syntax-only", "code-ir-v2"),
+    )
     if raw["provenance"]["source_set_sha256"] != source_digest or raw["provenance"]["language"] != language:
         raise ValueError("search adapter did not use pinned source/language")
     code_ir = raw["provenance"]["code_ir"]
@@ -184,7 +218,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "runs": [normalize_arm(arm, unit_spans(fixture, manifest), map_chunk, dedupe) for arm in raw["arms"]],
     }
     metrics = evaluate(qrels, normalized, cutoff=10)
-    comparison = compare_metrics(metrics, language)
+    comparison = compare_ablation_metrics(metrics, language) if args.ablation else compare_metrics(metrics, language)
     normalized_path = output_dir / "normalized-runs.json"
     metrics_path = output_dir / "metrics-k10.json"
     comparison_path = output_dir / "comparison.json"
@@ -203,6 +237,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "pipeline/search/index.js", "storage/zvec.js", "code-ir/sidecar.js", "extraction/code/ir.js"
         )},
         "adapter_sha256": sha256_file(REPOSITORY / "scripts/qeval_code_ir_v2_search.mjs"),
+        "runner_sha256": sha256_file(REPOSITORY / "scripts/replay_code_ir_v2_qeval.py"),
+        "ablation": {
+            "enabled": args.ablation,
+            "implementation_sha256": sha256_file(REPOSITORY / "scripts/code_ir_projection_ablation.mjs") if args.ablation else None,
+            "arms": raw["provenance"].get("ablation", {}).get("arms") if args.ablation else None,
+        },
         "scorer_sha256": sha256_file(engram_root / "scripts/evaluate_semantic_search.py"),
         "mapping_sha256": sha256_file(engram_root / "scripts/replay_synthetic_semantic_search.py"),
         "model": {"identity": args.model, "device": "cpu", "cache_tree_sha256": tree_digest(model_cache)},
@@ -221,6 +261,10 @@ def main() -> None:
     for flag in ("fixture", "engram-root", "model-cache", "work-dir", "output-dir"):
         parser.add_argument(f"--{flag}", type=Path, required=True)
     parser.add_argument("--model", default="local/potion-code-16m-v2")
+    parser.add_argument(
+        "--ablation", action="store_true",
+        help="opt-in frozen 2x2 unit-policy/metadata search-view experiment",
+    )
     args = parser.parse_args()
     print(json.dumps(run(args), indent=2))
 
