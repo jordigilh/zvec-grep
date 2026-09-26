@@ -12,9 +12,12 @@ making changes.
 
 ```text
 integration/zvec-live-code-intelligence @ 5f2c5e4  (pre-spike base)
-├── spike/code-ir-design @ 139fe4e               (canonical IR contract/frontends)
-│   └── spike/code-ir-one-pass-evidence @ 73b424c+ (CURRENT: syntax evidence)
-└── spike/code-ir-scip-evaluation @ 3dd88de       (separate experiment + status)
+├── spike/code-ir-contract @ e39f0ed             (PR #9: contract)
+│   └── spike/code-ir-foundation @ b8a5d7d       (PR #10: four-language IR)
+│       └── spike/code-ir-design @ 139fe4e       (PR #11: opt-in publication)
+│           └── spike/code-ir-one-pass-evidence   (PR #12: CURRENT checkout)
+│               └── spike/code-ir-metadata-inventory-wip @ b1d4e5a (NO PR)
+└── spike/code-ir-scip-evaluation @ df4a856       (separate experiment + status)
 
 Engram frozen source/manifests/qrels ──read-only inputs──▶ conformance + qeval
                                            └─▶ independent real-repo labels TBD
@@ -23,9 +26,11 @@ Engram frozen source/manifests/qrels ──read-only inputs──▶ conformance
 | Role | Branch / observed commit | Checkout on this host | What it contains | Action |
 |---|---|---|---|---|
 | Pre-spike integration base | `integration/zvec-live-code-intelligence` / `5f2c5e4` | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-fork` | Existing search behavior; control ancestry | Do not overwrite for this spike. |
+| Review-only stack bases | `spike/code-ir-contract` / `e39f0ed`; `spike/code-ir-foundation` / `b8a5d7d` | No separate checkout | Small contract and extractor/validator PR boundaries | Review via #9 and #10; no need to move the active checkout. |
 | Owning IR foundation | `spike/code-ir-design` / `139fe4e` | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-code-ir-design` | [Normative source/IR contract](./code-ir-design-issue-8.md), [staged implementation plan](./code-ir-implementation-plan-issue-8.md), v1.5 four-language syntax IR, validator, opt-in shadow/projection | Read as base. Leave the other team's checkout clean; integrate the child branch deliberately, not by editing this working tree. |
-| **Active syntax follow-up** | [`spike/code-ir-one-pass-evidence`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-one-pass-evidence) / code milestone `73b424c` | `/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/code-ir-one-pass-evidence-20260926` | v1.6 one-parse source-backed signatures/docs, TDD, [results](./code-ir-one-pass-metadata-results-20260926.md) | Continue syntax conformance and retrieval-policy work here. This temp checkout may disappear; **the pushed fork branch is durable**. |
-| Evaluation/design reference | [`spike/code-ir-scip-evaluation`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-scip-evaluation) / `3dd88de` | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-scip-spike` | [Semantic-index design](https://github.com/jordigilh/zvec-grep/blob/spike/code-ir-scip-evaluation/docs/code-ir-semantic-index-design.md), [living work status](https://github.com/jordigilh/zvec-grep/blob/spike/code-ir-scip-evaluation/docs/code-ir-scip-work-status.md), earlier four-language retrieval ablations and offline relationship lookup | Read-only evidence for this syntax milestone. Do **not** treat its experimental producer artifacts as a dependency of the base IR. |
+| **Active syntax follow-up** | [`spike/code-ir-one-pass-evidence`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-one-pass-evidence) / code milestone `73b424c` | `/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/code-ir-one-pass-evidence-20260926` | v1.6 one-parse source-backed signatures/docs, TDD, [results](./code-ir-one-pass-metadata-results-20260926.md) | PR #12 review and handoff only; build the independent inventory on its WIP child branch. This temp checkout may disappear; **the pushed fork branch is durable**. |
+| Paused, unverified inventory | [`spike/code-ir-metadata-inventory-wip`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-metadata-inventory-wip) / `b1d4e5a` | No separate checkout; created then switched back in current checkout | Script and tests only; no source-authored four-language labels yet | No PR. Continue and validate on this branch, then open a separate child PR against #12. |
+| Evaluation/design reference | [`spike/code-ir-scip-evaluation`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-scip-evaluation) / `df4a856` | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-scip-spike` | [Semantic-index design](https://github.com/jordigilh/zvec-grep/blob/spike/code-ir-scip-evaluation/docs/code-ir-semantic-index-design.md), [living work status](https://github.com/jordigilh/zvec-grep/blob/spike/code-ir-scip-evaluation/docs/code-ir-scip-work-status.md), earlier four-language retrieval ablations and offline relationship lookup | Read-only evidence for this syntax milestone. Do **not** treat its experimental producer artifacts as a dependency of the base IR. |
 
 The older `zvec-grep-lexical-baseline`, `sense-evidence` and
 `proposal-{1,2,3,4}` checkouts are prior retrieval controls/ablations, **not**
@@ -51,10 +56,11 @@ hidden in these four diffs.
 | 3 | [#11: opt-in snapshots](https://github.com/jordigilh/zvec-grep/pull/11) | `spike/code-ir-foundation` → `spike/code-ir-design` | Publication, source refinements and rechecks. Draft until reviewed. |
 | 4 | [#12: one-pass source metadata](https://github.com/jordigilh/zvec-grep/pull/12) | `spike/code-ir-design` → `spike/code-ir-one-pass-evidence` | v1.6 metadata and its TDD/result notes. Draft; broad root suite not completed. |
 
-The independent metadata inventory is **not in #12**: its new script and test
-are uncommitted in the current temporary worktree, with a separate recoverable
-copy outside the worktree. They belong in a later child PR only after their
-tests and source-authored labels pass. The earlier SCIP evaluation branch is
+The independent metadata inventory is **not in #12**: its incomplete script and
+test are saved on the pushed `spike/code-ir-metadata-inventory-wip` child branch
+and have no open PR. A separate recoverable file copy also exists outside the
+worktree. Continue there and open a later child PR only after tests and
+source-authored labels pass. The earlier SCIP evaluation branch is
 historical evidence, not a hidden fifth prerequisite. At stack creation GitHub
 reported no check runs for these fork PRs; do not infer CI success from their
 clean mergeability status.
@@ -86,9 +92,10 @@ clean mergeability status.
 
 ## Next handoff on this branch
 
-- **Now:** Build a small *independent* metadata inventory from frozen source
-  bytes, with exact expected header/comment slices and explicit absent/comment
-  negatives for all four languages. Test the inventory's path/hash and
+- **Now (on `spike/code-ir-metadata-inventory-wip`):** Complete a small
+  *independent* metadata inventory from frozen source bytes, with exact expected
+  header/comment slices and explicit absent/comment negatives for all four
+  languages. Test the inventory's path/hash and
   uniqueness invariants before comparing it with v1.6 extraction. Report the
   selected-case denominator rather than claiming full fixture coverage.
 - **Then:** Add an explicit, versioned retrieval-unit policy and source-ref
