@@ -26,6 +26,7 @@ test("production-schema conformance examples serialize identically and validate 
     ]);
     const expected = structuredClone(example.snapshot);
     const frontend = snapshot.frontend_versions[example.language];
+    assert.equal(frontend, "web-tree-sitter-ir-v1.6");
     expected.frontend_versions[example.language] = frontend;
     for (const file of expected.files)
       file.extraction.frontend_version = frontend;
@@ -457,4 +458,188 @@ test("class attributes and attached export/attribute spans remain source-backed 
     for (const name of absent)
       assert.ok(!snapshot.units.some((unit) => unit.name === name));
   }
+});
+
+test("one parse emits exact signature and adjacent documentation refs in all four languages", async () => {
+  const cases = [
+    {
+      language: "go",
+      text: "package demo\r\n// é 🚀 guide\r\n// second line\r\nfunc run(x int) int {\r\n  return x\r\n}\r\n// detached\r\n\r\nfunc skip() {}\r\n",
+      signature: "func run(x int) int",
+      documentation: "// é 🚀 guide\r\n// second line",
+    },
+    {
+      language: "python",
+      text: "# é 🚀 guide\r\n@cached\r\ndef run(x: int) -> int:\r\n    return x\r\n# detached\r\n\r\ndef skip():\r\n    pass\r\n",
+      signature: "def run(x: int) -> int:",
+      documentation: "# é 🚀 guide",
+    },
+    {
+      language: "rust",
+      text: "/// é 🚀 guide\r\n#[inline]\r\npub fn run(x: i32) -> i32 {\r\n    x\r\n}\r\n/// detached\r\n\r\nfn skip() {}\r\n",
+      signature: "pub fn run(x: i32) -> i32",
+      documentation: "/// é 🚀 guide",
+    },
+    {
+      language: "typescript",
+      text: "/** é 🚀 guide */\r\nexport function run(x: number): number {\r\n  return x;\r\n}\r\n/** detached */\r\n\r\nfunction skip() {}\r\n",
+      signature: "export function run(x: number): number",
+      documentation: "/** é 🚀 guide */",
+    },
+  ];
+  for (const { language, text, signature, documentation } of cases) {
+    const bytes = Buffer.from(text);
+    const { snapshot, sources } = await extractSnapshot("demo", [
+      {
+        root_id: "root",
+        relative_path: `fixture.${language}`,
+        language,
+        bytes,
+      },
+    ]);
+    assert.equal(snapshot.files[0].extraction.status, "complete", language);
+    validateSnapshot(snapshot, sources);
+    const run = snapshot.units.find((unit) => unit.name === "run");
+    const skip = snapshot.units.find((unit) => unit.name === "skip");
+    assert.ok(run, `${language}: run unit`);
+    assert.ok(skip, `${language}: skip unit`);
+    for (const [anchored, expected] of [
+      [run.signature, signature],
+      [run.documentation, documentation],
+    ]) {
+      assert.equal(anchored?.text, expected, `${language}: anchored text`);
+      assert.equal(
+        bytes
+          .subarray(anchored.source.start_byte, anchored.source.end_byte)
+          .toString(),
+        expected,
+        `${language}: byte-for-byte source slice`,
+      );
+      assert.equal(anchored.source.sha256, snapshot.files[0].sha256);
+    }
+    assert.equal(
+      skip.documentation,
+      undefined,
+      `${language}: blank line detaches comment`,
+    );
+    const fake = structuredClone(snapshot);
+    fake.units.find((unit) => unit.name === "run").signature.text +=
+      " invented";
+    assert.throws(
+      () => validateSnapshot(fake, sources),
+      /synthetic anchored text/,
+    );
+  }
+});
+
+test("type declarations retain source-backed headers and comments across wrappers", async () => {
+  const cases = [
+    [
+      "go",
+      "package demo\n// type docs\ntype Gadget struct { Value int }\n",
+      "type Gadget struct",
+      "// type docs",
+    ],
+    [
+      "python",
+      "# class docs\n@register\nclass Gadget:\n    pass\n",
+      "class Gadget:",
+      "# class docs",
+    ],
+    [
+      "rust",
+      "/// struct docs\n#[derive(Clone)]\npub struct Gadget { field: i32 }\n",
+      "pub struct Gadget",
+      "/// struct docs",
+    ],
+    [
+      "typescript",
+      "/** class docs */\nexport class Gadget { value = 1; }\n",
+      "export class Gadget",
+      "/** class docs */",
+    ],
+  ];
+  for (const [language, text, signature, documentation] of cases) {
+    const bytes = Buffer.from(text);
+    const { snapshot, sources } = await extractSnapshot("demo", [
+      {
+        root_id: "root",
+        relative_path: `fixture.${language}`,
+        language,
+        bytes,
+      },
+    ]);
+    validateSnapshot(snapshot, sources);
+    const gadget = snapshot.units.find((unit) => unit.name === "Gadget");
+    assert.ok(gadget, language);
+    assert.equal(gadget.signature?.text, signature, `${language}: type header`);
+    assert.equal(
+      gadget.documentation?.text,
+      documentation,
+      `${language}: attached docs`,
+    );
+  }
+});
+
+test("multiline exported signatures preserve exact whitespace instead of truncating or synthesizing text", async () => {
+  const signature = "export function run(\r\n  x: number,\r\n): number";
+  const text = `${signature} {\r\n  return x;\r\n}\r\n`;
+  const bytes = Buffer.from(text);
+  const { snapshot, sources } = await extractSnapshot("demo", [
+    {
+      root_id: "root",
+      relative_path: "multi.ts",
+      language: "typescript",
+      bytes,
+    },
+  ]);
+  validateSnapshot(snapshot, sources);
+  const run = snapshot.units.find((unit) => unit.name === "run");
+  assert.equal(run.signature?.text, signature);
+  assert.equal(run.signature.source.start_byte, 0);
+  assert.equal(run.signature.source.end_byte, Buffer.byteLength(signature));
+});
+
+test("values remain semantic units without mislabeling initializers as signatures", async () => {
+  for (const [language, text, name, kind] of [
+    ["go", "package demo\nvar Result = compute()\n", "Result", "value"],
+    [
+      "typescript",
+      "class Gadget { field = () => compute(); }\n",
+      "field",
+      "function",
+    ],
+  ]) {
+    const { snapshot } = await extractSnapshot("demo", [
+      {
+        root_id: "root",
+        relative_path: `fixture.${language}`,
+        language,
+        bytes: Buffer.from(text),
+      },
+    ]);
+    const value = snapshot.units.find((unit) => unit.name === name);
+    assert.equal(value?.kind, kind, language);
+    assert.equal(
+      value.signature,
+      undefined,
+      `${language}: initializer is not a signature`,
+    );
+  }
+});
+
+test("unbounded multiline declaration headers abstain instead of publishing a partial signature", async () => {
+  const text = "function run(\n  x: number,\n): number;\n";
+  const { snapshot, sources } = await extractSnapshot("demo", [
+    {
+      root_id: "root",
+      relative_path: "overload.ts",
+      language: "typescript",
+      bytes: Buffer.from(text),
+    },
+  ]);
+  validateSnapshot(snapshot, sources);
+  const run = snapshot.units.find((unit) => unit.name === "run");
+  assert.ok(run);
+  assert.equal(run.signature, undefined);
 });
