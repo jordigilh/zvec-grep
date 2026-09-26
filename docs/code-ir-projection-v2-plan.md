@@ -70,6 +70,12 @@ search storage. The external source checkout is read-only. The optional frozen
 unit test replays those lanes when `CODE_IR_FROZEN_FIXTURES` points to the
 fixture root (or it exists at the sibling Engram path).
 
+On this branch, `npm run build`, `npm run lint`, `npm run format:check`,
+`npm run typecheck`, `npm run code-ir:cross-runtime` and the unit suite passed
+(313 passed, one skipped). The broader root suite was not rerun; no paired
+qeval was performed. These verification results are **not** a retrieval
+enablement gate.
+
 ## Gate after this PR
 
 Use fresh, separate same-engine indexes per language and the unchanged frozen
