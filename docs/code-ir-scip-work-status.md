@@ -7,6 +7,28 @@ Update the prior experiment commit, upstream PR head, evidence and next step
 when work resumes; earlier result reports remain immutable records of the
 producer and fixtures actually evaluated.
 
+## Latest status check (2026-09-26)
+
+- The last spike design checkpoint is `ce13a69`; no later spike code or
+  evaluation has been recorded. The owning `spike/code-ir-design` checkout
+  remains at `139fe4e` and is clean.
+  [Issue #8](https://github.com/jordigilh/zvec-grep/issues/8) is open.
+- Upstream scip-go PR #298 is still **open** at `c1926a3`. All reported checks
+  pass, but the review remains `CHANGES_REQUESTED` / `BLOCKED`; no maintainer
+  response to the proposed coverage expansion or new PR commit was observed.
+- There is a separate **uncommitted local prototype** on
+  `feat/definition-enclosing-ranges` in the isolated temporary
+  `scip-go-enclosing-spike-20260925` checkout. Its working diff walks the Go AST
+  to collect generic type parameters, block-local declarations and anonymous
+  struct fields, plus shared grouped-declaration documentation; snapshot inputs
+  and outputs are also modified. This is **not the PR head**, not published
+  producer evidence, and has not been independently tested or revalidated in
+  this status check. Preserve that checkout's changes; coordinate with its
+  owner before committing, rebasing or submitting them upstream.
+- No new Code IR join, independently labeled relationship inventory, or
+  real-Kubernaut retrieval qeval has been recorded since the measurements
+  below. Existing results still apply only to the pinned producer revisions.
+
 ## Plan and ownership
 
 - The [dedicated semantic-index design](./code-ir-semantic-index-design.md)
@@ -68,14 +90,16 @@ coverage gaps](https://github.com/scip-code/scip-go/pull/298#issuecomment-583982
 generic type parameters; block-local type/const/var and anonymous-struct
 fields; and sharing a grouped `GenDecl` doc comment across applicable specs.
 We support a focused follow-up with separate commits and source-span fixtures,
-subject to upstream scope/review. No new PR head implementing those gaps had
-been observed at this checkpoint. Rebuild and remeasure any later head; never
-reuse `c1926a3`'s binary/index/shadow hashes as evidence for it.
+subject to upstream scope/review. The local WIP above has **not** become a new
+PR head. Rebuild and remeasure any later head; never reuse `c1926a3`'s
+binary/index/shadow hashes as evidence for it.
 
 ## Resume in this order
 
-1. Check issue #8, the owning design branch and PR #298's latest head/review.
-   If the producer changes, build/test the new upstream head in its own checkout
+1. Check issue #8, the owning design branch and PR #298's latest head/review;
+   review the separate local prototype with its owner before treating it as an
+   upstream revision. If the producer changes, build/test the new upstream head
+   in its own checkout
    and rerun [`compare_scip_go_revisions.py`](../scripts/compare_scip_go_revisions.py)
    on identical frozen Go and immutable Kubernaut sources. Audit added,
    removed and changed enclosures **and** the complete primary-site multiset;
