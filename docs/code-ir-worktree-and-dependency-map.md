@@ -36,6 +36,29 @@ inputs for builds. The isolated local upstream-producer worktree is also not
 part of the active task. There is no merged PR or default search change from
 these branches.
 
+## Review stack on the fork
+
+The following PRs were opened against **the fork**, not the upstream project.
+Review and merge bottom-up; do not merge a child independently of its parent.
+The integration branch itself is five pre-existing commits ahead of fork
+`main`, so reconciling that branch with `main` is a separate prerequisite, not
+hidden in these four diffs.
+
+| Review order | PR | Base → head | Scope |
+|---|---|---|---|
+| 1 | [#9: evidence IR contract](https://github.com/jordigilh/zvec-grep/pull/9) | `integration/zvec-live-code-intelligence` → `spike/code-ir-contract` | Design and staged plan. |
+| 2 | [#10: four-language IR foundation](https://github.com/jordigilh/zvec-grep/pull/10) | `spike/code-ir-contract` → `spike/code-ir-foundation` | Schema, extractors, validators, conformance examples. Draft until reviewed. |
+| 3 | [#11: opt-in snapshots](https://github.com/jordigilh/zvec-grep/pull/11) | `spike/code-ir-foundation` → `spike/code-ir-design` | Publication, source refinements and rechecks. Draft until reviewed. |
+| 4 | [#12: one-pass source metadata](https://github.com/jordigilh/zvec-grep/pull/12) | `spike/code-ir-design` → `spike/code-ir-one-pass-evidence` | v1.6 metadata and its TDD/result notes. Draft; broad root suite not completed. |
+
+The independent metadata inventory is **not in #12**: its new script and test
+are uncommitted in the current temporary worktree, with a separate recoverable
+copy outside the worktree. They belong in a later child PR only after their
+tests and source-authored labels pass. The earlier SCIP evaluation branch is
+historical evidence, not a hidden fifth prerequisite. At stack creation GitHub
+reported no check runs for these fork PRs; do not infer CI success from their
+clean mergeability status.
+
 ## What depends on what
 
 1. **Source/IR conformance comes first.** Schema, byte validator and syntax
