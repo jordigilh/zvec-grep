@@ -138,6 +138,12 @@ discovery as fallback. Extend independently source-labelled byte-span coverage
 before claiming that ingestion gaps *cannot* matter on other corpora. An
 updated scip-go binary is irrelevant to this syntax-only loss investigation.
 
+**Subsequent controlled result:** The [five-arm factorial
+ablation](./code-ir-projection-ablation-results-20260926.md) isolates v2
+standalone-unit selection from the *combined* signature/documentation text in
+the same four frozen lanes. It does not yet isolate signatures from docs or
+change the default-search decision above.
+
 ## Provenance, artifacts and reproduction
 
 Run the committed code at `5c45808` (child of PR #15) after `npm run build`.
