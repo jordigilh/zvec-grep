@@ -2,6 +2,10 @@
 
 **Design:** [code-ir-design-issue-8.md](./code-ir-design-issue-8.md)
 
+**One-pass frontend evidence follow-up:** [source-backed signature and adjacent
+documentation recheck](./code-ir-one-pass-metadata-results-20260926.md)
+records the opt-in v1.6 milestone and remaining conformance/retrieval gates.
+
 **Issue:** https://github.com/jordigilh/zvec-grep/issues/8
 
 **Implementation checkout:** `spike/code-ir-design` at
