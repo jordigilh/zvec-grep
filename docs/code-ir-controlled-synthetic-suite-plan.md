@@ -34,8 +34,12 @@ development target for these new fixtures.
 3. Build staged copies in *fresh* external directories; validate published
    snapshot and source hashes. Compare syntax-only and IR-v2-only top-10 answer
    retrieval (strict identity, not line overlap). Ground baseline candidate
-   entities to verified IR units by path, kind, name and **source-contained
-   authored anchor**, rejecting non-unique matches. Follow only `contains`
+   entities to verified IR units **without consulting authored answer sites**:
+   require equal path/name, compatible kind, matching declaration end byte, and
+   IR start no later than the syntax fragment start (the IR may include a
+   source-attested doc, `type` or `export` prefix). Reject non-unique matches
+   and abstain outside this deliberately narrow range policy. Use authored
+   anchors only *afterward* to score exact discovery. Follow only `contains`
    facts with `observed` object IDs; show `calls` sites with spelling and
    `unresolved` status, **never a guessed callee**. Score answer retrieval,
    grounded coverage, true positive contains, missed evidence, abstention,
@@ -57,5 +61,6 @@ development target for these new fixtures.
   external validity is a **later** gate, not the next debugging environment.
 
 Deliverables: new pinned fixture/truth, verifier and TDD tests, opt-in same-
-engine three-arm runner and per-language decision-first report with artifact
+engine syntax/IR search with a no-reranking baseline→IR evidence arm, and a
+per-language decision-first report with artifact
 hashes and declared limitations. Keep code and result review commits distinct.
