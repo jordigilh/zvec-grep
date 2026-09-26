@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "fixture_id": "controlled-go-v1",
+  "language": "go",
+  "source_set_sha256": "fc23c481d5b6926498340782d49c984575fa0b1362316d6b7347d052f7899001",
+  "files": {
+    "core.go": "23f7e1da2ad35021d48b1fef6bcb95bece77cd41d09d0e4a19c32b0e8f53b551",
+    "decoy.go": "b3a4b702dfa6ba5cb5a2b575485ae99d2407eca1fb95e82ba32986937b33aeec"
+  },
+  "sites": [
+    {
+      "id": "vault",
+      "path": "core.go",
+      "kind": "type",
+      "name": "Vault",
+      "anchor": "type Vault struct {",
+      "start_byte": 71,
+      "end_byte": 90
+    },
+    {
+      "id": "token",
+      "path": "core.go",
+      "kind": "value",
+      "name": "token",
+      "anchor": "token string",
+      "start_byte": 92,
+      "end_byte": 104
+    },
+    {
+      "id": "guard",
+      "path": "core.go",
+      "kind": "method",
+      "name": "Guard",
+      "anchor": "func (v *Vault) Guard(value string) bool {",
+      "start_byte": 108,
+      "end_byte": 150
+    },
+    {
+      "id": "dispatch",
+      "path": "core.go",
+      "kind": "function",
+      "name": "Dispatch",
+      "anchor": "func Dispatch(v *Vault, value string) bool {",
+      "start_byte": 179,
+      "end_byte": 223
+    },
+    {
+      "id": "dispatch-call",
+      "path": "core.go",
+      "kind": "call",
+      "anchor": "v.Guard(value)",
+      "start_byte": 232,
+      "end_byte": 246
+    },
+    {
+      "id": "decoy",
+      "path": "decoy.go",
+      "kind": "function",
+      "name": "Guard",
+      "anchor": "func Guard(value string) bool {",
+      "start_byte": 89,
+      "end_byte": 120
+    },
+    {
+      "id": "proxy",
+      "path": "decoy.go",
+      "kind": "function",
+      "name": "Proxy",
+      "anchor": "func Proxy(v *Vault, value string) bool {",
+      "start_byte": 138,
+      "end_byte": 179
+    },
+    {
+      "id": "proxy-call",
+      "path": "decoy.go",
+      "kind": "call",
+      "anchor": "v.Guard(value)",
+      "start_byte": 188,
+      "end_byte": 202
+    }
+  ],
+  "relations": [
+    {
+      "id": "vault-token",
+      "kind": "contains",
+      "subject": "vault",
+      "object": "token",
+      "status": "observed"
+    },
+    {
+      "id": "dispatch-guard",
+      "kind": "calls",
+      "subject": "dispatch",
+      "site": "dispatch-call",
+      "status": "unresolved",
+      "object": null
+    },
+    {
+      "id": "proxy-guard",
+      "kind": "calls",
+      "subject": "proxy",
+      "site": "proxy-call",
+      "status": "unresolved",
+      "object": null
+    }
+  ],
+  "queries": [
+    {
+      "id": "check",
+      "split": "calibration",
+      "query": "Where does Vault compare a supplied value with the stored token?",
+      "answer": "guard"
+    },
+    {
+      "id": "structure",
+      "split": "calibration",
+      "query": "Which Vault declaration contains the token field?",
+      "answer": "vault",
+      "relation": "vault-token"
+    },
+    {
+      "id": "dispatch",
+      "split": "holdout",
+      "query": "Where is the request dispatched through Vault Guard?",
+      "answer": "dispatch",
+      "relation": "dispatch-guard"
+    },
+    {
+      "id": "decoy",
+      "split": "holdout",
+      "query": "Which standalone Guard function rejects every value despite its comment?",
+      "answer": "decoy"
+    },
+    {
+      "id": "proxy",
+      "split": "holdout",
+      "query": "Which proxy invokes a guard with a same-named decoy in another file?",
+      "answer": "proxy",
+      "relation": "proxy-guard"
+    }
+  ]
+}

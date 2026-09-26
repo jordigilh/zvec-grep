@@ -11,6 +11,7 @@ import {
   buildBaselineTextViews,
   inventoryBaselineVsIR,
 } from "./code_ir_v1_gap_analysis.mjs";
+import { verifyControlledTruth } from "./code_ir_controlled_suite.mjs";
 
 function option(name) {
   const index = process.argv.indexOf(name);
@@ -28,6 +29,9 @@ const modelCache = resolve(option("--model-cache"));
 const modelIdentity = option("--model");
 const ablation = process.argv.includes("--ablation");
 const textIsolation = process.argv.includes("--text-isolation");
+const controlled = process.argv.includes("--controlled");
+if (controlled && (ablation || textIsolation))
+  throw new Error("controlled suite runs exactly syntax-only and published v2");
 const outputPath = resolve(option("--output"));
 const runtimeRoot = resolve(import.meta.dirname, "..");
 const dist = join(runtimeRoot, "dist/engine");
@@ -45,15 +49,37 @@ const [
 const requireFromRuntime = createRequire(join(runtimeRoot, "package.json"));
 const zvec = requireFromRuntime("@zvec/zvec");
 
-const manifest = JSON.parse(
-  await readFile(join(fixtureRoot, "manifest.json"), "utf8"),
-);
 const truth = JSON.parse(
   await readFile(join(fixtureRoot, "truth.json"), "utf8"),
 );
-const qrels = JSON.parse(
-  await readFile(join(fixtureRoot, "qrels.json"), "utf8"),
-);
+if (controlled) {
+  const sources = new Map(
+    await Promise.all(
+      Object.keys(truth.files).map(async (path) => [
+        path,
+        await readFile(join(fixtureRoot, path)),
+      ]),
+    ),
+  );
+  verifyControlledTruth(truth, sources);
+}
+const manifest = controlled
+  ? {
+      fixture_id: truth.fixture_id,
+      language: truth.language,
+      source: {
+        repository: `synthetic/${truth.fixture_id}`,
+        include: [
+          `**/*.${{ go: "go", python: "py", rust: "rs", typescript: "ts" }[truth.language]}`,
+        ],
+        exclude: [],
+      },
+      units: Object.keys(truth.files).map((path) => ({ path })),
+    }
+  : JSON.parse(await readFile(join(fixtureRoot, "manifest.json"), "utf8"));
+const qrels = controlled
+  ? { source: { snapshot_sha256: truth.source_set_sha256 } }
+  : JSON.parse(await readFile(join(fixtureRoot, "qrels.json"), "utf8"));
 const language = manifest.language;
 if (!["go", "python", "rust", "typescript"].includes(language))
   throw new Error(`unsupported qeval language: ${language}`);
@@ -213,6 +239,7 @@ try {
 }
 
 const provenance = {
+  ...(controlled ? { controlled_suite: true } : {}),
   fixture_id: manifest.fixture_id,
   language,
   source_set_sha256: sourceDigest,
