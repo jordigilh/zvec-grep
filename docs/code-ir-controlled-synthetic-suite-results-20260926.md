@@ -82,8 +82,8 @@ additional evidence available through IR, not a baseline ranking improvement.
 
 ## Reproduction and provenance
 
-At pinned implementation commit `55af6c8` (including the label-blind grounding
-correction), build and run each language separately:
+At pinned implementation commit `f9a2d70` (including the label-blind grounding
+correction and model-cache integrity check), build and run each language separately:
 
 ```sh
 npm run build
@@ -100,19 +100,23 @@ per-query ranks, abstentions, and source citations), and `run-manifest.json`
 (file hashes, model, engine revision, snapshot and implementation digests).
 On this host, final artifacts are under the approved temporary
 `/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/` with
-`code-ir-controlled-{language}-{work,results}-pinned-20260926` names. Temp
+`code-ir-controlled-{language}-{work,results}-checked-20260926` names. Temp
 artifacts can be cleaned; the runner and the following digests allow replay.
+All four runs pinned the same local model-cache tree SHA-256
+`9eccd62fe5ce1815096be4b5dff78708f27c686c0c70305017f23984e0524252`,
+verified unchanged before/after each run.
 
 | Language | Truth SHA-256 | Raw search SHA-256 | Strict result SHA-256 |
 |---|---|---|---|
-| Go | `662fee6f96d89ef6eabee55d6a43540939a2a59c44927eb295dd7914e799b99e` | `0c9c0cde61abcd9fe2d8d69aabc29a6f14cbe9c388a597e299237566347038ba` | `d9da80bdf759c92d43bec4ccefd1710f0d81e9c1ce3c9bd425d9d14b4bd20255` |
-| Python | `de4b1895900ad1d07343d222bb6679b047d946fe29cc4a1e72893bebac9c2987` | `5bab1f3f38ff8be88a14e207f69823cfe26342c052253ab717e3d1b9f042b97c` | `12ed30b64b19d51644a0d45610028ccb4d9cb60cd3ce362726743578006d3398` |
-| Rust | `80bb94bd83cb90c2535156d2cf06673f1298d249eeb7b65b953f4b9e46e06b3c` | `80ebabedf43b4ddce8a043696167ed8ee5d31083e924bc1b098df352adc1dc4c` | `ced431419cee21b6aa3a1a550a41a90cce9cb3a3b467d21e489129bae06b20bd` |
-| TypeScript | `4497c9ac1aea85e326907573c20791406e92840d90bc29f3c7aaf15e810c9ea4` | `6313e0c81d1354d2a3a4d076476db9ab3793ad7c0b5e7d2c26e69270643038fe` | `a637862839b26b00f8ec65d6d6bdffefb729d8e237d053aa28e37bb58c107467` |
+| Go | `662fee6f96d89ef6eabee55d6a43540939a2a59c44927eb295dd7914e799b99e` | `0ce0c4dbce3f71f9bb6bb6676ed9f7b224cbd6aa710cbce3bf56b9088584a11d` | `d9da80bdf759c92d43bec4ccefd1710f0d81e9c1ce3c9bd425d9d14b4bd20255` |
+| Python | `de4b1895900ad1d07343d222bb6679b047d946fe29cc4a1e72893bebac9c2987` | `e37b5628d14ff595d2002763a86bbdc3efcc5f58da354ed99e8d1b550171864c` | `12ed30b64b19d51644a0d45610028ccb4d9cb60cd3ce362726743578006d3398` |
+| Rust | `80bb94bd83cb90c2535156d2cf06673f1298d249eeb7b65b953f4b9e46e06b3c` | `2baa84574b245b360b2275a74e0f3d40b3a31bbe2a35ec894028646c5ee3febf` | `ced431419cee21b6aa3a1a550a41a90cce9cb3a3b467d21e489129bae06b20bd` |
+| TypeScript | `4497c9ac1aea85e326907573c20791406e92840d90bc29f3c7aaf15e810c9ea4` | `3c91643518a8d2e8d97b3119b99a1a88407e5f7f79f93dadcdc983a4b7f1d8af` | `a637862839b26b00f8ec65d6d6bdffefb729d8e237d053aa28e37bb58c107467` |
 
 The emitted raw runs use the same search code and model as PR #16; scoring is
 new and exact-byte based, not Engram's overlap scorer. `npm run test:unit`
-passed **331 / 332** with one existing skip; build, typecheck, lint and
+passed **331 / 332** with one existing skip; two offline Python runner tests,
+build, typecheck, lint and
 format passed. Root/integration/e2e/package/coverage suites and actual compiled
 Rust execution were not run. The older Engram fixtures were not inputs or
 modified by this pilot. At final status check the separate Engram checkout had
