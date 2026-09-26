@@ -1,7 +1,8 @@
 # Factorial Code IR retrieval ablation plan (issue #8)
 
-**Review slice:** branch `spike/code-ir-projection-factorial-ablation` on the
-still-opt-in [PR #16](https://github.com/jordigilh/zvec-grep/pull/16) qeval.
+**Review slice:** [PR #17](https://github.com/jordigilh/zvec-grep/pull/17),
+branch `spike/code-ir-projection-factorial-ablation` on the still-opt-in
+[PR #16](https://github.com/jordigilh/zvec-grep/pull/16) qeval.
 Source snapshots and qrels are read-only; all indexes/artifacts are fresh and
 outside the fork and Engram checkouts. No SCIP or default-search change.
 
