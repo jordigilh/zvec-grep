@@ -7,6 +7,10 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildProjectionAblations } from "./code_ir_projection_ablation.mjs";
+import {
+  buildBaselineTextViews,
+  inventoryBaselineVsIR,
+} from "./code_ir_v1_gap_analysis.mjs";
 
 function option(name) {
   const index = process.argv.indexOf(name);
@@ -23,6 +27,7 @@ const indexRoot = resolve(option("--index-root"));
 const modelCache = resolve(option("--model-cache"));
 const modelIdentity = option("--model");
 const ablation = process.argv.includes("--ablation");
+const textIsolation = process.argv.includes("--text-isolation");
 const outputPath = resolve(option("--output"));
 const runtimeRoot = resolve(import.meta.dirname, "..");
 const dist = join(runtimeRoot, "dist/engine");
@@ -52,6 +57,10 @@ const qrels = JSON.parse(
 const language = manifest.language;
 if (!["go", "python", "rust", "typescript"].includes(language))
   throw new Error(`unsupported qeval language: ${language}`);
+if (textIsolation && (!ablation || language !== "python"))
+  throw new Error(
+    "exact-unit baseline text isolation requires Python and --ablation",
+  );
 const selectedPaths = [
   ...new Set(manifest.units.map((unit) => unit.path)),
 ].sort();
@@ -185,6 +194,11 @@ try {
     });
   }
   arms.push({ name: "syntax-only", queries: baselineQueries });
+  if (textIsolation) {
+    await baselineService.close();
+    baselineService = undefined;
+    views.push(...(await baselineTextViews()));
+  }
   for (const view of views)
     arms.push(
       await runProjectionArm({
@@ -236,6 +250,7 @@ const provenance = {
             records: view.records.length,
             units: new Set(view.records.map((record) => record.unit_id)).size,
           })),
+          text_isolation: textIsolation,
         },
       }
     : {}),
@@ -250,6 +265,91 @@ await writeFile(
     2,
   ) + "\n",
 );
+
+async function baselineTextViews() {
+  const [
+    { createWorkspaceIndexStorage },
+    { CodeExtractor },
+    { indexChunkOptions },
+    { lexicalTextForFragment, vectorContentForFragment },
+  ] = await Promise.all([
+    import(pathToFileURL(join(dist, "storage/index.js"))),
+    import(pathToFileURL(join(dist, "extraction/code/extractor.js"))),
+    import(pathToFileURL(join(dist, "pipeline/indexing/input-budget.js"))),
+    import(pathToFileURL(join(dist, "extraction/vector-content.js"))),
+  ]);
+  const storage = createWorkspaceIndexStorage({
+    storagePath: join(baselineRoot, ".zvec-grep"),
+    readOnly: true,
+  });
+  const stored = [];
+  const prepared = new Map();
+  try {
+    const indexed = storage.listFiles();
+    if (indexed.length !== files.length)
+      throw new Error("baseline text file count differs");
+    for (const file of indexed) {
+      const raw = bytesByPath.get(file.relativePath);
+      if (!raw || file.absolutePath !== join(baselineRoot, file.relativePath))
+        throw new Error(
+          `baseline text file differs from staged source: ${file.relativePath}`,
+        );
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+      const chunkOptions = indexChunkOptions(
+        model.info.limits.maxInputTokens,
+        text,
+      );
+      const extracted = await new CodeExtractor().extractForIndexing(
+        { kind: "text", file, text },
+        chunkOptions,
+      );
+      const indexedEntities = storage.listEntitiesByFile(file.id);
+      if (extracted.length !== indexedEntities.length)
+        throw new Error(
+          `baseline text extraction changed unit count: ${file.relativePath}`,
+        );
+      for (const [index, item] of extracted.entries()) {
+        const { entity } = indexedEntities[index];
+        const fragment = item.fragment;
+        if (
+          item.embeddingText !== undefined ||
+          fragment.id !== entity.id ||
+          JSON.stringify(fragment.range) !== JSON.stringify(entity.range) ||
+          JSON.stringify(fragment.content) !== JSON.stringify(entity.content) ||
+          JSON.stringify(fragment.metadata) !== JSON.stringify(entity.metadata)
+        )
+          throw new Error(
+            `baseline indexed fragment or embedding source differs: ${file.relativePath}:${index}`,
+          );
+        const vector = vectorContentForFragment(
+          fragment,
+          fragment.content,
+          chunkOptions.maxChunkChars,
+        );
+        if (vector.kind !== "text")
+          throw new Error("expected baseline text vector input");
+        prepared.set(entity.id, {
+          lexical_text: lexicalTextForFragment(fragment),
+          vector_input: vector.text,
+        });
+        stored.push({ file, entity });
+      }
+    }
+  } finally {
+    storage.close();
+  }
+  const inventory = inventoryBaselineVsIR({
+    stored,
+    snapshot,
+    projection,
+    sources: new Map(files.map((file) => [file.relative_path, file.bytes])),
+  });
+  return buildBaselineTextViews({
+    inventory,
+    records: views[1].records,
+    prepared,
+  });
+}
 
 async function runProjectionArm({ name, records, storagePath }) {
   const collection = await createProjectionStorage(storagePath);

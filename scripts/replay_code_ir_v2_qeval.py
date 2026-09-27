@@ -21,6 +21,9 @@ FACTORIAL_ARMS = (
     "syntax-only", "code-ir-v1", "code-ir-policy-only",
     "code-ir-metadata-only", "code-ir-v2",
 )
+TEXT_ISOLATION_ARMS = (
+    "code-ir-v1-baseline-fts", "code-ir-v1-baseline-vector", "code-ir-v1-baseline-both",
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -132,6 +135,23 @@ def compare_ablation_metrics(metrics: dict[str, Any], language: str) -> dict[str
     }
 
 
+def compare_text_isolation_metrics(metrics: dict[str, Any], language: str) -> dict[str, Any]:
+    runs = metrics["runs"]
+    if [run["backend"] for run in runs] != [*FACTORIAL_ARMS, *TEXT_ISOLATION_ARMS]:
+        raise ValueError("exact-unit text isolation scorer arm names/order differ")
+    result = compare_ablation_metrics({"runs": runs[:len(FACTORIAL_ARMS)]}, language)
+    indexed = {run["backend"]: run for run in runs}
+    for name in TEXT_ISOLATION_ARMS:
+        result["vs_control"][name] = compare_metrics(
+            {"runs": [indexed["syntax-only"], indexed[name]]}, language,
+        )
+    result["vs_policy_only"] = {
+        name: compare_metrics({"runs": [indexed["code-ir-policy-only"], indexed[name]]}, language)
+        for name in TEXT_ISOLATION_ARMS
+    }
+    return result
+
+
 def stage_sources(fixture: Path, manifest: dict[str, Any], roots: tuple[Path, Path], expected_bytes: int):
     paths = sorted({unit["path"] for unit in manifest["units"]})
     selected = {relative: (fixture / relative).read_bytes() for relative in paths}
@@ -192,13 +212,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "--index-root", str(work_dir / "indexes"), "--model-cache", str(model_cache),
         "--model", args.model, "--output", str(raw_path),
     ]
+    if args.text_isolation and not args.ablation:
+        raise ValueError("text isolation requires --ablation")
     if args.ablation:
         command.append("--ablation")
+    if args.text_isolation:
+        command.append("--text-isolation")
     subprocess.run(command, check=True, cwd=REPOSITORY)
     raw = json.loads(raw_path.read_text())
     validate_arms(
         raw["arms"], query_ids, [row["query"] for row in truth["queries"]],
-        expected_names=FACTORIAL_ARMS if args.ablation else ("syntax-only", "code-ir-v2"),
+        expected_names=([*FACTORIAL_ARMS, *TEXT_ISOLATION_ARMS] if args.text_isolation else
+                        FACTORIAL_ARMS if args.ablation else ("syntax-only", "code-ir-v2")),
     )
     if raw["provenance"]["source_set_sha256"] != source_digest or raw["provenance"]["language"] != language:
         raise ValueError("search adapter did not use pinned source/language")
@@ -210,6 +235,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         or raw["provenance"].get("scip") is not None
     ):
         raise ValueError("search adapter did not use requested v2 projection/model without SCIP")
+    if args.ablation and raw["provenance"].get("ablation", {}).get("text_isolation") != args.text_isolation:
+        raise ValueError("search adapter text isolation differs from requested mode")
     normalized = {
         "schema_version": 1, "suite_id": truth["suite_id"],
         "fixture_id": manifest["fixture_id"],
@@ -218,7 +245,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "runs": [normalize_arm(arm, unit_spans(fixture, manifest), map_chunk, dedupe) for arm in raw["arms"]],
     }
     metrics = evaluate(qrels, normalized, cutoff=10)
-    comparison = compare_ablation_metrics(metrics, language) if args.ablation else compare_metrics(metrics, language)
+    comparison = (
+        compare_text_isolation_metrics(metrics, language) if args.text_isolation
+        else compare_ablation_metrics(metrics, language) if args.ablation
+        else compare_metrics(metrics, language)
+    )
     normalized_path = output_dir / "normalized-runs.json"
     metrics_path = output_dir / "metrics-k10.json"
     comparison_path = output_dir / "comparison.json"
@@ -240,6 +271,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "runner_sha256": sha256_file(REPOSITORY / "scripts/replay_code_ir_v2_qeval.py"),
         "ablation": {
             "enabled": args.ablation,
+            "text_isolation": args.text_isolation,
             "implementation_sha256": sha256_file(REPOSITORY / "scripts/code_ir_projection_ablation.mjs") if args.ablation else None,
             "arms": raw["provenance"].get("ablation", {}).get("arms") if args.ablation else None,
         },
@@ -264,6 +296,10 @@ def main() -> None:
     parser.add_argument(
         "--ablation", action="store_true",
         help="opt-in frozen 2x2 unit-policy/metadata search-view experiment",
+    )
+    parser.add_argument(
+        "--text-isolation", action="store_true",
+        help="Python-only exact-byte IR v1 candidate pool with independently swapped FTS/vector baseline text",
     )
     args = parser.parse_args()
     print(json.dumps(run(args), indent=2))

@@ -25,6 +25,31 @@ def metric_row(query_id, ndcg):
 
 
 class QevalContractTest(unittest.TestCase):
+    def test_exact_source_text_controls_keep_five_original_arms_and_pair_against_policy_only(self):
+        ids = [f"q{i}" for i in range(8)]
+        names = [*runner.FACTORIAL_ARMS, *runner.TEXT_ISOLATION_ARMS]
+        runs = []
+        for index, name in enumerate(names):
+            per_query = [metric_row(query_id, 0.1 * (index + 1)) for query_id in ids]
+            runs.append({
+                "backend": name, "per_query": per_query,
+                "overall": {
+                    key: sum(row[key] for row in per_query) / 8
+                    for key in per_query[0] if key != "id"
+                },
+            })
+        comparison = runner.compare_text_isolation_metrics({"runs": runs}, "python")
+        self.assertEqual(set(comparison["factor_effects"]), {
+            "policy_with_v1_text", "metadata_with_v1_units",
+            "metadata_with_v2_units", "policy_with_v2_text",
+        })
+        self.assertAlmostEqual(
+            comparison["vs_policy_only"]["code-ir-v1-baseline-both"]["aggregate_deltas"]["ndcg@10"], 0.5,
+        )
+        self.assertEqual(set(comparison["vs_control"]), set(names[1:]))
+        with self.assertRaises(ValueError):
+            runner.compare_text_isolation_metrics({"runs": list(reversed(runs))}, "python")
+
     def test_factorial_arms_require_exact_names_and_frozen_query_order(self):
         ids = [f"q{i}" for i in range(8)]
         names = runner.FACTORIAL_ARMS
