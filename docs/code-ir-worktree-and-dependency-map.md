@@ -2,8 +2,8 @@
 
 **Last checked: 2026-09-26.** This is the entry point for resuming [issue
 #8](https://github.com/jordigilh/zvec-grep/issues/8). The branches listed here
-are **separate checkouts of the same fork**, not sequential environments or
-automatically merged layers. Commit SHAs below identify observed merge and
+are **review branches of the same fork** (some historical branches use separate
+checkouts), not automatically merged layers. Commit SHAs identify observed merge and
 checkpoint states; later work can advance a branch.
 Run `git status --short --branch` and `git log -1` in the checkout before
 making changes.
@@ -14,7 +14,8 @@ making changes.
 5f2c5e4 (pre-spike fork integration base)
 ├── integration/zvec-live-code-intelligence @ acb3abc (PRs #9–#12 MERGED)
 │   └── spike/code-ir-metadata-coverage (PR #14: OPEN)
-│       └── spike/code-ir-projection-policy-v2 (PR #15: CURRENT branch/checkout)
+│       └── spike/code-ir-projection-policy-v2 (PR #15: OPEN)
+│           └── spike/code-ir-v2-frozen-qeval (PR #16: CURRENT branch/checkout)
 └── spike/code-ir-scip-evaluation @ df4a856 (separate experiment + status)
 
 spike/code-ir-metadata-inventory-wip @ b1d4e5a = old unverified backup;
@@ -28,7 +29,8 @@ Engram frozen source/manifests/qrels ──read-only inputs──▶ conformance
 |---|---|---|---|---|
 | **Merged Code IR base** | `integration/zvec-live-code-intelligence` / `acb3abc` | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-fork` | [Contract](./code-ir-design-issue-8.md), [staged plan](./code-ir-implementation-plan-issue-8.md), opt-in IR/projection and v1.6 source metadata (PRs #9–#12) | Base new PRs on this branch, not the rewritten historical spike heads. Fork `main` remains a separate integration decision. |
 | Coverage review | [`spike/code-ir-metadata-coverage`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-metadata-coverage) / based on `acb3abc` | No longer checked out; PR head in same clone | Source-authored labels, verifier tests and [per-lane report](./code-ir-metadata-coverage-results-20260926.md) | Review [PR #14](https://github.com/jordigilh/zvec-grep/pull/14) against merged integration; do not edit frozen fixture repositories. |
-| **Active projection review** | [`spike/code-ir-projection-policy-v2`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-projection-policy-v2) / based on #14 | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-fork` | [Versioned opt-in v2 policy](./code-ir-projection-v2-plan.md), source-backed retrieval text, per-language source-only recheck | Review [PR #15](https://github.com/jordigilh/zvec-grep/pull/15) after #14; do not enable default ranking. |
+| Projection review | [`spike/code-ir-projection-policy-v2`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-projection-policy-v2) / based on #14 | Same clone, not currently checked out | [Versioned opt-in v2 policy](./code-ir-projection-v2-plan.md), source-backed retrieval text, per-language source-only recheck | Review [PR #15](https://github.com/jordigilh/zvec-grep/pull/15) after #14; do not enable default ranking. |
+| **Active retrieval review** | [`spike/code-ir-v2-frozen-qeval`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-v2-frozen-qeval) / based on #15 | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-fork` | [Four-language paired frozen qeval](./code-ir-v2-frozen-qeval-results-20260926.md) against actual v2 | Review [PR #16](https://github.com/jordigilh/zvec-grep/pull/16) after #15. Go/Python failed; Rust/TS have query losses. All lanes stay opt-in. |
 | Historical IR checkout | `spike/code-ir-design` / local `139fe4e` | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-code-ir-design` | Earlier IR authoring branch; merged through #11 with rewritten remote commits | Leave untouched; use integration for current code. |
 | Inventory backup | [`spike/code-ir-metadata-inventory-wip`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-metadata-inventory-wip) / `b1d4e5a` | No separate checkout | Original unverified script/test snapshot | Preserved, no PR; the active branch reuses those two files without inheriting the old pre-merge history. |
 | Historical one-pass checkout | `spike/code-ir-one-pass-evidence` / local `e96bec9` | `/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/code-ir-one-pass-evidence-20260926` | Original PR #12 worktree; remote was rewritten by the merge flow | Leave untouched. The merged integration tip is authoritative. |
@@ -75,12 +77,12 @@ prerequisite.
    not establish whole-corpus completeness.
 2. **Derived retrieval is separate.** The existing opt-in projection can
    consume only an attested IR snapshot. A new versioned policy must decide
-   which units rank independently (while retaining fine-grained IR targets) and
-   whether source-backed signatures/docs belong in FTS/vector input. Compare
-   fresh candidate indexes to an unchanged, same-engine control on *each*
-   language's frozen qrels; Go/Python currently fail the aggregate gate and
-   Rust/TypeScript have per-query losses. No cross-language average or default
-   rollout follows from a schema improvement.
+    which units rank independently (while retaining fine-grained IR targets) and
+    whether source-backed signatures/docs belong in FTS/vector input. [PR #16](https://github.com/jordigilh/zvec-grep/pull/16)
+    compares fresh candidate indexes to unchanged, same-engine controls on
+    *each* language's frozen qrels; Go/Python fail the aggregate gate and
+    Rust/TypeScript pass aggregates but have per-query losses. No cross-language
+    average or default rollout follows from a schema improvement.
 3. **Real-repository quality is another gate.** Kubernaut needs independently
    judged retrieval qrels and negative/ambiguous relationship sites. A broad
    source-map-valid index is not a relevance or semantic-precision score.
@@ -91,21 +93,23 @@ prerequisite.
 
 ## Next handoff
 
-- **Now (on `spike/code-ir-projection-policy-v2`):** Review [PR
+- **Now (on `spike/code-ir-v2-frozen-qeval`):** Review [PR
   #14](https://github.com/jordigilh/zvec-grep/pull/14) first, then [PR
   #15](https://github.com/jordigilh/zvec-grep/pull/15) for the
-  [versioned opt-in projection](./code-ir-projection-v2-plan.md). The authored
-  coverage inventory reports selected-case denominators only; v2 unit counts
-  alone do not establish whole-fixture relevance or metadata coverage.
-- **Then (separate gate):** Run paired, unchanged same-engine frozen qeval per
-  language for v2 and diagnose per-query losses. Keep citations on original
-  bytes and preserve default syntax-only fallback. Do not enable failed lanes.
+  [opt-in projection](./code-ir-projection-v2-plan.md), then [PR
+  #16](https://github.com/jordigilh/zvec-grep/pull/16) for the
+  [frozen, same-engine qeval](./code-ir-v2-frozen-qeval-results-20260926.md).
+  Go/Python fail; Rust/TypeScript pass synthetic aggregates with query losses.
+  None is enabled by default. Citations remain original bytes.
+- **Then (separate gate):** Diagnose query-level losses with generalizable
+  changes and fresh paired per-language replay; keep failed lanes disabled.
 - **Later:** Independently adjudicate real-Kubernaut retrieval and relation
   cases before generalizing or enabling anything by default.
 
 **Resume checklist:** start with this map, the [one-pass evidence
-report](./code-ir-one-pass-metadata-results-20260926.md) and the coverage
-report; check active branch head and `git status`; read the IR contract; run
+ report](./code-ir-one-pass-metadata-results-20260926.md), coverage report and
+ [v2 qeval report](./code-ir-v2-frozen-qeval-results-20260926.md); check the
+ active branch head and `git status`; read the IR contract; run
 focused tests; then consult issue #8 and the evaluation branch for unchanged
 qrels and historical metrics. Commit in logical groups and push only the branch
 where the work was done. Do not edit other worktrees to "sync" them; integrating
