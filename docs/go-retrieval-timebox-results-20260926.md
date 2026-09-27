@@ -111,11 +111,31 @@ broad root/integration/e2e/coverage test or independent real-repository Go
 qrel run was performed. The separate Engram checkout's unrelated dirty files
 were not edited.
 
-**Next decision:** Stop tuning these known questions. If retrieval quality
-remains the objective, first author **independently judged, genuinely unseen
-Go queries** with explicit negatives/ambiguous implementations on a real
-repository, plus a source-identity scoring rule and candidate recall at 10/30.
-Only then decide whether a different semantic ranking technique (e.g.
-evidence-based query understanding or a separately validated cross-encoder)
-merits its own limited trial. Do not expand to other languages from this
-failed Go gate.
+## Park decision and binary boundary
+
+**Parked by user decision:** Do not start another retrieval or IR ranking
+attempt from these observed scores alone. First review relevant *external*
+research (academic code-search papers, independently reproduced techniques,
+or comparable systems) and translate it into a testable hypothesis; gather
+**independently judged, genuinely unseen Go repository queries** with explicit
+negatives/ambiguous implementations, source-identity scoring and candidate
+recall at 10/30 before evaluating it. Do not retune these eight synthetic
+questions, enable a new default, or expand to other languages without a
+successful Go gate. No external literature survey or new Go dataset was
+performed in this PR.
+
+**Which `zg` binary uses the measured baseline?** The *locally built* CLI at
+`dist/cli/index.js` in this checkout is version 0.2.1 and, in Direct mode,
+calls `createZvecGrep` for indexing/querying. The workspace indexing path
+stores `lexicalTextForFragment` (including Sense-inspired searchable
+identifier parts) and the same hybrid engine used for the syntax-only
+evaluation. The IR publisher, published projection and Go-only reranker in
+this PR are **opt-in scripts**, not default CLI behavior. This establishes
+which *code path* the local Direct-mode CLI uses, not that CLI invocation was
+separately qeval-scored. A running Server-mode daemon can have a different
+version or index. The Sense-enhancement commit `5f2c5e4` is present in the
+fork's integration branch, **not** fork `main`; it is not safe to claim the
+fork-main build or an upstream/published package has this baseline. No `zg`
+command resolves from this host's `PATH`; run the local checkout's binary
+explicitly if needed. An existing workspace index may require rebuilding to
+reflect changes to its indexed text.

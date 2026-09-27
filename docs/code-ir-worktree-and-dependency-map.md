@@ -20,7 +20,7 @@ making changes.
 │                   └── spike/code-ir-v1-gap-diagnostics (PR #18: OPEN)
 │                       └── spike/code-ir-controlled-synthetic-suite (PR #19: OPEN)
 │                           └── spike/code-ir-blind-synthetic-v2 (PR #20: PAUSED)
-│                               └── spike/go-retrieval-timebox (PR #21: GO ONLY; CURRENT branch/checkout)
+│                               └── spike/go-retrieval-timebox (PR #21: PARKED; CURRENT branch/checkout)
 └── spike/code-ir-scip-evaluation @ df4a856 (separate experiment + status)
 
 spike/code-ir-metadata-inventory-wip @ b1d4e5a = old unverified backup;
@@ -41,7 +41,7 @@ New controlled source/truth ──────────────▶ strict
 | **Active v1 gap review** | [`spike/code-ir-v1-gap-diagnostics`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-v1-gap-diagnostics) / based on #17 | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-fork` | [Exact-byte inventory and Python matched-unit text replay](./code-ir-v1-gap-diagnostic-results-20260926.md) | Review [PR #18](https://github.com/jordigilh/zvec-grep/pull/18) after #17; same 33 Python source units + both syntax texts exactly reproduce baseline ranks. Go ranges differ; real-repo judgments still missing. |
 | **Controlled synthetic evaluation (active)** | [`spike/code-ir-controlled-synthetic-suite`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-controlled-synthetic-suite) / based on #18 | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-fork` | [Source-pinned suite plan](./code-ir-controlled-synthetic-suite-plan.md) and [pilot results](./code-ir-controlled-synthetic-suite-results-20260926.md) | Review [PR #19](https://github.com/jordigilh/zvec-grep/pull/19) after #18; strict-byte discovery remains distinct from verified containment and unresolved-call abstention. Tiny candidate pools saturate @10; no ranking rollout. |
 | **Larger IR retrieval gate (paused)** | [`spike/code-ir-blind-synthetic-v2`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-blind-synthetic-v2) / based on #19 | Same clone; no longer checked out | [Versioned v2 precommit plan](./code-ir-blind-synthetic-v2-plan.md) and [prospective results](./code-ir-blind-synthetic-v2-results-20260926.md) | Review [PR #20](https://github.com/jordigilh/zvec-grep/pull/20) after #19. All work committed and pushed; paused per user request. No default ranking change. |
-| **Go-only retrieval timebox (current)** | [`spike/go-retrieval-timebox`](https://github.com/jordigilh/zvec-grep/tree/spike/go-retrieval-timebox) / based on paused #20 | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-fork` | [Precommitted Go plan](./go-retrieval-timebox-plan.md) and [one-shot results](./go-retrieval-timebox-results-20260926.md) | Review [PR #21](https://github.com/jordigilh/zvec-grep/pull/21) after #20; a useful later Go-only strategy should be extracted closer to integration. Existing syntax baseline reproduced. @30 improves nDCG/recall but loses MRR; source-verified rerank improves MRR but loses nDCG. Both fail Go no-regression gate. No default change or language expansion. |
+| **Go-only retrieval timebox (parked)** | [`spike/go-retrieval-timebox`](https://github.com/jordigilh/zvec-grep/tree/spike/go-retrieval-timebox) / based on paused #20 | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-fork` | [Precommitted Go plan](./go-retrieval-timebox-plan.md) and [one-shot results/park decision](./go-retrieval-timebox-results-20260926.md) | Review [PR #21](https://github.com/jordigilh/zvec-grep/pull/21) after #20. Both arms fail Go no-regression gate. No more score-directed experiments without external research and independently judged unseen Go tasks. Default search unchanged. |
 | Historical IR checkout | `spike/code-ir-design` / local `139fe4e` | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-code-ir-design` | Earlier IR authoring branch; merged through #11 with rewritten remote commits | Leave untouched; use integration for current code. |
 | Inventory backup | [`spike/code-ir-metadata-inventory-wip`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-metadata-inventory-wip) / `b1d4e5a` | No separate checkout | Original unverified script/test snapshot | Preserved, no PR; the active branch reuses those two files without inheriting the old pre-merge history. |
 | Historical one-pass checkout | `spike/code-ir-one-pass-evidence` / local `e96bec9` | `/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/code-ir-one-pass-evidence-20260926` | Original PR #12 worktree; remote was rewritten by the merge flow | Leave untouched. The merged integration tip is authoritative. |
@@ -137,10 +137,13 @@ prerequisite.
   remain source-backed. This does not authorize default ranking.
 - **Go-only pivot:** The [bounded one-shot result](./go-retrieval-timebox-results-20260926.md)
   on the Sense-enhanced syntax index fails the four-metric no-regression gate
-  on eight previously exposed questions. Stop score-directed tuning. Before
-  another retrieval hypothesis, obtain independent, truly unseen real-repo Go
-  judgments; only a successful Go gate can motivate language expansion. IR
-  ambiguous-grounding and opt-in workflow work remain parked.
+  on eight previously exposed questions. **Park the spike**: review relevant
+  external research and obtain independent, truly unseen real-repo Go
+  judgments before another retrieval hypothesis; only a successful Go gate
+  can motivate language expansion. IR ambiguous-grounding and opt-in workflow
+  work remain parked. This checkout's built Direct-mode CLI has the syntax
+  baseline, but fork `main` does not include the Sense-enhancement commit;
+  no `zg` executable was found on this host's `PATH`.
 
 **Resume checklist:** start with this map, the [one-pass evidence
  report](./code-ir-one-pass-metadata-results-20260926.md), coverage report and
