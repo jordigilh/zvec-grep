@@ -14,6 +14,24 @@ SPEC.loader.exec_module(runner)
 
 
 class CandidateInventoryTest(unittest.TestCase):
+    def test_reranker_must_return_exact_pinned_pool_entities_and_ten_ranked_hits(self):
+        def hits(n):
+            return [{"rank": i + 1, "entity_id": str(i), "path": f"p{i}.go",
+                     "start_line": i + 1, "end_line": i + 2} for i in range(n)]
+        pool = {"q": hits(30)}
+        reranked = {"q": list(reversed(hits(10)))}
+        for i, row in enumerate(reranked["q"]):
+            row["rank"] = i + 1
+        runner.validate_reranked(pool, reranked)
+        for bad in (
+            [{**reranked["q"][0], "entity_id": "absent"}, *reranked["q"][1:]],
+            [{**reranked["q"][0], "path": "other.go"}, *reranked["q"][1:]],
+            [reranked["q"][0], *reranked["q"][0:9]],
+            reranked["q"][:-1],
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                runner.validate_reranked(pool, {"q": bad})
+
     def test_positive_units_are_keyed_by_query_and_split_into_index_pool_and_order(self):
         queries = [{"id": "first", "judgments": [
             {"unit_id": unit, "grade": 2} for unit in ("found", "tail", "miss", "unindexed")
@@ -24,10 +42,10 @@ class CandidateInventoryTest(unittest.TestCase):
         result = runner.positive_rank_inventory(queries, indexed, baseline, pool)
         by_id = {row["unit_id"]: row for row in result["first"]}
         self.assertEqual(by_id["found"]["category"], "in_baseline_top_10")
-        self.assertEqual(by_id["tail"]["category"], "in_pool_below_10")
+        self.assertEqual(by_id["tail"]["category"], "new_in_pool")
         self.assertEqual(by_id["miss"]["pool_rank"], 1)
         self.assertEqual(by_id["unindexed"]["category"], "not_eligible_in_index")
-        self.assertEqual(result["second"][0]["category"], "in_pool_below_10")
+        self.assertEqual(result["second"][0]["category"], "new_in_pool")
         with self.assertRaises(ValueError):
             runner.positive_rank_inventory(queries, indexed, baseline, {"first": []})
 

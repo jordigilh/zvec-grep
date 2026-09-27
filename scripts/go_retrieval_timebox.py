@@ -8,8 +8,25 @@ import subprocess
 from pathlib import Path
 
 from replay_code_ir_v2_qeval import (
-    REPOSITORY, load_engram, normalize_arm, sha256_file, stage_sources, tree_digest,
+    REPOSITORY, compare_metrics, load_engram, normalize_arm, sha256_file, stage_sources, tree_digest,
 )
+
+
+def validate_reranked(pool, reranked):
+    if set(pool) != set(reranked):
+        raise ValueError("reranked query IDs differ from candidate pool")
+    for query_id, hits in reranked.items():
+        if len(hits) != 10 or [row.get("rank") for row in hits] != list(range(1, 11)):
+            raise ValueError(f"reranker must return exactly ten ranked hits: {query_id}")
+        indexed = {row["entity_id"]: row for row in pool[query_id]}
+        if len(indexed) != len(pool[query_id]) or len({row.get("entity_id") for row in hits}) != 10:
+            raise ValueError("duplicate candidate identity")
+        for row in hits:
+            original = indexed.get(row["entity_id"])
+            if original is None or any(row.get(key) != original.get(key) for key in (
+                "path", "start_line", "end_line", "entity_id",
+            )):
+                raise ValueError("reranker invented or moved an indexed source hit")
 
 
 def positive_rank_inventory(queries, indexed, baseline, pool):
@@ -36,7 +53,7 @@ def positive_rank_inventory(queries, indexed, baseline, pool):
             category = (
                 "in_baseline_top_10" if rank10 is not None else
                 "not_eligible_in_index" if unit not in eligible else
-                "in_pool_below_10" if rank30 is not None else
+                "new_in_pool" if rank30 is not None else
                 "not_in_top_30"
             )
             result[key].append({"unit_id": unit, "grade": next(
@@ -73,19 +90,29 @@ def run(args):
     if len(paths) != len(selected):
         raise ValueError("source file count changed")
     raw_path = output / "raw-runs.json"
-    subprocess.run([
+    command = [
         "node", str(REPOSITORY / "scripts/go_retrieval_timebox_search.mjs"),
         str(fixture), str(work), str(cache), args.model, str(raw_path),
-    ], check=True, cwd=REPOSITORY)
+    ]
+    if args.rerank:
+        command.append("--rerank")
+    subprocess.run(command, check=True, cwd=REPOSITORY)
     raw = json.loads(raw_path.read_text())
     if (raw["provenance"]["source_set_sha256"] != digest or
             raw["provenance"]["model_identity"] != args.model or
-            [arm["name"] for arm in raw["arms"]] != ["syntax-10", "syntax-30"] or
+            [arm["name"] for arm in raw["arms"]] !=
+            (["syntax-10", "syntax-30", "go-source-rerank"] if args.rerank
+             else ["syntax-10", "syntax-30"]) or
             any([row["id"] for row in arm["queries"]] !=
                 [row["id"] for row in truth["queries"]] or
                 [row["query"] for row in arm["queries"]] !=
                 [row["query"] for row in truth["queries"]] for arm in raw["arms"])):
         raise ValueError("search runs differ from verified fixture")
+    if args.rerank:
+        validate_reranked(
+            {row["id"]: row["hits"] for row in raw["arms"][1]["queries"]},
+            {row["id"]: row["hits"] for row in raw["arms"][2]["queries"]},
+        )
     units = unit_spans(fixture, manifest)
     normalized = {
         "schema_version": 1, "suite_id": truth["suite_id"],
@@ -106,9 +133,12 @@ def run(args):
     first = {row["id"]: mapped(row["hits"]) for row in raw["arms"][0]["queries"]}
     thirty = {row["id"]: mapped(row["hits"]) for row in raw["arms"][1]["queries"]}
     inventory = positive_rank_inventory(qrels["queries"], indexed, first, thirty)
+    comparisons = {run["backend"]: compare_metrics({"runs": [metrics["runs"][0], run]}, "go")
+                   for run in metrics["runs"][1:]}
     for path, value in ((output / "normalized-runs.json", normalized),
                         (output / "metrics-k10.json", metrics),
-                        (output / "positive-inventory.json", inventory)):
+                        (output / "positive-inventory.json", inventory),
+                        (output / "comparisons.json", comparisons)):
         path.write_text(json.dumps(value, indent=2) + "\n")
     cache_after = tree_digest(cache)
     if cache_before != cache_after:
@@ -120,16 +150,21 @@ def run(args):
         "model": args.model, "model_cache_tree_sha256": cache_after,
         "fixture_sha256": {name: sha256_file(fixture / name) for name in ("manifest.json", "truth.json", "qrels.json")},
         "implementation_sha256": {name: sha256_file(REPOSITORY / "scripts" / name) for name in (
-            "go_retrieval_timebox.py", "go_retrieval_timebox_search.mjs", "replay_code_ir_v2_qeval.py")},
+            "go_retrieval_timebox.py", "go_retrieval_timebox_search.mjs",
+            "go_retrieval_rerank.mjs", "replay_code_ir_v2_qeval.py")},
         "scorer_sha256": sha256_file(engram / "scripts/evaluate_semantic_search.py"),
         "mapping_sha256": sha256_file(engram / "scripts/replay_synthetic_semantic_search.py"),
         "outputs": {name: sha256_file(output / name) for name in (
-            "raw-runs.json", "normalized-runs.json", "metrics-k10.json", "positive-inventory.json")},
+            "raw-runs.json", "normalized-runs.json", "metrics-k10.json",
+            "positive-inventory.json", "comparisons.json")},
     }
     (output / "run-manifest.json").write_text(json.dumps(run_manifest, indent=2) + "\n")
-    return {"baseline": metrics["runs"][0]["overall"], "pool_top_ten": metrics["runs"][1]["overall"],
+    return {"baseline": metrics["runs"][0]["overall"],
+            "pool_top_ten": metrics["runs"][1]["overall"],
+            "reranked": metrics["runs"][2]["overall"] if args.rerank else None,
+            "comparisons": comparisons,
             "categories": {label: sum(row["category"] == label for rows in inventory.values() for row in rows)
-                           for label in ("in_baseline_top_10", "in_pool_below_10", "not_in_top_30", "not_eligible_in_index")},
+                           for label in ("in_baseline_top_10", "new_in_pool", "not_in_top_30", "not_eligible_in_index")},
             "output_dir": str(output)}
 
 
@@ -138,6 +173,7 @@ def main():
     for key in ("fixture", "engram-root", "model-cache", "work-dir", "output-dir"):
         parser.add_argument(f"--{key}", type=Path, required=True)
     parser.add_argument("--model", default="local/potion-code-16m-v2")
+    parser.add_argument("--rerank", action="store_true", help="one-shot frozen Go source-evidence reranker")
     print(json.dumps(run(parser.parse_args()), indent=2))
 
 
