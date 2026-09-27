@@ -56,3 +56,38 @@ Even a pass here requires **new independently judged, truly unseen Go tasks**
 and latency/operations evidence before proposing product enablement; do not
 expand to Python/Rust/TS until that independent Go gate succeeds. Stop after
 the single prespecified attempt regardless of outcome.
+
+## Diagnostic observed; candidate hypothesis frozen before reranker evaluation
+
+The first, externally staged Go diagnosis (engine `0bb943f`, outputs under
+`go-retrieval-diagnostic-results-20260926/` in the approved external temp
+directory) reproduced all four baseline metrics exactly. Of the 34 positive
+qrel sites, 22 map to baseline @10, **10 additional positives** map to the
+30-result pool and **two** are still outside @30; none lacks *line-overlap*
+eligibility in the syntax index. This is the *existing* Engram source-unit
+mapper, which may credit enclosing spans; it is not byte-exact evidence that
+all 34 declaration entities are indexed. The 30-result call also changes the
+fusion cutoff, so its first ten differ from the control: nDCG .604353,
+MRR .726389, recall .714583, precision .2625. The MRR loss means **overfetch
+alone fails** the no-regression gate. Its @30 pool is nevertheless the single
+chosen generation attempt. No query rewriting or second candidate route.
+
+The only reranking attempt will take those **same 30 indexed entity IDs** and
+return ten. It will verify each candidate's stored content against the
+original, pinned source substring and file SHA before use. Deterministically
+split identifiers by camel case, underscores and non-alphanumerics, lowercase,
+remove a fixed English-function-word list and a trailing `s` on tokens longer
+than four letters (both query and code). For each query token, IDF is
+`1 + ln((31)/(1 + document_frequency_in_30))`. Lexical alignment is a
+normalized weighted sum of *presence*, not generated synonyms: name ×2,
+source bytes ×1, file path ×0.25, divided by 3.25 times the total query IDF.
+Sort lexical matches by this score, resolving ties by the original hybrid
+rank and then ID. For candidates with a nonzero lexical alignment, combined
+score is `1/(60 + hybrid_rank) + 0.5/(60 + lexical_rank)`; candidates with no
+alignment retain just the first term. Resolve combined ties by original
+hybrid rank and ID. This is a generic, deliberately single-shot lexical
+rerank; it **does not claim semantic understanding** or use IR containment,
+callee guesses, qrels, query IDs or truth. Rank trace and identities remain
+auditable. Test the policy offline, then run it **once** on this frozen Go
+fixture. The earlier exposed Go controlled-v2 suite is a secondary sanity
+check only if feasible; it is not an unseen validation set.
