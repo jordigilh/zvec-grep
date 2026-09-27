@@ -1,0 +1,271 @@
+{
+  "schema_version": 1,
+  "scope": "Independently selected source sites in the read-only workflow-discovery fixtures. Not whole-corpus coverage or retrieval qrels.",
+  "lanes": [
+    {
+      "schema_version": 1,
+      "fixture_id": "go-workflow-discovery-v1",
+      "language": "go",
+      "manifest_sha256": "945fa2aa1a61ce665dc3750cb36dfed63aa9e687c3bb4848ad09df47cea3b467",
+      "source_set_sha256": "3ae38198b3686186949ed723eeb87a2a6a760e068cc4d22d6338e2eaa403bc6e",
+      "cases": [
+        {
+          "path": "internal/discovery/state.go",
+          "file_sha256": "b715d35452a34cecdd0f9e635f6291fd83a8e563979760440741c60abd02c685",
+          "name": "WorkflowState",
+          "kind": "type",
+          "signature": "type WorkflowState struct",
+          "documentation": "// WorkflowState records workflow IDs returned by list_workflows for one\n// selection context. Retries and later discovery calls share this object."
+        },
+        {
+          "path": "internal/discovery/state.go",
+          "file_sha256": "b715d35452a34cecdd0f9e635f6291fd83a8e563979760440741c60abd02c685",
+          "name": "Add",
+          "kind": "method",
+          "signature": "func (s *WorkflowState) Add(workflowIDs ...string)",
+          "documentation": "// Add records every non-empty workflow ID returned by discovery."
+        },
+        {
+          "path": "internal/discovery/state.go",
+          "file_sha256": "b715d35452a34cecdd0f9e635f6291fd83a8e563979760440741c60abd02c685",
+          "name": "Contains",
+          "kind": "method",
+          "signature": "func (s *WorkflowState) Contains(workflowID string) bool",
+          "documentation": null
+        },
+        {
+          "path": "internal/discovery/state.go",
+          "file_sha256": "b715d35452a34cecdd0f9e635f6291fd83a8e563979760440741c60abd02c685",
+          "name": "ids",
+          "kind": "value",
+          "unit_anchor": "ids map[string]struct{}",
+          "signature": null,
+          "documentation": null
+        },
+        {
+          "path": "internal/discovery/catalog.go",
+          "file_sha256": "bdf9081617f7016ab9e963de79a747a7b5d7254951c9f70dacdbba9209bf3803",
+          "name": "WorkflowCatalog",
+          "kind": "type",
+          "signature": "type WorkflowCatalog struct",
+          "documentation": null
+        },
+        {
+          "path": "internal/discovery/catalog.go",
+          "file_sha256": "bdf9081617f7016ab9e963de79a747a7b5d7254951c9f70dacdbba9209bf3803",
+          "name": "ListActions",
+          "kind": "method",
+          "signature": "func (c *WorkflowCatalog) ListActions(ctx context.Context, filters DiscoveryFilters) []Workflow",
+          "documentation": "// ListActions applies signal-derived filters before exposing available actions."
+        },
+        {
+          "path": "internal/selection/validator.go",
+          "file_sha256": "53dd2664b62da582a5d4710bc5e10848feff895c109ae3832ca41a7853bddef1",
+          "name": "IsAllowed",
+          "kind": "method",
+          "signature": "func (v *Validator) IsAllowed(workflowID string) bool",
+          "documentation": "// IsAllowed requires catalog membership and, when state is attached, current\n// list_workflows membership."
+        }
+      ]
+    },
+    {
+      "schema_version": 1,
+      "fixture_id": "python-workflow-discovery-v1",
+      "language": "python",
+      "manifest_sha256": "a3e565a460e3cc6b37fa600afa47589053f0d7c4e75b71744e803a25240edf30",
+      "source_set_sha256": "7a5e1677d94fdf75945a41302a13336b18829c68e07e5951d52c74d3310db4e4",
+      "cases": [
+        {
+          "path": "discovery/state.py",
+          "file_sha256": "b41dd82fd6854a35f59824b1bbe73c0005fb02db9f2153708ec61250e80a684b",
+          "name": "WorkflowState",
+          "kind": "type",
+          "signature": "class WorkflowState:",
+          "documentation": null,
+          "unsupported_documentation": "\"\"\"Hold workflow IDs returned by discovery for later validation.\"\"\""
+        },
+        {
+          "path": "discovery/state.py",
+          "file_sha256": "b41dd82fd6854a35f59824b1bbe73c0005fb02db9f2153708ec61250e80a684b",
+          "name": "add",
+          "kind": "method",
+          "signature": "def add(self, workflow_ids: list[str]) -> None:",
+          "documentation": null
+        },
+        {
+          "path": "discovery/state.py",
+          "file_sha256": "b41dd82fd6854a35f59824b1bbe73c0005fb02db9f2153708ec61250e80a684b",
+          "name": "ids",
+          "kind": "value",
+          "unit_anchor": "ids: set[str] = field(default_factory=set)",
+          "signature": null,
+          "documentation": null
+        },
+        {
+          "path": "discovery/state.py",
+          "file_sha256": "b41dd82fd6854a35f59824b1bbe73c0005fb02db9f2153708ec61250e80a684b",
+          "name": "state_from_context",
+          "kind": "function",
+          "signature": "def state_from_context(context: dict[str, object]) -> WorkflowState:",
+          "documentation": null
+        },
+        {
+          "path": "discovery/catalog.py",
+          "file_sha256": "df38d29ddd85d2c4a6770740e60a65792d62f4509a15a4e39bb21ee528479c5f",
+          "name": "WorkflowCatalog",
+          "kind": "type",
+          "signature": "class WorkflowCatalog:",
+          "documentation": null
+        },
+        {
+          "path": "tools/workflows.py",
+          "file_sha256": "e1cbef80da543fd2bde4596754091d99d84c3fd2f8791049b320da2d25e0fc23",
+          "name": "handle_select_workflow",
+          "kind": "function",
+          "signature": "def handle_select_workflow(\n    workflow_id: str, result: DiscoveryResult, catalog: WorkflowCatalog\n) -> WorkflowResult:",
+          "documentation": null
+        },
+        {
+          "path": "selection/validator.py",
+          "file_sha256": "88d2b211b1733c77aa6f3cecc358f4d4c80d1f2bc2dd92264ef13c88960fc566",
+          "name": "ValidationError",
+          "kind": "type",
+          "signature": "class ValidationError(Exception):",
+          "documentation": null
+        }
+      ]
+    },
+    {
+      "schema_version": 1,
+      "fixture_id": "rust-workflow-discovery-v1",
+      "language": "rust",
+      "manifest_sha256": "e5edb7912413905c564016e8c61065414228f97daeec604c04356ae6b8fad166",
+      "source_set_sha256": "37098e646abf54eb569c3fbd4914ffb5b7c493c16321fb972402201bfc078a20",
+      "cases": [
+        {
+          "path": "src/discovery/state.rs",
+          "file_sha256": "f97fd5faaa6561f4b92c2642bc9c9e488ab59730f022f1f821d62a3c155954e2",
+          "name": "WorkflowState",
+          "kind": "type",
+          "signature": "pub struct WorkflowState",
+          "documentation": null
+        },
+        {
+          "path": "src/discovery/state.rs",
+          "file_sha256": "f97fd5faaa6561f4b92c2642bc9c9e488ab59730f022f1f821d62a3c155954e2",
+          "name": "add",
+          "kind": "method",
+          "signature": "pub fn add(&mut self, workflow_ids: &[String])",
+          "documentation": null
+        },
+        {
+          "path": "src/discovery/state.rs",
+          "file_sha256": "f97fd5faaa6561f4b92c2642bc9c9e488ab59730f022f1f821d62a3c155954e2",
+          "name": "contains",
+          "kind": "method",
+          "signature": "pub fn contains(&self, workflow_id: &str) -> bool",
+          "documentation": null
+        },
+        {
+          "path": "src/discovery/state.rs",
+          "file_sha256": "f97fd5faaa6561f4b92c2642bc9c9e488ab59730f022f1f821d62a3c155954e2",
+          "name": "ids",
+          "kind": "value",
+          "unit_anchor": "ids: HashSet<String>",
+          "signature": null,
+          "documentation": null
+        },
+        {
+          "path": "src/discovery/catalog.rs",
+          "file_sha256": "a694cc97e1c7232ca916e3b90f49766e365e06331cebece7aa12eec0cf18b6b5",
+          "name": "WorkflowCatalog",
+          "kind": "type",
+          "signature": "pub struct WorkflowCatalog",
+          "documentation": null
+        },
+        {
+          "path": "src/tools/workflows.rs",
+          "file_sha256": "d1683db25586e935707f976b141c367f3ee91d206f80c2b7cc8d5ce743eb2366",
+          "name": "authorize_selection_driver",
+          "kind": "function",
+          "signature": "pub fn authorize_selection_driver(\n    workflow_id: &str,\n    result: &DiscoveryResult,\n) -> Result<(), &'static str>",
+          "documentation": null
+        },
+        {
+          "path": "src/tools/workflows.rs",
+          "file_sha256": "d1683db25586e935707f976b141c367f3ee91d206f80c2b7cc8d5ce743eb2366",
+          "name": "handle_select_workflow",
+          "kind": "function",
+          "signature": "pub fn handle_select_workflow(\n    workflow_id: &str,\n    result: &DiscoveryResult,\n    catalog: &WorkflowCatalog,\n) -> Result<WorkflowResult, &'static str>",
+          "documentation": null
+        }
+      ]
+    },
+    {
+      "schema_version": 1,
+      "fixture_id": "typescript-workflow-discovery-v1",
+      "language": "typescript",
+      "manifest_sha256": "f3e14f7d7c327d631e8e640a236ef6da62da2519dcbb1b3e426bb29a0419a1c4",
+      "source_set_sha256": "ca278e24526307db76b595cf863a9e5cfade269733a824ebb70728a1082738b5",
+      "cases": [
+        {
+          "path": "discovery/catalog.ts",
+          "file_sha256": "2a16376bc97142a748912829d52a794d7822fdd7298289923a7581ab04d1af9b",
+          "name": "Workflow",
+          "kind": "type",
+          "signature": "export interface Workflow",
+          "documentation": null
+        },
+        {
+          "path": "discovery/catalog.ts",
+          "file_sha256": "2a16376bc97142a748912829d52a794d7822fdd7298289923a7581ab04d1af9b",
+          "name": "WorkflowCatalog",
+          "kind": "type",
+          "signature": "export class WorkflowCatalog",
+          "documentation": null
+        },
+        {
+          "path": "discovery/catalog.ts",
+          "file_sha256": "2a16376bc97142a748912829d52a794d7822fdd7298289923a7581ab04d1af9b",
+          "name": "listWorkflows",
+          "kind": "method",
+          "signature": "listWorkflows(filters: Record<string, string> = {}): Workflow[]",
+          "documentation": null
+        },
+        {
+          "path": "tools/workflows.ts",
+          "file_sha256": "221316898076c3ec13d1f261e5732825876b44e5a79d0130cfe97f554b8b1a9a",
+          "name": "handleSelectWorkflow",
+          "kind": "function",
+          "signature": "export function handleSelectWorkflow(\n  workflowId: string,\n  result: DiscoveryResult,\n  catalog: WorkflowCatalog,\n): WorkflowResult",
+          "documentation": null
+        },
+        {
+          "path": "discovery/state.ts",
+          "file_sha256": "bf9415282309bb4b34ae48d7140ebfd3a565ac4635e35a197032a91f60e6350d",
+          "name": "add",
+          "kind": "method",
+          "signature": "add(workflowIds: readonly string[]): void",
+          "documentation": null
+        },
+        {
+          "path": "discovery/state.ts",
+          "file_sha256": "bf9415282309bb4b34ae48d7140ebfd3a565ac4635e35a197032a91f60e6350d",
+          "name": "ids",
+          "kind": "value",
+          "unit_anchor": "private readonly ids = new Set<string>()",
+          "signature": null,
+          "documentation": null
+        },
+        {
+          "path": "discovery/state.ts",
+          "file_sha256": "bf9415282309bb4b34ae48d7140ebfd3a565ac4635e35a197032a91f60e6350d",
+          "name": "stateFromContext",
+          "kind": "function",
+          "signature": "export function stateFromContext(context: Map<string, unknown>): WorkflowState",
+          "documentation": null
+        }
+      ]
+    }
+  ]
+}
