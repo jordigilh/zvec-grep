@@ -9,6 +9,8 @@ export default tseslint.config(
       "coverage/**",
       "dist/**",
       "node_modules/**",
+      // Source-only parser fixtures are not part of the TypeScript project.
+      "test/fixtures/code-ir-controlled-v1/**/*.ts",
       "**/.venv/**",
       ".zvec-grep/**",
       "*.tgz",

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "fixture_id": "controlled-rust-v1",
+  "language": "rust",
+  "source_set_sha256": "0ab9ba6cb7dba25e34adb22367eac7bf9a43a530cf6ea6ec8c84a750b6899641",
+  "files": {
+    "core.rs": "bc673a47423d408129eaa9e702a3728b6c5e42a76a9676b3fb375c08a0b242e7",
+    "decoy.rs": "e338b12758bb7b23d3577e02f510d08c78e85b228058a1cf54ebb2645c4364b6"
+  },
+  "sites": [
+    { "id": "vault", "path": "core.rs", "kind": "type", "name": "Vault", "anchor": "pub struct Vault {", "start_byte": 0, "end_byte": 18 },
+    { "id": "implementation", "path": "core.rs", "kind": "type", "anchor": "impl Vault {", "start_byte": 41, "end_byte": 53 },
+    { "id": "guard", "path": "core.rs", "kind": "method", "name": "guard", "anchor": "pub fn guard(&self, value: &str) -> bool {", "start_byte": 58, "end_byte": 100 },
+    { "id": "dispatch", "path": "core.rs", "kind": "function", "name": "dispatch", "anchor": "pub fn dispatch(vault: &Vault, value: &str) -> bool {", "start_byte": 138, "end_byte": 191 },
+    { "id": "dispatch-call", "path": "core.rs", "kind": "call", "anchor": "vault.guard(value)", "start_byte": 196, "end_byte": 214 },
+    { "id": "decoy", "path": "decoy.rs", "kind": "function", "name": "guard", "anchor": "pub fn guard(_value: &str) -> bool {", "start_byte": 70, "end_byte": 106 },
+    { "id": "proxy", "path": "decoy.rs", "kind": "function", "name": "proxy", "anchor": "pub fn proxy(vault: &super::core::Vault, value: &str) -> bool {", "start_byte": 120, "end_byte": 183 },
+    { "id": "proxy-call", "path": "decoy.rs", "kind": "call", "anchor": "vault.guard(value)", "start_byte": 188, "end_byte": 206 }
+  ],
+  "relations": [
+    { "id": "impl-guard", "kind": "contains", "subject": "implementation", "object": "guard", "status": "observed" },
+    { "id": "dispatch-guard", "kind": "calls", "subject": "dispatch", "site": "dispatch-call", "status": "unresolved", "object": null },
+    { "id": "proxy-guard", "kind": "calls", "subject": "proxy", "site": "proxy-call", "status": "unresolved", "object": null }
+  ],
+  "queries": [
+    { "id": "check", "split": "calibration", "query": "Where does Vault compare a supplied value with the stored token?", "answer": "guard" },
+    { "id": "structure", "split": "calibration", "query": "Which implementation block contains the Vault guard method?", "answer": "guard", "relation": "impl-guard" },
+    { "id": "dispatch", "split": "holdout", "query": "Where is the request dispatched through Vault guard?", "answer": "dispatch", "relation": "dispatch-guard" },
+    { "id": "decoy", "split": "holdout", "query": "Which standalone guard function rejects every value despite its comment?", "answer": "decoy" },
+    { "id": "proxy", "split": "holdout", "query": "Which proxy invokes a guard with a same-named decoy in another file?", "answer": "proxy", "relation": "proxy-guard" }
+  ]
+}

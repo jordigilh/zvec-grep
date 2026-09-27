@@ -17,14 +17,16 @@ making changes.
 │       └── spike/code-ir-projection-policy-v2 (PR #15: OPEN)
 │           └── spike/code-ir-v2-frozen-qeval (PR #16: OPEN)
 │               └── spike/code-ir-projection-factorial-ablation (PR #17: OPEN)
-│                   └── spike/code-ir-v1-gap-diagnostics (PR #18: CURRENT branch/checkout)
+│                   └── spike/code-ir-v1-gap-diagnostics (PR #18: OPEN)
+│                       └── spike/code-ir-controlled-synthetic-suite (PR #19: CURRENT branch/checkout)
 └── spike/code-ir-scip-evaluation @ df4a856 (separate experiment + status)
 
 spike/code-ir-metadata-inventory-wip @ b1d4e5a = old unverified backup;
 its two files were carried onto a NEW branch from the merged integration tip.
 
 Engram frozen source/manifests/qrels ──read-only inputs──▶ conformance + qeval
-                                           └─▶ independent real-repo labels TBD
+New controlled source/truth ──────────────▶ strict discovery + bounded IR facts
+                                           └─▶ real-repo external validity LATER
 ```
 
 | Role | Branch / observed commit | Checkout on this host | What it contains | Action |
@@ -35,6 +37,7 @@ Engram frozen source/manifests/qrels ──read-only inputs──▶ conformance
 | Paired retrieval review | [`spike/code-ir-v2-frozen-qeval`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-v2-frozen-qeval) / based on #15 | Same clone; no longer checked out | [Four-language paired frozen qeval](./code-ir-v2-frozen-qeval-results-20260926.md) against actual v2 | Review [PR #16](https://github.com/jordigilh/zvec-grep/pull/16) after #15. Go/Python failed; Rust/TS have query losses. All lanes stay opt-in. |
 | Factorial ablation review | [`spike/code-ir-projection-factorial-ablation`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-projection-factorial-ablation) / based on #16 | Same clone; no longer checked out | [Source-pinned four-language factorial replay](./code-ir-projection-ablation-results-20260926.md) of eligible units and combined signature/doc text | Review [PR #17](https://github.com/jordigilh/zvec-grep/pull/17) after #16; Go/Python still fail vs syntax; Rust/TS pass synthetic aggregates with query losses. No default ranking change. |
 | **Active v1 gap review** | [`spike/code-ir-v1-gap-diagnostics`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-v1-gap-diagnostics) / based on #17 | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-fork` | [Exact-byte inventory and Python matched-unit text replay](./code-ir-v1-gap-diagnostic-results-20260926.md) | Review [PR #18](https://github.com/jordigilh/zvec-grep/pull/18) after #17; same 33 Python source units + both syntax texts exactly reproduce baseline ranks. Go ranges differ; real-repo judgments still missing. |
+| **Controlled synthetic evaluation (active)** | [`spike/code-ir-controlled-synthetic-suite`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-controlled-synthetic-suite) / based on #18 | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-fork` | [Source-pinned suite plan](./code-ir-controlled-synthetic-suite-plan.md) and [pilot results](./code-ir-controlled-synthetic-suite-results-20260926.md) | Review [PR #19](https://github.com/jordigilh/zvec-grep/pull/19) after #18; strict-byte discovery remains distinct from verified containment and unresolved-call abstention. Tiny candidate pools saturate @10; no ranking rollout. |
 | Historical IR checkout | `spike/code-ir-design` / local `139fe4e` | `/Users/jgil/go/src/github.com/jordigilh/zvec-grep-code-ir-design` | Earlier IR authoring branch; merged through #11 with rewritten remote commits | Leave untouched; use integration for current code. |
 | Inventory backup | [`spike/code-ir-metadata-inventory-wip`](https://github.com/jordigilh/zvec-grep/tree/spike/code-ir-metadata-inventory-wip) / `b1d4e5a` | No separate checkout | Original unverified script/test snapshot | Preserved, no PR; the active branch reuses those two files without inheriting the old pre-merge history. |
 | Historical one-pass checkout | `spike/code-ir-one-pass-evidence` / local `e96bec9` | `/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/code-ir-one-pass-evidence-20260926` | Original PR #12 worktree; remote was rewritten by the merge flow | Leave untouched. The merged integration tip is authoritative. |
@@ -97,7 +100,7 @@ prerequisite.
 
 ## Next handoff
 
-- **Now (on `spike/code-ir-v1-gap-diagnostics`):** Review [PR
+- **Review order (currently on `spike/code-ir-controlled-synthetic-suite`):** Review [PR
   #14](https://github.com/jordigilh/zvec-grep/pull/14) first, then [PR
   #15](https://github.com/jordigilh/zvec-grep/pull/15) for the
   [opt-in projection](./code-ir-projection-v2-plan.md), then [PR
@@ -112,20 +115,28 @@ prerequisite.
   in [PR #18](https://github.com/jordigilh/zvec-grep/pull/18), stacked on #17:
   Python's source units match exactly, while original FTS and
   vector text on those units restore the syntax ranks. Go's byte ranges differ.
-- **Then (separate gates):** Isolate generic signature/empty-scope/symbol-type
-  text effects and Go's type/doc-bearing source windows in fresh matched
-  per-language experiments. Python's baseline FTS/vector swap is already
-  measured; do not extrapolate it to other languages or tune eight queries.
-  Audit fusion sensitivity against separately judged tasks and keep failed
-  lanes disabled.
-- **Later:** Independently adjudicate real-Kubernaut retrieval and relation
-  cases before generalizing or enabling anything by default.
+  Then review the new controlled synthetic [PR #19](https://github.com/jordigilh/zvec-grep/pull/19):
+  source-grounded follow-up works on a tiny pilot but no ranking enablement.
+- **Pilot done:** The [controlled results](./code-ir-controlled-synthetic-suite-results-20260926.md)
+  validate four-lane containment and unresolved-call abstention with exact
+  source citations. Five to six baseline candidates/lane saturate @10; IR
+  loses rank on Go/Python/TypeScript queries. No retrieval enablement claim.
+- **Next independent gate:** Freeze this checker before authoring a **new**
+  larger (>10 candidate) source-pinned synthetic suite with untouched blind
+  questions, ambiguous grounding and meaningful top-k answer discrimination.
+  Do not relabel or tune this pilot after observing results.
+- **Later:** Diagnose Go's mismatched source windows and generic text-policy
+  effects only with matched controls. Real-Kubernaut judgments are a subsequent
+  external-validity gate, not the current debugging environment. Do not enable
+  anything by default from synthetic fixtures alone.
 
 **Resume checklist:** start with this map, the [one-pass evidence
  report](./code-ir-one-pass-metadata-results-20260926.md), coverage report and
   [v2 qeval report](./code-ir-v2-frozen-qeval-results-20260926.md),
   [factorial report](./code-ir-projection-ablation-results-20260926.md) and
-  [v1 gap diagnosis](./code-ir-v1-gap-diagnostic-results-20260926.md); check the
+  [v1 gap diagnosis](./code-ir-v1-gap-diagnostic-results-20260926.md) and
+  [controlled suite plan](./code-ir-controlled-synthetic-suite-plan.md) and
+  [pilot results](./code-ir-controlled-synthetic-suite-results-20260926.md); check the
  active branch head and `git status`; read the IR contract; run
 focused tests; then consult issue #8 and the evaluation branch for unchanged
 qrels and historical metrics. Commit in logical groups and push only the branch

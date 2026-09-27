@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "fixture_id": "controlled-python-v1",
+  "language": "python",
+  "source_set_sha256": "4a5c192597e87395d98242a53b81766944321b2b343bd3dcb8e972958a3272bf",
+  "files": {
+    "core.py": "e5b4deda20a9a1cafc601729f8948c888a36f744be1fba2ed8de2aa0941ca8e6",
+    "decoy.py": "8ca5e8f18fed817d4ae0f69c520982886d0eda732f545a42539668ca65ae4c9f"
+  },
+  "sites": [
+    {
+      "id": "vault",
+      "path": "core.py",
+      "kind": "type",
+      "name": "Vault",
+      "anchor": "class Vault:",
+      "start_byte": 0,
+      "end_byte": 12
+    },
+    {
+      "id": "guard",
+      "path": "core.py",
+      "kind": "method",
+      "name": "guard",
+      "anchor": "def guard(self, value: str) -> bool:",
+      "start_byte": 43,
+      "end_byte": 79
+    },
+    {
+      "id": "dispatch",
+      "path": "core.py",
+      "kind": "function",
+      "name": "dispatch",
+      "anchor": "def dispatch(vault: Vault, value: str) -> bool:",
+      "start_byte": 117,
+      "end_byte": 164
+    },
+    {
+      "id": "dispatch-call",
+      "path": "core.py",
+      "kind": "call",
+      "anchor": "vault.guard(value)",
+      "start_byte": 176,
+      "end_byte": 194
+    },
+    {
+      "id": "decoy",
+      "path": "decoy.py",
+      "kind": "function",
+      "name": "guard",
+      "anchor": "def guard(value: str) -> bool:",
+      "start_byte": 0,
+      "end_byte": 30
+    },
+    {
+      "id": "proxy",
+      "path": "decoy.py",
+      "kind": "function",
+      "name": "proxy",
+      "anchor": "def proxy(vault, value: str) -> bool:",
+      "start_byte": 110,
+      "end_byte": 147
+    },
+    {
+      "id": "proxy-call",
+      "path": "decoy.py",
+      "kind": "call",
+      "anchor": "vault.guard(value)",
+      "start_byte": 159,
+      "end_byte": 177
+    }
+  ],
+  "relations": [
+    {
+      "id": "vault-guard",
+      "kind": "contains",
+      "subject": "vault",
+      "object": "guard",
+      "status": "observed"
+    },
+    {
+      "id": "dispatch-guard",
+      "kind": "calls",
+      "subject": "dispatch",
+      "site": "dispatch-call",
+      "status": "unresolved",
+      "object": null
+    },
+    {
+      "id": "proxy-guard",
+      "kind": "calls",
+      "subject": "proxy",
+      "site": "proxy-call",
+      "status": "unresolved",
+      "object": null
+    }
+  ],
+  "queries": [
+    {
+      "id": "check",
+      "split": "calibration",
+      "query": "Where does Vault compare a supplied value with the stored token?",
+      "answer": "guard"
+    },
+    {
+      "id": "structure",
+      "split": "calibration",
+      "query": "Which Vault declaration contains the guard method?",
+      "answer": "vault",
+      "relation": "vault-guard"
+    },
+    {
+      "id": "dispatch",
+      "split": "holdout",
+      "query": "Where is the request dispatched through Vault guard?",
+      "answer": "dispatch",
+      "relation": "dispatch-guard"
+    },
+    {
+      "id": "decoy",
+      "split": "holdout",
+      "query": "Which standalone guard function rejects every value despite its docstring?",
+      "answer": "decoy"
+    },
+    {
+      "id": "proxy",
+      "split": "holdout",
+      "query": "Which proxy invokes a guard with a same-named decoy in another file?",
+      "answer": "proxy",
+      "relation": "proxy-guard"
+    }
+  ]
+}
