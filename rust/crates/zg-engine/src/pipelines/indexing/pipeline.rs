@@ -1066,16 +1066,35 @@ fn lexical_text(content: &Content, metadata: Option<&EntityMetadata>) -> String 
     if let Some(metadata) = metadata {
         match metadata {
             EntityMetadata::Code(code) => {
+                let symbol = match (code.symbol_type, code.symbol_name.as_deref()) {
+                    (Some(kind), Some(name)) => Some(format!("symbol: {} {name}", kind.as_str())),
+                    (Some(kind), None) => Some(format!("symbol: {}", kind.as_str())),
+                    (None, Some(name)) => Some(format!("symbol: {name}")),
+                    (None, None) => None,
+                };
+                let qualified = [code.scope.as_deref(), code.symbol_name.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                let parts = identifier_parts(&qualified);
                 for value in [
-                    &code.symbol_name,
-                    &code.scope,
-                    &code.signature,
-                    &code.documentation,
+                    symbol,
+                    (!qualified.is_empty()).then(|| format!("qualified: {qualified}")),
+                    (!parts.is_empty()).then(|| format!("name_parts: {}", parts.join(" "))),
+                    code.scope.as_ref().map(|scope| format!("scope: {scope}")),
+                    code.signature
+                        .as_ref()
+                        .map(|signature| format!("signature: {}", collapse_whitespace(signature))),
+                    code.documentation.as_ref().map(|documentation| {
+                        format!("doc: {}", collapse_whitespace(documentation))
+                    }),
                 ]
                 .into_iter()
                 .flatten()
                 {
-                    output.push_str(value);
+                    output.push_str(&value);
                     output.push('\n');
                 }
             }
@@ -1089,6 +1108,50 @@ fn lexical_text(content: &Content, metadata: Option<&EntityMetadata>) -> String 
     }
     append_contents(&mut output, std::slice::from_ref(content));
     output
+}
+
+/// Match the Node baseline's Unicode identifier tokens, ASCII camel/acronym
+/// boundaries and stable first-occurrence deduplication for FTS only.
+fn identifier_parts(value: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut previous = None;
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if !ch.is_alphanumeric() {
+            if !current.is_empty() {
+                let part = current.to_lowercase();
+                if !parts.contains(&part) {
+                    parts.push(part);
+                }
+                current.clear();
+            }
+            previous = None;
+            continue;
+        }
+        let split = previous.is_some_and(|prev: char| {
+            (prev.is_ascii_uppercase()
+                && ch.is_ascii_uppercase()
+                && chars.peek().is_some_and(char::is_ascii_lowercase))
+                || ((prev.is_ascii_lowercase() || prev.is_ascii_digit()) && ch.is_ascii_uppercase())
+        });
+        if split {
+            let part = current.to_lowercase();
+            if !parts.contains(&part) {
+                parts.push(part);
+            }
+            current.clear();
+        }
+        current.push(ch);
+        previous = Some(ch);
+    }
+    if !current.is_empty() {
+        let part = current.to_lowercase();
+        if !parts.contains(&part) {
+            parts.push(part);
+        }
+    }
+    parts
 }
 
 fn append_contents(output: &mut String, contents: &[Content]) {
@@ -2242,6 +2305,80 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn sense_identifier_parts_match_the_node_baseline_for_scoped_code_names() {
+        for (input, expected) in [
+            ("WorkflowState::Add", vec!["workflow", "state", "add"]),
+            ("XMLHttpServer2", vec!["xml", "http", "server2"]),
+            (
+                "owner_Éclair::CheckID",
+                vec!["owner", "éclair", "check", "id"],
+            ),
+            (
+                "PaymentLink::listWorkflows",
+                vec!["payment", "link", "list", "workflows"],
+            ),
+        ] {
+            assert_eq!(identifier_parts(input), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn code_lexical_text_indexes_qualified_name_and_parts_but_keeps_source_exact() {
+        use crate::domain::{CodeMetadata, SymbolType};
+
+        let metadata = EntityMetadata::Code(CodeMetadata {
+            symbol_type: Some(SymbolType::Function),
+            symbol_name: Some("Add".into()),
+            scope: Some("WorkflowState".into()),
+            signature: Some("func (w *WorkflowState)\nAdd(id string)".into()),
+            documentation: Some("Stores\nworkflow IDs.".into()),
+        });
+        let body = Content::Text("return w.ids[id]".into());
+        assert_eq!(
+            lexical_text(&body, Some(&metadata)),
+            "symbol: function Add\nqualified: WorkflowState::Add\nname_parts: workflow state add\nscope: WorkflowState\nsignature: func (w *WorkflowState) Add(id string)\ndoc: Stores workflow IDs.\nreturn w.ids[id]\n"
+        );
+        assert_eq!(body, Content::Text("return w.ids[id]".into()));
+        let vector_content = vector_content_for_fragment(&body, Some(&metadata), None);
+        let [Content::Text(vector)] = vector_content.as_slice() else {
+            panic!("vector text");
+        };
+        assert!(!vector.contains("name_parts:"));
+        assert!(!vector.contains("qualified:"));
+        assert!(vector.ends_with("return w.ids[id]"));
+
+        assert_eq!(lexical_text(&body, None), "return w.ids[id]\n");
+    }
+
+    #[test]
+    fn extracted_go_method_supplies_scoped_name_parts_to_prepared_fts() {
+        let source = TextSource {
+            relative_path: SourcePath::new("workflow.go").expect("path"),
+            formats: vec![FileFormat::Go],
+            text: "package demo\ntype WorkflowState struct { ids map[string]bool }\nfunc (w *WorkflowState) Add(id string) { w.ids[id] = true }\n".into(),
+        };
+        let extracted = extract_for_indexing(
+            &source,
+            crate::extraction::ChunkOptions {
+                max_chunk_chars: Some(2048),
+                chunk_overlap_chars: Some(0),
+            },
+        )
+        .expect("extract Go source");
+        let entities = bind_entities(FileId::new(1), extracted).expect("bind Go source");
+        let prepared = prepare_fragments(&entities, Some(2048)).expect("prepare Go FTS");
+        assert!(prepared.iter().any(|fragment| {
+            fragment
+                .fts_text
+                .contains("qualified: WorkflowState::Add\n")
+                && fragment
+                    .fts_text
+                    .contains("name_parts: workflow state add\n")
+                && fragment.fts_text.contains("w.ids[id] = true")
+        }));
+    }
 
     #[test]
     fn binding_preserves_complete_entities_and_independent_fragment_ids() {
