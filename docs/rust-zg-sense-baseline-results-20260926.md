@@ -71,8 +71,9 @@ cargo build --offline --locked --release -p zg
 
 No frozen Engram fixture, model cache, or user's existing workspace
 index was modified. **Existing indexes contain previously stored lexical
-text:** run `zg --index <your-workspace> --rebuild --mode direct` with the
-installed executable (and your normal model settings) before expecting the
+text:** from this repository root, run
+`rust/target/release/zg --index <your-workspace> --rebuild --mode direct`
+(with your normal model settings) before expecting the
 new FTS projection there. A running Server-mode daemon must use/restart the
 new executable independently; this work verified Direct mode only. No
 Rust-versus-TypeScript paired Go qeval was run; no ranking-rollout claim.
