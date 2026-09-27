@@ -16,6 +16,18 @@ TEMP = Path("/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode")
 
 
 class ControlledRunnerTest(unittest.TestCase):
+    def test_v2_uses_only_three_safe_source_files_of_the_expected_language(self):
+        truth = {"language": "go", "schema_version": 2, "fixture_id": "controlled-go-v2",
+                 "files": {"core.go": "a", "decoy.go": "b", "lures.go": "c"}}
+        self.assertEqual(runner.fixture_paths(truth), ("core.go", "decoy.go", "lures.go"))
+        for bad in (
+            {"core.go": "a", "decoy.go": "b", "../escape.go": "c"},
+            {"core.go": "a", "decoy.go": "b", "lures.ts": "c"},
+            {"core.go": "a", "decoy.go": "b"},
+        ):
+            with self.subTest(paths=bad), self.assertRaises(ValueError):
+                runner.fixture_paths({**truth, "files": bad})
+
     def test_model_cache_digest_is_content_and_path_pinned_and_refuses_symlinks(self):
         with tempfile.TemporaryDirectory(dir=TEMP) as directory:
             root = Path(directory)

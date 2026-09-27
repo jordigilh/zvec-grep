@@ -1,0 +1,272 @@
+{
+  "schema_version": 2,
+  "fixture_id": "controlled-go-v2",
+  "language": "go",
+  "source_set_sha256": "f54166861d4d459f61fb3c7e5a628e2fededeebfc07fcf64a10c83ff30b4c822",
+  "files": {
+    "fallback.go": "0b8080c60523ff5a09baa1a2eab928bb3cec9aa7a82833d2fd5eb6600e40636b",
+    "lures.go": "dcad30db16454b4c5c62e69b7d11cba883706a403e470bc8be272b446079ed63",
+    "policy.go": "85aadae6792800524cbb799650fd75acc22b6bcd912ebc9ee853bdb1e7c97a4f"
+  },
+  "sites": [
+    {
+      "id": "ledger",
+      "path": "policy.go",
+      "kind": "type",
+      "name": "PermitLedger",
+      "anchor": "type PermitLedger struct {",
+      "start_byte": 14,
+      "end_byte": 40
+    },
+    {
+      "id": "accepted",
+      "path": "policy.go",
+      "kind": "value",
+      "name": "accepted",
+      "anchor": "accepted map[string]bool",
+      "start_byte": 42,
+      "end_byte": 66
+    },
+    {
+      "id": "remember",
+      "path": "policy.go",
+      "kind": "method",
+      "name": "Remember",
+      "anchor": "func (l *PermitLedger) Remember(key string) {",
+      "start_byte": 70,
+      "end_byte": 115
+    },
+    {
+      "id": "member",
+      "path": "policy.go",
+      "kind": "method",
+      "name": "Has",
+      "anchor": "func (l *PermitLedger) Has(key string) bool {",
+      "start_byte": 143,
+      "end_byte": 188
+    },
+    {
+      "id": "route",
+      "path": "policy.go",
+      "kind": "function",
+      "name": "Route",
+      "anchor": "func Route(l *PermitLedger, key string) bool {",
+      "start_byte": 216,
+      "end_byte": 262
+    },
+    {
+      "id": "route-call",
+      "path": "policy.go",
+      "kind": "call",
+      "anchor": "l.Has(key)",
+      "start_byte": 271,
+      "end_byte": 281
+    },
+    {
+      "id": "decoy",
+      "path": "fallback.go",
+      "kind": "function",
+      "name": "Has",
+      "anchor": "func Has(key string) bool {",
+      "start_byte": 77,
+      "end_byte": 104
+    },
+    {
+      "id": "retry",
+      "path": "fallback.go",
+      "kind": "function",
+      "name": "Retry",
+      "anchor": "func Retry(l *PermitLedger, key string) bool {",
+      "start_byte": 122,
+      "end_byte": 168
+    },
+    {
+      "id": "retry-call",
+      "path": "fallback.go",
+      "kind": "call",
+      "anchor": "l.Has(key)",
+      "start_byte": 177,
+      "end_byte": 187
+    },
+    {
+      "id": "check-membership",
+      "path": "lures.go",
+      "kind": "function",
+      "name": "CheckMembership",
+      "anchor": "func CheckMembership(",
+      "start_byte": 14,
+      "end_byte": 35
+    },
+    {
+      "id": "check-cached",
+      "path": "lures.go",
+      "kind": "function",
+      "name": "CheckCachedPermit",
+      "anchor": "func CheckCachedPermit(",
+      "start_byte": 76,
+      "end_byte": 99
+    },
+    {
+      "id": "route-legacy",
+      "path": "lures.go",
+      "kind": "function",
+      "name": "RouteLegacy",
+      "anchor": "func RouteLegacy(",
+      "start_byte": 143,
+      "end_byte": 160
+    },
+    {
+      "id": "remember-accepted",
+      "path": "lures.go",
+      "kind": "function",
+      "name": "RememberAccepted",
+      "anchor": "func RememberAccepted(",
+      "start_byte": 193,
+      "end_byte": 215
+    },
+    {
+      "id": "permit-hint",
+      "path": "lures.go",
+      "kind": "function",
+      "name": "HasPermitHint",
+      "anchor": "func HasPermitHint(",
+      "start_byte": 253,
+      "end_byte": 272
+    },
+    {
+      "id": "retry-expired",
+      "path": "lures.go",
+      "kind": "function",
+      "name": "RetryExpired",
+      "anchor": "func RetryExpired(",
+      "start_byte": 314,
+      "end_byte": 332
+    },
+    {
+      "id": "ledger-snapshot",
+      "path": "lures.go",
+      "kind": "function",
+      "name": "LedgerSnapshot",
+      "anchor": "func LedgerSnapshot(",
+      "start_byte": 377,
+      "end_byte": 397
+    },
+    {
+      "id": "route-fallback",
+      "path": "lures.go",
+      "kind": "function",
+      "name": "RouteFallback",
+      "anchor": "func RouteFallback(",
+      "start_byte": 443,
+      "end_byte": 462
+    },
+    {
+      "id": "reject-unknown",
+      "path": "lures.go",
+      "kind": "function",
+      "name": "RejectUnknown",
+      "anchor": "func RejectUnknown(",
+      "start_byte": 506,
+      "end_byte": 525
+    },
+    {
+      "id": "tenant",
+      "path": "lures.go",
+      "kind": "function",
+      "name": "EnforceTenant",
+      "anchor": "func EnforceTenant(",
+      "start_byte": 570,
+      "end_byte": 589
+    },
+    {
+      "id": "empty-key",
+      "path": "lures.go",
+      "kind": "function",
+      "name": "BlockUnlisted",
+      "anchor": "func BlockUnlisted(",
+      "start_byte": 639,
+      "end_byte": 658
+    },
+    {
+      "id": "accept-all",
+      "path": "lures.go",
+      "kind": "function",
+      "name": "AcceptAll",
+      "anchor": "func AcceptAll(",
+      "start_byte": 696,
+      "end_byte": 711
+    }
+  ],
+  "relations": [
+    {
+      "id": "ledger-field",
+      "kind": "contains",
+      "subject": "ledger",
+      "object": "accepted",
+      "status": "observed"
+    },
+    {
+      "id": "route-membership",
+      "kind": "calls",
+      "subject": "route",
+      "site": "route-call",
+      "status": "unresolved",
+      "object": null
+    },
+    {
+      "id": "retry-membership",
+      "kind": "calls",
+      "subject": "retry",
+      "site": "retry-call",
+      "status": "unresolved",
+      "object": null
+    }
+  ],
+  "queries": [
+    {
+      "id": "persist-key",
+      "split": "calibration",
+      "query": "Where is a permitted key actually inserted into the ledger for later checks?",
+      "answer": "remember"
+    },
+    {
+      "id": "ledger-shape",
+      "split": "calibration",
+      "query": "Which structure owns the map of accepted keys?",
+      "answer": "ledger",
+      "relation": "ledger-field"
+    },
+    {
+      "id": "route-membership",
+      "split": "holdout",
+      "query": "Which routing entry invokes a ledger membership check for a key?",
+      "answer": "route",
+      "relation": "route-membership"
+    },
+    {
+      "id": "retry-membership",
+      "split": "holdout",
+      "query": "Where does a retry path attempt another ledger membership check?",
+      "answer": "retry",
+      "relation": "retry-membership"
+    },
+    {
+      "id": "standalone-deceiver",
+      "split": "holdout",
+      "query": "Which standalone Has function claims to consult a ledger but always returns false?",
+      "answer": "decoy"
+    },
+    {
+      "id": "tenant-active",
+      "split": "holdout",
+      "query": "Which helper permits only an active tenant, rather than consulting ledger membership?",
+      "answer": "tenant"
+    },
+    {
+      "id": "empty-key",
+      "split": "holdout",
+      "query": "Which helper flags an empty unlisted key?",
+      "answer": "empty-key"
+    }
+  ]
+}

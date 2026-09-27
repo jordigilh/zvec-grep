@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "fixture_id": "controlled-rust-v2",
+  "language": "rust",
+  "source_set_sha256": "742ef1b8f3364b2888d57c9b86370a9a70b425cdc40745511f2a2e6cf92027bb",
+  "files": {
+    "fallback.rs": "cdff90dd7afeea71378f51ed368425eec046d80c26f1ebda74d887fef86c5419",
+    "lures.rs": "5591937005622e87a4406787d757d5be0b06403b811f663470857a70c16f017f",
+    "policy.rs": "177a273bd3a983eb5ba66c08471001da59f96e62a41c4234da6cf6f2e3c1563e"
+  },
+  "sites": [
+    { "id": "ledger", "path": "policy.rs", "kind": "type", "name": "PermitLedger", "anchor": "pub struct PermitLedger {", "start_byte": 0, "end_byte": 25 },
+    { "id": "implementation", "path": "policy.rs", "kind": "type", "anchor": "impl PermitLedger {", "start_byte": 56, "end_byte": 75 },
+    { "id": "remember", "path": "policy.rs", "kind": "method", "name": "remember", "anchor": "pub fn remember(&mut self, key: &str) {", "start_byte": 80, "end_byte": 119 },
+    { "id": "member", "path": "policy.rs", "kind": "method", "name": "has", "anchor": "pub fn has(&self, key: &str) -> bool {", "start_byte": 175, "end_byte": 213 },
+    { "id": "route", "path": "policy.rs", "kind": "function", "name": "route", "anchor": "pub fn route(ledger: &PermitLedger, key: &str) -> bool {", "start_byte": 286, "end_byte": 342 },
+    { "id": "route-call", "path": "policy.rs", "kind": "call", "anchor": "ledger.has(key)", "start_byte": 347, "end_byte": 362 },
+    { "id": "decoy", "path": "fallback.rs", "kind": "function", "name": "has", "anchor": "pub fn has(_key: &str) -> bool {", "start_byte": 57, "end_byte": 89 },
+    { "id": "retry", "path": "fallback.rs", "kind": "function", "name": "retry", "anchor": "pub fn retry(ledger: &crate::policy::PermitLedger, key: &str) -> bool {", "start_byte": 103, "end_byte": 174 },
+    { "id": "retry-call", "path": "fallback.rs", "kind": "call", "anchor": "ledger.has(key)", "start_byte": 179, "end_byte": 194 },
+    { "id": "check-membership", "path": "lures.rs", "kind": "function", "name": "check_membership", "anchor": "pub fn check_membership(", "start_byte": 0, "end_byte": 24 },
+    { "id": "check-cached", "path": "lures.rs", "kind": "function", "name": "check_cached_permit", "anchor": "pub fn check_cached_permit(", "start_byte": 63, "end_byte": 90 },
+    { "id": "route-legacy", "path": "lures.rs", "kind": "function", "name": "route_legacy", "anchor": "pub fn route_legacy(", "start_byte": 129, "end_byte": 149 },
+    { "id": "remember-accepted", "path": "lures.rs", "kind": "function", "name": "remember_accepted", "anchor": "pub fn remember_accepted(", "start_byte": 178, "end_byte": 203 },
+    { "id": "permit-hint", "path": "lures.rs", "kind": "function", "name": "has_permit_hint", "anchor": "pub fn has_permit_hint(", "start_byte": 242, "end_byte": 265 },
+    { "id": "retry-expired", "path": "lures.rs", "kind": "function", "name": "retry_expired", "anchor": "pub fn retry_expired(", "start_byte": 302, "end_byte": 323 },
+    { "id": "ledger-snapshot", "path": "lures.rs", "kind": "function", "name": "ledger_snapshot", "anchor": "pub fn ledger_snapshot(", "start_byte": 363, "end_byte": 386 },
+    { "id": "route-fallback", "path": "lures.rs", "kind": "function", "name": "route_fallback", "anchor": "pub fn route_fallback(", "start_byte": 427, "end_byte": 449 },
+    { "id": "reject-unknown", "path": "lures.rs", "kind": "function", "name": "reject_unknown", "anchor": "pub fn reject_unknown(", "start_byte": 488, "end_byte": 510 },
+    { "id": "tenant", "path": "lures.rs", "kind": "function", "name": "enforce_tenant", "anchor": "pub fn enforce_tenant(", "start_byte": 550, "end_byte": 572 },
+    { "id": "empty-key", "path": "lures.rs", "kind": "function", "name": "block_unlisted", "anchor": "pub fn block_unlisted(", "start_byte": 617, "end_byte": 639 },
+    { "id": "accept-all", "path": "lures.rs", "kind": "function", "name": "accept_all", "anchor": "pub fn accept_all(", "start_byte": 677, "end_byte": 695 }
+  ],
+  "relations": [
+    { "id": "impl-remember", "kind": "contains", "subject": "implementation", "object": "remember", "status": "observed" },
+    { "id": "route-membership", "kind": "calls", "subject": "route", "site": "route-call", "status": "unresolved", "object": null },
+    { "id": "retry-membership", "kind": "calls", "subject": "retry", "site": "retry-call", "status": "unresolved", "object": null }
+  ],
+  "queries": [
+    { "id": "persist-key", "split": "calibration", "query": "Where is a permitted key actually inserted into the ledger for later checks?", "answer": "remember" },
+    { "id": "ledger-shape", "split": "calibration", "query": "Which implementation block contains the operation that records accepted keys?", "answer": "remember", "relation": "impl-remember" },
+    { "id": "route-membership", "split": "holdout", "query": "Which routing entry invokes a ledger membership check for a key?", "answer": "route", "relation": "route-membership" },
+    { "id": "retry-membership", "split": "holdout", "query": "Where does a retry path attempt another ledger membership check?", "answer": "retry", "relation": "retry-membership" },
+    { "id": "standalone-deceiver", "split": "holdout", "query": "Which standalone has function claims to consult a ledger but always returns false?", "answer": "decoy" },
+    { "id": "tenant-active", "split": "holdout", "query": "Which helper permits only an active tenant, rather than consulting ledger membership?", "answer": "tenant" },
+    { "id": "empty-key", "split": "holdout", "query": "Which helper flags an empty unlisted key?", "answer": "empty-key" }
+  ]
+}

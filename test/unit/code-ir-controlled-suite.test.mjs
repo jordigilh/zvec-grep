@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { extractSnapshot } from "../../dist/engine/code-ir/index.js";
@@ -7,6 +8,7 @@ import {
   verifyControlledTruth,
   verifyControlledSnapshot,
   groundBaseline,
+  judgeBaseline,
   scoreControlledRun,
 } from "../../scripts/code_ir_controlled_suite.mjs";
 
@@ -162,9 +164,12 @@ test("grounding rejects enclosing type, decoy, and non-unique same-name matches"
     entity("same-name", "guard", "function", 0, 114),
   ];
   const result = groundBaseline({ truth, sources, stored, snapshot, audit });
-  assert.equal(result.get("method")?.site_id, "guard");
-  assert.equal(result.get("enclosing")?.site_id, "vault");
-  assert.notEqual(result.get("same-name")?.site_id, "guard");
+  assert.equal(result.get("method")?.unit_id, audit.units.get("guard").id);
+  assert.equal(result.get("enclosing")?.unit_id, audit.units.get("vault").id);
+  const judged = judgeBaseline({ truth, sources, stored, grounded: result });
+  assert.equal(judged.get("method")?.site_id, "guard");
+  assert.equal(judged.get("enclosing")?.site_id, "vault");
+  assert.notEqual(judged.get("same-name")?.site_id, "guard");
   const unlabeled = groundBaseline({
     truth,
     sources,
@@ -173,7 +178,28 @@ test("grounding rejects enclosing type, decoy, and non-unique same-name matches"
     audit: { units: new Map() },
   });
   assert.equal(unlabeled.get("method")?.unit_id, audit.units.get("guard").id);
-  assert.equal(unlabeled.get("method")?.site_id, null);
+  assert.equal(unlabeled.get("method")?.site_id, undefined);
+  const ambiguous = structuredClone(snapshot);
+  ambiguous.units.push({
+    ...audit.units.get("guard"),
+    id: "other-guard",
+    source: { ...audit.units.get("guard").source, start_byte: 1 },
+  });
+  const collisions = groundBaseline({
+    truth,
+    sources,
+    stored,
+    snapshot: ambiguous,
+    audit,
+  });
+  assert.equal(collisions.get("method")?.unit_id, null);
+  assert.equal(collisions.get("method")?.reason, "ambiguous");
+  assert.equal(
+    judgeBaseline({ truth, sources, stored, grounded: collisions }).get(
+      "method",
+    )?.site_id,
+    "guard",
+  );
   const duplicate = [
     ...stored,
     entity("duplicate", "guard", "function", guard.start_byte, 114),
@@ -222,6 +248,20 @@ test("scorer uses entity IDs and exact truth sites, not line overlaps or query o
   assert.equal(report.queries[0].discovery.syntax_rank, 1);
   assert.equal(report.queries[0].discovery.ir_rank, null);
   assert.equal(report.queries[1].follow_up.status, "observed");
+  const ungrounded = new Map(baseline);
+  ungrounded.set("type", {
+    site_id: "vault",
+    unit_id: null,
+    reason: "ambiguous",
+  });
+  const ungroundedReport = scoreControlledRun({
+    truth,
+    raw,
+    audit,
+    baseline: ungrounded,
+  });
+  assert.equal(ungroundedReport.queries[1].discovery.syntax_rank, 1);
+  assert.equal(ungroundedReport.queries[1].follow_up.status, "not_grounded");
   citeControlledRun(report, sources, snapshot, audit);
   const citation = report.queries[1].follow_up.citation;
   assert.equal(citation.path, "core.py");
@@ -243,4 +283,122 @@ test("scorer uses entity IDs and exact truth sites, not line overlaps or query o
     () => scoreControlledRun({ truth, raw, audit, baseline }),
     /unknown.*id/i,
   );
+});
+
+test("v2 truth accepts a third pinned file and exactly seven predeclared tasks without consulting IR", async () => {
+  const { truth: original, sources: originalSources } = await lane("go");
+  const truth = structuredClone(original);
+  const sources = new Map(originalSources);
+  truth.schema_version = 2;
+  truth.fixture_id = "controlled-go-v2";
+  const source = Buffer.from(
+    "package demo\n" +
+      Array.from(
+        { length: 12 },
+        (_, n) => `func lure${n}() bool { return false }\n`,
+      ).join(""),
+  );
+  sources.set("lures.go", source);
+  truth.files["lures.go"] = createHash("sha256").update(source).digest("hex");
+  const digest = createHash("sha256");
+  for (const [path, bytes] of [...sources].sort(([a], [b]) =>
+    a.localeCompare(b),
+  ))
+    digest.update(path).update("\0").update(bytes).update("\0");
+  truth.source_set_sha256 = digest.digest("hex");
+  for (let i = 0; i < 12; i++) {
+    const anchor = `func lure${i}()`;
+    const start = source.indexOf(Buffer.from(anchor));
+    truth.sites.push({
+      id: `lure${i}`,
+      path: "lures.go",
+      kind: "function",
+      name: `lure${i}`,
+      anchor,
+      start_byte: start,
+      end_byte: start + Buffer.byteLength(anchor),
+    });
+  }
+  truth.queries.push(
+    {
+      id: "extra-one",
+      split: "holdout",
+      query: "Where is lure 11?",
+      answer: "lure11",
+    },
+    {
+      id: "extra-two",
+      split: "holdout",
+      query: "Where is lure 3?",
+      answer: "lure3",
+    },
+  );
+  assert.equal(
+    verifyControlledTruth(truth, sources).size,
+    original.sites.length + 12,
+  );
+  const short = structuredClone(truth);
+  short.queries.pop();
+  assert.throws(() => verifyControlledTruth(short, sources), /split|task/i);
+  const stale = new Map(sources);
+  stale.set("lures.go", Buffer.from("changed"));
+  assert.throws(() => verifyControlledTruth(truth, stale), /source hash/i);
+});
+
+test("small cutoffs and reciprocal ranks expose losses even when @10 is saturated", async () => {
+  const { truth, snapshot } = await lane("go");
+  const units = new Map(
+    truth.sites
+      .filter((site) => site.kind !== "call")
+      .map((site) => [site.id, { id: site.id }]),
+  );
+  const audit = {
+    units,
+    facts: new Map(),
+    missing_sites: [],
+    missing_relations: [],
+    false_links: [],
+  };
+  const baseline = new Map(
+    [...units].map(([site]) => [site, { site_id: site, unit_id: site }]),
+  );
+  const candidates = ["vault", "token", "guard", "dispatch", "decoy", "proxy"];
+  const arm = (name) => ({
+    name,
+    queries: truth.queries.map((query) => ({
+      id: query.id,
+      query: query.query,
+      hits: [
+        query.answer,
+        ...candidates.filter((candidate) => candidate !== query.answer),
+      ]
+        .filter((_, i) => name === "syntax-only" || i > 0)
+        .map((entity_id, index) => ({ entity_id, rank: index + 1 })),
+    })),
+  });
+  const syntax = arm("syntax-only");
+  const ir = arm("code-ir-v2");
+  for (const row of ir.queries) {
+    row.hits = ["vault", "token", "guard", "dispatch", "decoy", "proxy"].filter(
+      (id) => id !== truth.queries.find((q) => q.id === row.id).answer,
+    );
+    row.hits.push(truth.queries.find((q) => q.id === row.id).answer);
+    row.hits = row.hits.map((entity_id, i) => ({ entity_id, rank: i + 1 }));
+  }
+  const raw = {
+    provenance: {
+      fixture_id: truth.fixture_id,
+      language: truth.language,
+      source_set_sha256: truth.source_set_sha256,
+      code_ir: { snapshot_id: snapshot.snapshot_id },
+    },
+    arms: [syntax, ir],
+  };
+  const report = scoreControlledRun({ truth, raw, audit, baseline });
+  assert.equal(report.aggregate.calibration.syntax_exact_at_1, 2);
+  assert.equal(report.aggregate.calibration.ir_exact_at_1, 0);
+  assert.equal(report.aggregate.calibration.syntax_mrr, 1);
+  assert.equal(report.aggregate.calibration.ir_mrr, 1 / 6);
+  assert.equal(report.aggregate.calibration.syntax_exact_at_10, 2);
+  assert.equal(report.aggregate.calibration.ir_exact_at_10, 2);
 });
