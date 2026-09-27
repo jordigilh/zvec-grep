@@ -23,13 +23,15 @@ function uniqueIds(rows, label) {
 }
 
 export function verifyControlledTruth(truth, sources) {
+  const version = truth.schema_version;
+  const files = version === 2 ? 3 : 2;
   if (
-    truth.schema_version !== 1 ||
+    (version !== 1 && version !== 2) ||
     !["go", "python", "rust", "typescript"].includes(truth.language) ||
-    truth.fixture_id !== `controlled-${truth.language}-v1` ||
+    truth.fixture_id !== `controlled-${truth.language}-v${version}` ||
     !truth.files ||
-    Object.keys(truth.files).length !== 2 ||
-    sources.size !== 2 ||
+    Object.keys(truth.files).length !== files ||
+    sources.size !== files ||
     !Object.keys(truth.files).every(safePath)
   )
     throw new Error("invalid controlled source truth/fixture");
@@ -51,6 +53,8 @@ export function verifyControlledTruth(truth, sources) {
     throw new Error("source set digest differs from pinned truth");
   const sites = uniqueIds(truth.sites, "site");
   if (!sites.size) throw new Error("missing source sites");
+  if (version === 2 && sites.size < 15)
+    throw new Error("v2 requires at least fifteen source-authored sites");
   const used = new Set();
   for (const site of sites.values()) {
     const bytes = sources.get(site.path);
@@ -122,9 +126,10 @@ export function verifyControlledTruth(truth, sources) {
   }
   const queries = uniqueIds(truth.queries, "query");
   if (
-    queries.size !== 5 ||
+    queries.size !== (version === 2 ? 7 : 5) ||
     truth.queries.filter((q) => q.split === "calibration").length !== 2 ||
-    truth.queries.filter((q) => q.split === "holdout").length !== 3
+    truth.queries.filter((q) => q.split === "holdout").length !==
+      (version === 2 ? 5 : 3)
   )
     throw new Error("invalid controlled task split");
   for (const query of queries.values()) {
@@ -229,42 +234,43 @@ const baselineKinds = {
   value: new Set(["field", "value", "property"]),
 };
 
-export function groundBaseline({ truth, sources, stored, snapshot, audit }) {
+function baselineSourceRange(file, entity, truth, sources) {
+  const bytes = sources.get(file.relativePath);
+  if (!bytes || file.contentHash !== truth.files[file.relativePath])
+    throw new Error("baseline source hash differs from pinned truth");
+  const text = bytes.toString("utf8");
+  const { startOffset, endOffset } = entity.range ?? {};
+  if (
+    entity.range?.kind !== "text" ||
+    !Number.isSafeInteger(startOffset) ||
+    !Number.isSafeInteger(endOffset) ||
+    startOffset < 0 ||
+    endOffset <= startOffset ||
+    endOffset > text.length ||
+    entity.content?.kind !== "text" ||
+    entity.content.text !== text.slice(startOffset, endOffset)
+  )
+    throw new Error(`baseline entity is not exact source: ${entity.id}`);
+  return {
+    start: Buffer.byteLength(text.slice(0, startOffset)),
+    end: Buffer.byteLength(text.slice(0, endOffset)),
+  };
+}
+
+export function groundBaseline({ truth, sources, stored, snapshot }) {
   verifyControlledTruth(truth, sources);
   const grounded = new Map();
   const occupied = new Set();
   const irFiles = new Map(
     snapshot.files.map((file) => [file.relative_path, file]),
   );
-  const siteByUnit = new Map(
-    [...audit.units].map(([site, unit]) => [unit.id, site]),
-  );
   for (const { file, entity } of stored) {
     if (grounded.has(entity.id))
       throw new Error("duplicate baseline entity id");
-    const bytes = sources.get(file.relativePath);
     const irFile = irFiles.get(file.relativePath);
-    if (
-      !bytes ||
-      file.contentHash !== truth.files[file.relativePath] ||
-      irFile?.sha256 !== file.contentHash
-    )
+    if (irFile?.sha256 !== file.contentHash)
       throw new Error("baseline source hash differs from pinned truth");
-    const text = bytes.toString("utf8");
-    const { startOffset, endOffset } = entity.range ?? {};
-    if (
-      entity.range?.kind !== "text" ||
-      !Number.isSafeInteger(startOffset) ||
-      !Number.isSafeInteger(endOffset) ||
-      startOffset < 0 ||
-      endOffset <= startOffset ||
-      endOffset > text.length ||
-      entity.content?.kind !== "text" ||
-      entity.content.text !== text.slice(startOffset, endOffset)
-    )
-      throw new Error(`baseline entity is not exact source: ${entity.id}`);
-    const start = Buffer.byteLength(text.slice(0, startOffset));
-    const end = Buffer.byteLength(text.slice(0, endOffset));
+    const { start, end } = baselineSourceRange(file, entity, truth, sources);
     // No oracle site or answer label participates in this mapping. Requiring
     // a shared end boundary permits an IR declaration's attested leading doc,
     // Go `type ` or TS `export ` without treating an enclosing class/impl as
@@ -278,17 +284,63 @@ export function groundBaseline({ truth, sources, stored, snapshot, audit }) {
         unit.source.start_byte <= start &&
         unit.source.end_byte === end,
     );
-    if (matches.length > 1) throw new Error("ambiguous baseline-to-IR unit");
-    const unit = matches[0];
+    const unit = matches.length === 1 ? matches[0] : null;
     if (unit && occupied.has(unit.id))
       throw new Error(`ambiguous duplicate baseline grounding: ${unit.id}`);
     if (unit) occupied.add(unit.id);
     grounded.set(entity.id, {
-      site_id: unit ? (siteByUnit.get(unit.id) ?? null) : null,
       unit_id: unit?.id ?? null,
+      ...(unit ? {} : { reason: matches.length ? "ambiguous" : "unmatched" }),
     });
   }
   return grounded;
+}
+
+// Only the evaluator consults authored answer sites. It may credit a syntax
+// discovery even when the label-blind IR grounding abstains.
+export function judgeBaseline({ truth, sources, stored, grounded }) {
+  verifyControlledTruth(truth, sources);
+  if (stored.length !== grounded.size)
+    throw new Error("baseline grounding inventory differs from truth scorer");
+  const judged = new Map();
+  for (const { file, entity } of stored) {
+    const candidate = grounded.get(entity.id);
+    if (!candidate)
+      throw new Error(`baseline entity has no grounding result: ${entity.id}`);
+    const { start, end } = baselineSourceRange(file, entity, truth, sources);
+    const matches = truth.sites.filter((site) => {
+      if (
+        site.kind === "call" ||
+        site.path !== file.relativePath ||
+        site.name !== entity.metadata?.symbolName ||
+        !baselineKinds[site.kind].has(entity.metadata?.symbolType)
+      )
+        return false;
+      const nameIndex = site.anchor.indexOf(site.name);
+      const nameStart =
+        site.start_byte + Buffer.byteLength(site.anchor.slice(0, nameIndex));
+      if (
+        nameStart < start ||
+        nameStart + Buffer.byteLength(site.name) > end ||
+        site.end_byte > end
+      )
+        return false;
+      return !truth.sites.some(
+        (other) =>
+          other.id !== site.id &&
+          other.kind !== "call" &&
+          other.path === site.path &&
+          other.start_byte >= start &&
+          other.start_byte < site.start_byte,
+      );
+    });
+    judged.set(entity.id, {
+      ...candidate,
+      site_id: matches.length === 1 ? matches[0].id : null,
+      ...(matches.length > 1 ? { label_reason: "ambiguous" } : {}),
+    });
+  }
+  return judged;
 }
 
 export function scoreControlledRun({
@@ -358,7 +410,13 @@ export function scoreControlledRun({
       ir.hits.find(
         (hit) => irSites.get(unitFor(hit.entity_id)) === query.answer,
       )?.rank ?? null;
-    const grounded = syntaxRank !== null;
+    const answerHit = syntax.hits.find(
+      (hit) => baseline.get(hit.entity_id).site_id === query.answer,
+    );
+    const grounded =
+      answerHit !== undefined &&
+      baseline.get(answerHit.entity_id).unit_id ===
+        audit.units.get(query.answer)?.id;
     const relation = truth.relations.find((row) => row.id === query.relation);
     const fact =
       relation && grounded ? audit.facts.get(relation.id) : undefined;
@@ -371,7 +429,9 @@ export function scoreControlledRun({
         ? {
             relation: relation.id,
             status: !grounded
-              ? "not_discovered"
+              ? syntaxRank === null
+                ? "not_discovered"
+                : "not_grounded"
               : fact
                 ? fact.status
                 : "abstained",
@@ -401,11 +461,38 @@ export function scoreControlledRun({
           split,
           {
             tasks: rows.length,
+            syntax_exact_at_1: rows.filter((q) => q.discovery.syntax_rank === 1)
+              .length,
+            ir_exact_at_1: rows.filter((q) => q.discovery.ir_rank === 1).length,
+            syntax_exact_at_3: rows.filter(
+              (q) =>
+                q.discovery.syntax_rank !== null &&
+                q.discovery.syntax_rank <= 3,
+            ).length,
+            ir_exact_at_3: rows.filter(
+              (q) => q.discovery.ir_rank !== null && q.discovery.ir_rank <= 3,
+            ).length,
             syntax_exact_at_10: rows.filter(
               (q) => q.discovery.syntax_rank !== null,
             ).length,
             ir_exact_at_10: rows.filter((q) => q.discovery.ir_rank !== null)
               .length,
+            syntax_mrr:
+              rows.reduce(
+                (sum, q) =>
+                  sum +
+                  (q.discovery.syntax_rank === null
+                    ? 0
+                    : 1 / q.discovery.syntax_rank),
+                0,
+              ) / rows.length,
+            ir_mrr:
+              rows.reduce(
+                (sum, q) =>
+                  sum +
+                  (q.discovery.ir_rank === null ? 0 : 1 / q.discovery.ir_rank),
+                0,
+              ) / rows.length,
             follow_up_observed: rows.filter(
               (q) => q.follow_up?.status === "observed",
             ).length,

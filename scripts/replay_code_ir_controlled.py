@@ -14,6 +14,7 @@ from pathlib import Path
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
+EXTENSION = {"go": "go", "python": "py", "rust": "rs", "typescript": "ts"}
 
 
 def sha(path: Path) -> str:
@@ -34,6 +35,21 @@ def tree_digest(root: Path) -> str:
     return digest.hexdigest()
 
 
+def fixture_paths(truth: dict) -> tuple[str, ...]:
+    language = truth.get("language")
+    version = truth.get("schema_version")
+    if (language not in EXTENSION or version not in (1, 2) or
+            truth.get("fixture_id") != f"controlled-{language}-v{version}"):
+        raise ValueError("unsupported controlled fixture")
+    files = truth.get("files", {})
+    paths = tuple(sorted(files))
+    if (len(paths) != (3 if version == 2 else 2) or
+            any(Path(path).name != path or path in (".", "..") or
+                not path.endswith(f".{EXTENSION[language]}") for path in paths)):
+        raise ValueError("unexpected source path")
+    return paths
+
+
 def run(args: argparse.Namespace) -> dict:
     fixture = args.fixture.resolve(strict=True)
     cache = args.model_cache.resolve(strict=True)
@@ -46,21 +62,25 @@ def run(args: argparse.Namespace) -> dict:
     ):
         raise ValueError("work/output must be fresh separate directories outside the checkout")
     truth = json.loads((fixture / "truth.json").read_text())
-    if truth["schema_version"] != 1 or truth["fixture_id"] != f"controlled-{truth['language']}-v1":
-        raise ValueError("unsupported controlled fixture")
+    paths = fixture_paths(truth)
     cache_sha = tree_digest(cache)
-    for relative, digest in truth["files"].items():
-        if relative not in (f"core.{dict(go='go', python='py', rust='rs', typescript='ts')[truth['language']]}",
-                            f"decoy.{dict(go='go', python='py', rust='rs', typescript='ts')[truth['language']]}"):
-            raise ValueError("unexpected source path")
+    source_set = hashlib.sha256()
+    for relative in paths:
+        digest = truth["files"][relative]
         path = fixture / relative
         if path.is_symlink() or sha(path) != digest:
             raise ValueError(f"stale source: {relative}")
+        source_set.update(relative.encode())
+        source_set.update(b"\0")
+        source_set.update(path.read_bytes())
+        source_set.update(b"\0")
+    if source_set.hexdigest() != truth.get("source_set_sha256"):
+        raise ValueError("source set digest differs from truth")
     work.mkdir()
     output.mkdir()
     for root in (work / "baseline", work / "candidate"):
         root.mkdir()
-        for relative in truth["files"]:
+        for relative in paths:
             (root / relative).write_bytes((fixture / relative).read_bytes())
     raw = output / "raw-runs.json"
     subprocess.run([

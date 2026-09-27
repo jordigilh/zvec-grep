@@ -6,6 +6,7 @@ import { createWorkspaceIndexStorage } from "../dist/engine/storage/index.js";
 import {
   citeControlledRun,
   groundBaseline,
+  judgeBaseline,
   scoreControlledRun,
   verifyControlledSnapshot,
   verifyControlledTruth,
@@ -73,7 +74,8 @@ try {
 } finally {
   storage.close();
 }
-const baseline = groundBaseline({ truth, sources, stored, snapshot, audit });
+const grounded = groundBaseline({ truth, sources, stored, snapshot });
+const baseline = judgeBaseline({ truth, sources, stored, grounded });
 const report = scoreControlledRun({ truth, raw, audit, baseline, projection });
 citeControlledRun(report, sources, snapshot, audit);
 report.provenance = {
@@ -84,6 +86,12 @@ report.provenance = {
   syntax_entities: baseline.size,
   grounded_entities: [...baseline.values()].filter((row) => row.unit_id).length,
   projected_records: projection.records.length,
+  projected_units: new Set(projection.records.map((row) => row.unit_id)).size,
+  candidate_pool_gate:
+    truth.schema_version === 2
+      ? baseline.size > 10 &&
+        new Set(projection.records.map((row) => row.unit_id)).size > 10
+      : null,
   scip: null,
 };
 await writeFile(
