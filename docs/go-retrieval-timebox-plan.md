@@ -1,7 +1,9 @@
 # Go-only retrieval timebox (paused four-language IR work)
 
-**Scope:** The four-language IR experiment is parked, with its last clean,
-pushed review slice at [PR #20](https://github.com/jordigilh/zvec-grep/pull/20).
+**Scope:** [PR #21](https://github.com/jordigilh/zvec-grep/pull/21) is stacked
+on parked [PR #20](https://github.com/jordigilh/zvec-grep/pull/20).
+The four-language IR experiment is parked, with its last clean,
+pushed review slice at PR #20.
 This Go-only branch starts from that slice to reuse the pinned evaluation
 harness; it is **not** an extension of the IR schema and changes no default
 search or ranking. Do not edit the Engram frozen source/manifest/truth/qrels,

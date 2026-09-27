@@ -1,6 +1,7 @@
 # Go-only retrieval timebox: no ranking pass
 
-**Decision:** Stop this candidate-generation/source-lexical-rerank attempt.
+**Decision ([PR #21](https://github.com/jordigilh/zvec-grep/pull/21)):**
+Stop this candidate-generation/source-lexical-rerank attempt.
 It does **not** pass the precommitted four-metric no-regression gate against
 the existing Sense-enhanced syntax baseline. There is real candidate headroom,
 but merely overfetching (and changing the engine's fusion cutoff) loses MRR,
