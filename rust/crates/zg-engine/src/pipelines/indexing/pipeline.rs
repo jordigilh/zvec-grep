@@ -1110,15 +1110,30 @@ fn lexical_text(content: &Content, metadata: Option<&EntityMetadata>) -> String 
     output
 }
 
-/// Match the Node baseline's Unicode identifier tokens, ASCII camel/acronym
-/// boundaries and stable first-occurrence deduplication for FTS only.
+/// Apply the Node baseline's NFKC normalization, identifier tokenization,
+/// ASCII camel/acronym boundaries and first-occurrence deduplication for FTS.
 fn identifier_parts(value: &str) -> Vec<String> {
+    use unicode_general_category::{GeneralCategory, get_general_category};
+    use unicode_normalization::UnicodeNormalization;
+
+    let normalized = value.nfkc().collect::<String>();
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut previous = None;
-    let mut chars = value.chars().peekable();
+    let mut chars = normalized.chars().peekable();
     while let Some(ch) = chars.next() {
-        if !ch.is_alphanumeric() {
+        // JavaScript /[\p{L}\p{N}]+/u excludes alphabetic combining marks.
+        if !matches!(
+            get_general_category(ch),
+            GeneralCategory::UppercaseLetter
+                | GeneralCategory::LowercaseLetter
+                | GeneralCategory::TitlecaseLetter
+                | GeneralCategory::ModifierLetter
+                | GeneralCategory::OtherLetter
+                | GeneralCategory::DecimalNumber
+                | GeneralCategory::LetterNumber
+                | GeneralCategory::OtherNumber
+        ) {
             if !current.is_empty() {
                 let part = current.to_lowercase();
                 if !parts.contains(&part) {
@@ -2319,6 +2334,10 @@ mod tests {
                 "PaymentLink::listWorkflows",
                 vec!["payment", "link", "list", "workflows"],
             ),
+            ("ＦｏｏＢａｒ::Reconcile", vec!["foo", "bar", "reconcile"]),
+            ("ﬂowID::Save", vec!["flow", "id", "save"]),
+            ("Ⅳalue::Next", vec!["i", "value", "next"]),
+            ("AͅB", vec!["a", "b"]),
         ] {
             assert_eq!(identifier_parts(input), expected, "{input}");
         }
@@ -2350,6 +2369,22 @@ mod tests {
         assert!(vector.ends_with("return w.ids[id]"));
 
         assert_eq!(lexical_text(&body, None), "return w.ids[id]\n");
+    }
+
+    #[test]
+    fn markdown_lexical_projection_does_not_add_code_name_parts() {
+        use crate::domain::MarkdownMetadata;
+
+        let body = Content::Text("The actual source text".into());
+        let metadata = EntityMetadata::Markdown(MarkdownMetadata {
+            heading: Some("WorkflowDiscovery".into()),
+            level: Some(2),
+            scope: Some("Guide".into()),
+        });
+        assert_eq!(
+            lexical_text(&body, Some(&metadata)),
+            "WorkflowDiscovery\nGuide\nThe actual source text\n"
+        );
     }
 
     #[test]
