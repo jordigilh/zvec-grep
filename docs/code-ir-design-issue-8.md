@@ -9,13 +9,49 @@ Allow a later, opt-in SCIP import to enrich this IR with independently verified
 semantic definitions/references/implementations; SCIP is a producer input, not
 the IR's source or snapshot authority.
 
-**Confidence:** 92% that this is a feasible *contract and staged implementation
-plan* for the four investigated languages, based on the existing extractors,
-codegraph, and paired evaluations below. This is a design judgment, **not** a
+### Clarification after the frozen v2 retrieval gate (2026-09-26)
+
+The compiler analogy describes the **source-truth pipeline**, not an assertion
+that a compiler IR is itself a superior natural-language search index:
+
+```text
+original source bytes -> syntax IR -> optional verified bindings
+                           |                      |
+                           +-> retrieval views -> candidate discovery
+                           +-> bounded relationship lookup after grounding
+candidate + snapshot -> source verification -> bounded evidence and citation
+```
+
+Parsing can attest the identity, kind, range and containment of a declaration;
+type-resolved references require separate evidence. Neither fact answers which
+unit should rank in the top ten for an ambiguous question. Declarations,
+methods, classes, files and call sites can all be valid *different* retrieval
+views of the same source. Search text, FTS/vector representation, candidate
+selection and fusion remain independently versioned, measured consumers of the
+IR. Preserve the existing syntax-only search control/fallback until a new view
+passes per-language and real-repository quality gates; that is an experimental
+constraint, **not** a permanent architectural ban on IR-first discovery.
+
+The [actual v2 paired frozen qeval](./code-ir-v2-frozen-qeval-results-20260926.md)
+found Go/Python aggregate regressions and Rust/TypeScript aggregate gains with
+query losses. Current Go extraction matches 38/38 independently inventoried
+byte-span/kind/token sites, including an answer that dropped out of @10; in
+Python a grade-0 hit crosses the hybrid fusion corroboration boundary despite
+becoming *worse* on one route. These show that correct source ingestion and
+answer ranking are separate gates. The scorer also credits overlapping class/
+method source lines: independent fine-grained labels and real-repository
+judgments remain necessary. These observations refine the retrieval hypothesis;
+they do **not** refute the evidence-IR contract or make SCIP a prerequisite.
+
+**Original design confidence (before the 2026-09-26 gate):** 92% that this is a
+feasible *contract and staged implementation plan* for the four investigated
+languages, based on the existing extractors, codegraph, and paired evaluations
+below. This is a design judgment, **not** a
 measured probability of retrieval improvement or a claim of production-ready
 extraction coverage. Neither four-language conformance nor improved ranking has
-yet been demonstrated for this IR. The optional SCIP importer is a proposed
-enrichment path; its accuracy and operational value have not been measured.
+yet been demonstrated for this IR **at the time of this proposal**. The optional
+SCIP importer is a proposed enrichment path; its accuracy and operational value
+have not been measured.
 
 ## Verified constraints
 

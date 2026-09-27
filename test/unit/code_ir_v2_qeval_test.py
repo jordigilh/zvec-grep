@@ -25,6 +25,43 @@ def metric_row(query_id, ndcg):
 
 
 class QevalContractTest(unittest.TestCase):
+    def test_factorial_arms_require_exact_names_and_frozen_query_order(self):
+        ids = [f"q{i}" for i in range(8)]
+        names = runner.FACTORIAL_ARMS
+        arms = [
+            {"name": name, "queries": [{"id": query_id, "query": query_id} for query_id in ids]}
+            for name in names
+        ]
+        runner.validate_arms(arms, ids, ids, expected_names=names)
+        for altered in (
+            arms[:-1], [*arms[:-1], arms[-2]],
+            [*arms[:-1], {**arms[-1], "queries": list(reversed(arms[-1]["queries"]))}],
+        ):
+            with self.assertRaises(ValueError):
+                runner.validate_arms(altered, ids, ids, expected_names=names)
+
+    def test_factorial_comparisons_track_both_main_effects_without_changing_baseline(self):
+        ids = [f"q{i}" for i in range(8)]
+        names = runner.FACTORIAL_ARMS
+        values = [0.5, 0.45, 0.48, 0.52, 0.55]
+        runs = []
+        for name, value in zip(names, values):
+            per_query = [metric_row(query_id, value) for query_id in ids]
+            runs.append({
+                "backend": name, "per_query": per_query,
+                "overall": {
+                    key: sum(row[key] for row in per_query) / 8
+                    for key in per_query[0] if key != "id"
+                },
+            })
+        result = runner.compare_ablation_metrics({"runs": runs}, "go")
+        self.assertAlmostEqual(result["vs_control"]["code-ir-v2"]["aggregate_deltas"]["ndcg@10"], 0.05)
+        self.assertAlmostEqual(result["factor_effects"]["policy_with_v1_text"]["aggregate_deltas"]["ndcg@10"], 0.03)
+        self.assertAlmostEqual(result["factor_effects"]["metadata_with_v1_units"]["aggregate_deltas"]["ndcg@10"], 0.07)
+        self.assertAlmostEqual(result["factor_effects"]["metadata_with_v2_units"]["aggregate_deltas"]["ndcg@10"], 0.07)
+        self.assertAlmostEqual(result["factor_effects"]["policy_with_v2_text"]["aggregate_deltas"]["ndcg@10"], 0.03)
+        self.assertEqual(len(result["factor_effects"]["policy_with_v1_text"]["per_query_deltas"]), 8)
+
     def test_arms_reject_missing_duplicate_or_reordered_queries(self):
         ids = [f"q{i}" for i in range(8)]
         arms = [

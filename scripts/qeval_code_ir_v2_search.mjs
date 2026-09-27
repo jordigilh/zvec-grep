@@ -1,10 +1,12 @@
 // Frozen, syntax-only versus published/read-validated v2 IR projection.
+// Optional factorial arm replays v1 and v2 sidecars with shared source windows.
 // Evaluation adapter only; does not change the application's default index.
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { buildProjectionAblations } from "./code_ir_projection_ablation.mjs";
 
 function option(name) {
   const index = process.argv.indexOf(name);
@@ -20,6 +22,7 @@ const sidecarRoot = resolve(option("--sidecar-root"));
 const indexRoot = resolve(option("--index-root"));
 const modelCache = resolve(option("--model-cache"));
 const modelIdentity = option("--model");
+const ablation = process.argv.includes("--ablation");
 const outputPath = resolve(option("--output"));
 const runtimeRoot = resolve(import.meta.dirname, "..");
 const dist = join(runtimeRoot, "dist/engine");
@@ -75,6 +78,22 @@ const sourceDigest = digestSourceSet(files);
 if (sourceDigest !== qrels.source.snapshot_sha256)
   throw new Error("qeval source digest differs from frozen qrels");
 
+let v1;
+if (ablation) {
+  const v1Manifest = await publishIR(
+    sidecarRoot,
+    manifest.source.repository,
+    files,
+    "projection",
+    modelIdentity,
+  );
+  v1 = await readPublishedIR(sidecarRoot);
+  if (
+    v1.manifest.ir_snapshot_id !== v1Manifest.ir_snapshot_id ||
+    v1.projection?.version !== 1
+  )
+    throw new Error("ablation v1 sidecar readback failed");
+}
 const publishedManifest = await publishIR(
   sidecarRoot,
   manifest.source.repository,
@@ -104,6 +123,11 @@ const irFileById = new Map(snapshot.files.map((file) => [file.file_id, file]));
 const bytesByPath = new Map(
   files.map((file) => [file.relative_path, Buffer.from(file.bytes)]),
 );
+const views = ablation
+  ? buildProjectionAblations(snapshot, v1.projection, projection)
+  : [{ name: "code-ir-v2", records: projection.records }];
+if (v1 && JSON.stringify(v1.snapshot) !== JSON.stringify(snapshot))
+  throw new Error("ablation changed canonical IR snapshot");
 
 zvec.ZVecInitialize({ logLevel: zvec.ZVecLogLevel.WARN });
 const model = createEmbeddingModel(modelIdentity, {
@@ -161,12 +185,14 @@ try {
     });
   }
   arms.push({ name: "syntax-only", queries: baselineQueries });
-  arms.push(
-    await runProjectionArm({
-      records: projection.records,
-      storagePath: join(indexRoot, "code-ir-v2"),
-    }),
-  );
+  for (const view of views)
+    arms.push(
+      await runProjectionArm({
+        name: view.name,
+        records: view.records,
+        storagePath: join(indexRoot, view.name),
+      }),
+    );
 } finally {
   await baselineService?.close();
   await model.dispose();
@@ -202,6 +228,17 @@ const provenance = {
       projection.records.map((record) => record.unit_id),
     ).size,
   },
+  ...(ablation
+    ? {
+        ablation: {
+          arms: views.map((view) => ({
+            name: view.name,
+            records: view.records.length,
+            units: new Set(view.records.map((record) => record.unit_id)).size,
+          })),
+        },
+      }
+    : {}),
   scip: null,
 };
 await mkdir(dirname(outputPath), { recursive: true });
@@ -214,7 +251,7 @@ await writeFile(
   ) + "\n",
 );
 
-async function runProjectionArm({ records, storagePath }) {
+async function runProjectionArm({ name, records, storagePath }) {
   const collection = await createProjectionStorage(storagePath);
   try {
     const filesById = new Map();
@@ -369,8 +406,8 @@ async function runProjectionArm({ records, storagePath }) {
         },
         {
           workspaceIndex: {
-            id: "qeval-code-ir-v2",
-            name: "code-ir-v2",
+            id: `qeval-${name}`,
+            name,
             path: storagePath,
             rootPaths: [{ absolutePath: candidateRoot, recursive: true }],
             embedding: {
@@ -404,7 +441,7 @@ async function runProjectionArm({ records, storagePath }) {
       });
     }
     return {
-      name: "code-ir-v2",
+      name,
       queries,
       records: records.length,
       units: new Set(records.map((record) => record.unit_id)).size,
