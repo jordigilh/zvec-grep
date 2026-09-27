@@ -1,6 +1,7 @@
 # Second controlled Code IR suite: discriminating retrieval
 
-**Review slice:** `spike/code-ir-blind-synthetic-v2`, child of [PR
+**Review slice:** [PR #20](https://github.com/jordigilh/zvec-grep/pull/20),
+branch `spike/code-ir-blind-synthetic-v2`, child of [PR
 #19](https://github.com/jordigilh/zvec-grep/pull/19). This tests the *same*
 disk-backed ZVec hybrid discovery and the label-blind, source-verified IR
 follow-up; it does not wire an application API or change default ranking.

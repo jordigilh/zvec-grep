@@ -1,6 +1,7 @@
 # Controlled v2: prospective, discriminating source retrieval
 
-**Decision:** The local hybrid vector+FTS → unit ID → source-verified IR
+**Decision ([PR #20](https://github.com/jordigilh/zvec-grep/pull/20)):**
+The local hybrid vector+FTS → unit ID → source-verified IR
 follow-up works as a controlled, opt-in evaluation path, but the four lanes do
 **not** justify replacing or reranking default syntax search. The new
 [precommitted plan](./code-ir-blind-synthetic-v2-plan.md) was followed in order:
