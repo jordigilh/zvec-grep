@@ -11,31 +11,48 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"hash"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/packages"
 )
 
 const (
 	callFactsSchema  = "zvec-grep.go-callfacts"
-	callFactsVersion = 1
-	callFactsFile    = "go-callfacts-v1.json"
+	callFactsVersion = 2
+	callFactsFile    = "go-callfacts-v2.json"
 )
 
 type CallFactsArtifact struct {
-	Schema  string       `json:"schema"`
-	Version int          `json:"version"`
-	Files   []SourceFile `json:"files"`
-	Calls   []CallFact   `json:"calls"`
+	Schema        string            `json:"schema"`
+	Version       int               `json:"version"`
+	Context       GoAnalysisContext `json:"context"`
+	ContextSHA256 string            `json:"context_sha256"`
+	Files         []SourceFile      `json:"files"`
+	Calls         []CallFact        `json:"calls"`
 }
 
 type SourceFile struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
+}
+
+// GoAnalysisContext records the effective build configuration and the
+// in-workspace module/workspace files used to generate these facts. Facts are
+// scoped to this recorded context; consumers without Go do not infer that a
+// different active Go environment is equivalent.
+type GoAnalysisContext struct {
+	GoVersion    string            `json:"go_version"`
+	GoMod        string            `json:"go_mod"`
+	GoWork       string            `json:"go_work"`
+	Settings     map[string]string `json:"settings"`
+	ContextFiles []SourceFile      `json:"context_files"`
 }
 
 type CallFact struct {
@@ -55,7 +72,7 @@ type CallFact struct {
 
 func main() {
 	rootFlag := flag.String("root", "", "Go workspace root")
-	writeSidecar := flag.Bool("write-sidecar", false, "write .zvec-grep/go-callfacts-v1.json atomically")
+	writeSidecar := flag.Bool("write-sidecar", false, "write .zvec-grep/go-callfacts-v2.json atomically")
 	flag.Parse()
 	if *rootFlag == "" {
 		fatalf("--root is required")
@@ -77,7 +94,7 @@ func main() {
 		if err := writeArtifactAtomically(path, artifact); err != nil {
 			fatalf("write Go call-facts sidecar: %v", err)
 		}
-		fmt.Fprintf(os.Stderr, "Go call facts: %s (%d Go files, %d call sites)\n", path, len(artifact.Files), len(artifact.Calls))
+		fmt.Fprintf(os.Stderr, "Go call facts: %s (%d Go files, %d call sites; context %s)\n", path, len(artifact.Files), len(artifact.Calls), artifact.ContextSHA256)
 		return
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(artifact); err != nil {
@@ -86,15 +103,29 @@ func main() {
 }
 
 func buildCallFacts(root string) (CallFactsArtifact, error) {
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return CallFactsArtifact{}, fmt.Errorf("resolve Go workspace root: %w", err)
+	}
+	root, err = filepath.EvalSymlinks(absoluteRoot)
+	if err != nil {
+		return CallFactsArtifact{}, fmt.Errorf("resolve Go workspace root symlinks: %w", err)
+	}
 	files, contents, err := collectSourceFiles(root)
 	if err != nil {
 		return CallFactsArtifact{}, err
 	}
+	context, err := captureGoAnalysisContext(root, len(files) > 0)
+	if err != nil {
+		return CallFactsArtifact{}, err
+	}
 	artifact := CallFactsArtifact{
-		Schema:  callFactsSchema,
-		Version: callFactsVersion,
-		Files:   files,
-		Calls:   []CallFact{},
+		Schema:        callFactsSchema,
+		Version:       callFactsVersion,
+		Context:       context,
+		ContextSHA256: goAnalysisContextSHA256(context),
+		Files:         files,
+		Calls:         []CallFact{},
 	}
 	if len(files) == 0 {
 		return artifact, nil
@@ -103,6 +134,9 @@ func buildCallFacts(root string) (CallFactsArtifact, error) {
 	mode := packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
 		packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo |
 		packages.NeedImports | packages.NeedDeps
+	if os.Getenv("GOPACKAGESDRIVER") != "" {
+		return CallFactsArtifact{}, fmt.Errorf("GOPACKAGESDRIVER is unsupported; unset it to use the standard go list driver")
+	}
 	loaded, err := packages.Load(&packages.Config{Mode: mode, Dir: root}, "./...")
 	if err != nil {
 		return CallFactsArtifact{}, fmt.Errorf("load Go workspace packages: %w", err)
@@ -128,6 +162,11 @@ func buildCallFacts(root string) (CallFactsArtifact, error) {
 		visit(pkg)
 		if pkg.IllTyped || len(pkg.Errors) > 0 {
 			return CallFactsArtifact{}, packageTypeError(pkg)
+		}
+	}
+	for _, pkg := range packageByPath {
+		if packageUsesCgo(pkg.Syntax) {
+			return CallFactsArtifact{}, fmt.Errorf("cgo-dependent packages are unsupported for Go call-facts generation: %s", pkg.PkgPath)
 		}
 	}
 
@@ -168,6 +207,13 @@ func buildCallFacts(root string) (CallFactsArtifact, error) {
 	if err := verifySourceFiles(root, files); err != nil {
 		return CallFactsArtifact{}, err
 	}
+	currentContext, err := captureGoAnalysisContext(root, true)
+	if err != nil {
+		return CallFactsArtifact{}, err
+	}
+	if goAnalysisContextSHA256(currentContext) != artifact.ContextSHA256 {
+		return CallFactsArtifact{}, fmt.Errorf("Go analysis context changed while call facts were generated")
+	}
 	sort.Slice(artifact.Calls, func(i, j int) bool {
 		left, right := artifact.Calls[i], artifact.Calls[j]
 		if left.Path != right.Path {
@@ -179,6 +225,258 @@ func buildCallFacts(root string) (CallFactsArtifact, error) {
 		return left.Caller < right.Caller
 	})
 	return artifact, nil
+}
+
+var goContextSettingNames = []string{
+	"GO111MODULE",
+	"GO386",
+	"GOAMD64",
+	"GOARCH",
+	"GOARM",
+	"GOARM64",
+	"CGO_ENABLED",
+	"GOEXPERIMENT",
+	"GOFLAGS",
+	"GOMIPS",
+	"GOMIPS64",
+	"GOOS",
+	"GOPPC64",
+	"GORISCV64",
+	"GOTOOLCHAIN",
+	"GOWASM",
+}
+
+func captureGoAnalysisContext(root string, requireModule bool) (GoAnalysisContext, error) {
+	command := exec.Command("go", "env", "-json")
+	command.Dir = root
+	output, err := command.Output()
+	if err != nil {
+		return GoAnalysisContext{}, fmt.Errorf("capture effective Go environment: %w", err)
+	}
+	var environment map[string]string
+	if err := json.Unmarshal(output, &environment); err != nil {
+		return GoAnalysisContext{}, fmt.Errorf("decode effective Go environment: %w", err)
+	}
+	if driver := os.Getenv("GOPACKAGESDRIVER"); driver != "" {
+		return GoAnalysisContext{}, fmt.Errorf("GOPACKAGESDRIVER is unsupported; unset it to use the standard go list driver")
+	}
+	if err := validateGoFlags(environment["GOFLAGS"]); err != nil {
+		return GoAnalysisContext{}, err
+	}
+
+	contextFiles, err := collectGoContextFiles(root)
+	if err != nil {
+		return GoAnalysisContext{}, err
+	}
+	context := GoAnalysisContext{
+		GoVersion:    environment["GOVERSION"],
+		Settings:     make(map[string]string, len(goContextSettingNames)),
+		ContextFiles: contextFiles,
+	}
+	for _, name := range goContextSettingNames {
+		context.Settings[name] = environment[name]
+	}
+	if context.GoVersion == "" || context.Settings["GOOS"] == "" || context.Settings["GOARCH"] == "" {
+		return GoAnalysisContext{}, fmt.Errorf("Go environment is missing GOVERSION, GOOS, or GOARCH")
+	}
+
+	goMod := environment["GOMOD"]
+	if goMod != "" && goMod != os.DevNull && !strings.EqualFold(goMod, "NUL") {
+		context.GoMod, err = contextPathWithinRoot(root, goMod, "go.mod")
+		if err != nil {
+			return GoAnalysisContext{}, err
+		}
+	} else if requireModule {
+		return GoAnalysisContext{}, fmt.Errorf("Go call facts require a go.mod within the workspace root")
+	}
+
+	goWork := environment["GOWORK"]
+	switch goWork {
+	case "", "off":
+		context.GoWork = goWork
+	default:
+		context.GoWork, err = contextPathWithinRoot(root, goWork, "go.work")
+		if err != nil {
+			return GoAnalysisContext{}, err
+		}
+	}
+
+	if context.GoMod != "" && !hasContextFile(context.ContextFiles, context.GoMod) {
+		return GoAnalysisContext{}, fmt.Errorf("active module file %s is not in the Go context input set", context.GoMod)
+	}
+	if context.GoWork != "" && context.GoWork != "off" && !hasContextFile(context.ContextFiles, context.GoWork) {
+		return GoAnalysisContext{}, fmt.Errorf("active workspace file %s is not in the Go context input set", context.GoWork)
+	}
+	if err := validateLocalModuleInputs(root, context.ContextFiles); err != nil {
+		return GoAnalysisContext{}, err
+	}
+	return context, nil
+}
+
+func contextPathWithinRoot(root, path, kind string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve active %s %s: %w", kind, path, err)
+	}
+	canonical, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", fmt.Errorf("resolve active %s %s: %w", kind, path, err)
+	}
+	relative := relativeToRoot(root, canonical)
+	if relative == "" {
+		return "", fmt.Errorf("active %s is outside the Go workspace root: %s", kind, path)
+	}
+	return relative, nil
+}
+
+func collectGoContextFiles(root string) ([]SourceFile, error) {
+	var files []SourceFile
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != root && (entry.Name() == ".git" || entry.Name() == ".zvec-grep" || entry.Name() == "node_modules") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Type()&fs.ModeSymlink != 0 || !entry.Type().IsRegular() {
+			return nil
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if !isGoContextInputPath(relative) {
+			return nil
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		digest := sha256.Sum256(contents)
+		files = append(files, SourceFile{
+			Path:   filepath.ToSlash(relative),
+			SHA256: hex.EncodeToString(digest[:]),
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scan Go module/workspace inputs: %w", err)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	return files, nil
+}
+
+func isGoContextInputPath(path string) bool {
+	switch filepath.Base(path) {
+	case "go.mod", "go.sum", "go.work", "go.work.sum":
+		return true
+	case "modules.txt":
+		return filepath.Base(filepath.Dir(path)) == "vendor"
+	default:
+		return false
+	}
+}
+
+func validateLocalModuleInputs(root string, files []SourceFile) error {
+	for _, file := range files {
+		path := filepath.Join(root, filepath.FromSlash(file.Path))
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read Go context input %s: %w", file.Path, err)
+		}
+		switch filepath.Base(path) {
+		case "go.mod":
+			parsed, err := modfile.Parse(path, contents, nil)
+			if err != nil {
+				return fmt.Errorf("parse Go module input %s: %w", file.Path, err)
+			}
+			for _, replacement := range parsed.Replace {
+				if replacement.New.Version == "" {
+					if err := validateLocalPath(root, filepath.Dir(path), replacement.New.Path, "local module replacement"); err != nil {
+						return err
+					}
+				}
+			}
+		case "go.work":
+			parsed, err := modfile.ParseWork(path, contents, nil)
+			if err != nil {
+				return fmt.Errorf("parse Go workspace input %s: %w", file.Path, err)
+			}
+			for _, use := range parsed.Use {
+				if err := validateLocalPath(root, filepath.Dir(path), use.Path, "workspace module"); err != nil {
+					return err
+				}
+			}
+			for _, replacement := range parsed.Replace {
+				if replacement.New.Version == "" {
+					if err := validateLocalPath(root, filepath.Dir(path), replacement.New.Path, "workspace replacement"); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateLocalPath(root, base, path, description string) error {
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(base, path)
+	}
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return fmt.Errorf("resolve %s %s: %w", description, path, err)
+	}
+	if !pathWithinRoot(root, canonical) {
+		return fmt.Errorf("%s is outside the Go workspace root: %s", description, path)
+	}
+	return nil
+}
+
+func pathWithinRoot(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+func hasContextFile(files []SourceFile, path string) bool {
+	for _, file := range files {
+		if file.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+func goAnalysisContextSHA256(context GoAnalysisContext) string {
+	hasher := sha256.New()
+	writeContextPart(hasher, "zvec-grep.go-callfacts-context-v1")
+	writeContextPart(hasher, context.GoVersion)
+	writeContextPart(hasher, context.GoMod)
+	writeContextPart(hasher, context.GoWork)
+	settingNames := make([]string, 0, len(context.Settings))
+	for name := range context.Settings {
+		settingNames = append(settingNames, name)
+	}
+	sort.Strings(settingNames)
+	for _, name := range settingNames {
+		writeContextPart(hasher, name)
+		writeContextPart(hasher, context.Settings[name])
+	}
+	contextFiles := append([]SourceFile(nil), context.ContextFiles...)
+	sort.Slice(contextFiles, func(i, j int) bool { return contextFiles[i].Path < contextFiles[j].Path })
+	for _, file := range contextFiles {
+		writeContextPart(hasher, file.Path)
+		writeContextPart(hasher, file.SHA256)
+	}
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func writeContextPart(hasher hash.Hash, value string) {
+	_, _ = hasher.Write([]byte(value))
+	_, _ = hasher.Write([]byte{0})
 }
 
 func verifySourceFiles(root string, files []SourceFile) error {
@@ -201,6 +499,30 @@ func packageTypeError(pkg *packages.Package) error {
 		return fmt.Errorf("package %s is not fully type checked", pkg.PkgPath)
 	}
 	return fmt.Errorf("package %s: %s", pkg.PkgPath, pkg.Errors[0])
+}
+
+func packageUsesCgo(syntax []*ast.File) bool {
+	for _, file := range syntax {
+		for _, importSpec := range file.Imports {
+			if importSpec.Path != nil && importSpec.Path.Value == `"C"` {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validateGoFlags(flags string) error {
+	unsupported := []string{"-overlay", "-modfile", "-toolexec", "-pkgdir"}
+	for _, token := range strings.Fields(flags) {
+		token = strings.Trim(token, `"'`)
+		for _, flag := range unsupported {
+			if token == flag || strings.HasPrefix(token, flag+"=") {
+				return fmt.Errorf("GOFLAGS option %s is unsupported for source/context-attested call facts", flag)
+			}
+		}
+	}
+	return nil
 }
 
 func collectSourceFiles(root string) ([]SourceFile, map[string][]byte, error) {
