@@ -598,7 +598,7 @@ impl ZvecGrepMcpServer {
 
     #[tool(
         name = "zvec_grep_callgraph_blast_radius",
-        description = "Find direct and transitive callers of a function in the selected live checkout. Returns resolved callers separately from possible callers reached through ambiguous candidates. An explicitly generated Go go/types sidecar is used only when its source hashes match; otherwise the syntax-derived graph is used. Refreshes from current source contents before querying, including uncommitted changes.",
+        description = "Find direct and transitive callers of a function in the selected live checkout. Returns resolved callers separately from possible callers reached through ambiguous candidates. An explicitly generated Go go/types sidecar is used only when source and recorded module/workspace context inputs match; the result includes its generation-context fingerprint. Facts are scoped to the recorded Go environment, so regenerate after changing Go toolchain, target, flags, workspace, or dependency configuration. Otherwise uses the syntax-derived graph. Refreshes from current source contents before querying, including uncommitted changes.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CallGraphBlastRadius>(),
         annotations(
             title = "Find code callers",
@@ -2240,12 +2240,12 @@ fn truncate_line(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, sync::Arc};
+    use std::{collections::BTreeMap, fs, path::PathBuf, sync::Arc};
 
     use rmcp::ServerHandler;
     use rmcp::model::ContentBlock;
     use tempfile::tempdir;
-    use zg_engine::{EngineError, ZvecGrep};
+    use zg_engine::{EngineError, ZvecGrep, codegraph::GoCallFactsContext};
 
     use super::{
         AGENT_TOOL_NAME, AGENT_TOOL_NAMES, FULL_TOOL_NAMES, FreshnessInput, IndexInput,
@@ -2656,42 +2656,7 @@ mod tests {
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../zg-codegraph/tests/fixtures/go-blast-radius");
         let workspace = tempdir().expect("Go fixture workspace");
-        for relative in ["go.mod", "app/calls.go", "dep/dep.go"] {
-            let source = fixture.join(relative);
-            let target = workspace.path().join(relative);
-            fs::create_dir_all(target.parent().expect("fixture parent"))
-                .expect("fixture directory");
-            fs::copy(source, target).expect("copy Go fixture source");
-        }
-
-        let truth: serde_json::Value =
-            serde_json::from_slice(&fs::read(fixture.join("truth.json")).expect("fixture truth"))
-                .expect("decode fixture truth");
-        let files = truth["source_sha256"]
-            .as_object()
-            .expect("source digests")
-            .iter()
-            .filter(|(path, _)| {
-                std::path::Path::new(path)
-                    .extension()
-                    .is_some_and(|extension| extension == "go")
-            })
-            .map(|(path, digest)| serde_json::json!({"path": path, "sha256": digest}))
-            .collect::<Vec<_>>();
-        let sidecar = serde_json::json!({
-            "schema": "zvec-grep.go-callfacts",
-            "version": 1,
-            "files": files,
-            "calls": truth["calls"],
-        });
-        let sidecar_path = workspace.path().join(".zvec-grep/go-callfacts-v1.json");
-        fs::create_dir_all(sidecar_path.parent().expect("sidecar parent"))
-            .expect("sidecar directory");
-        fs::write(
-            sidecar_path,
-            serde_json::to_vec_pretty(&sidecar).expect("serialize sidecar"),
-        )
-        .expect("write Go facts");
+        let context_sha256 = write_mcp_fixture_callfacts(&fixture, workspace.path());
 
         let server =
             ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
@@ -2712,6 +2677,7 @@ mod tests {
                 ["app/calls.go::Deep"]
             ])
         );
+        assert_eq!(structured["go_callfacts_context_sha256"], context_sha256);
 
         let possible = server
             .zvec_grep_callgraph_blast_radius(super::Parameters(super::CallGraphBlastRadiusInput {
@@ -2732,7 +2698,7 @@ mod tests {
             ])
         );
 
-        fs::remove_file(workspace.path().join(".zvec-grep/go-callfacts-v1.json"))
+        fs::remove_file(workspace.path().join(".zvec-grep/go-callfacts-v2.json"))
             .expect("remove opt-in sidecar");
         let fallback = server
             .zvec_grep_callgraph_blast_radius(super::Parameters(super::CallGraphBlastRadiusInput {
@@ -2749,6 +2715,105 @@ mod tests {
             serde_json::json!([["app/calls.go::InterfaceCaller"]])
         );
         assert_eq!(fallback["possible_callers_by_depth"], serde_json::json!([]));
+    }
+
+    fn write_mcp_fixture_callfacts(fixture: &std::path::Path, root: &std::path::Path) -> String {
+        for relative in ["go.mod", "app/calls.go", "dep/dep.go"] {
+            let source = fixture.join(relative);
+            let target = root.join(relative);
+            fs::create_dir_all(target.parent().expect("fixture parent"))
+                .expect("fixture directory");
+            fs::copy(source, target).expect("copy Go fixture source");
+        }
+
+        let truth: serde_json::Value =
+            serde_json::from_slice(&fs::read(fixture.join("truth.json")).expect("fixture truth"))
+                .expect("decode fixture truth");
+        let files = truth["source_sha256"]
+            .as_object()
+            .expect("source digests")
+            .iter()
+            .filter(|(path, _)| {
+                std::path::Path::new(path)
+                    .extension()
+                    .is_some_and(|extension| extension == "go")
+            })
+            .map(|(path, digest)| serde_json::json!({"path": path, "sha256": digest}))
+            .collect::<Vec<_>>();
+        let context_files = truth["source_sha256"]
+            .as_object()
+            .expect("source digests")
+            .iter()
+            .filter(|(path, _)| {
+                matches!(
+                    std::path::Path::new(path)
+                        .file_name()
+                        .and_then(|name| name.to_str()),
+                    Some("go.mod" | "go.sum" | "go.work" | "go.work.sum")
+                )
+            })
+            .map(|(path, digest)| zg_engine::codegraph::GoCallFactsFile {
+                path: path.clone(),
+                sha256: digest.as_str().expect("context digest").to_owned(),
+            })
+            .collect();
+        let context = GoCallFactsContext {
+            go_version: "go1.26.0".to_owned(),
+            go_mod: "go.mod".to_owned(),
+            go_work: String::new(),
+            settings: fixture_context_settings(),
+            context_files,
+        };
+        let context_sha256 = context.fingerprint();
+        let sidecar = serde_json::json!({
+            "schema": "zvec-grep.go-callfacts",
+            "version": 2,
+            "context": context,
+            "context_sha256": context_sha256.clone(),
+            "files": files,
+            "calls": truth["calls"],
+        });
+        let sidecar_path = root.join(".zvec-grep/go-callfacts-v2.json");
+        fs::create_dir_all(sidecar_path.parent().expect("sidecar parent"))
+            .expect("sidecar directory");
+        fs::write(
+            sidecar_path,
+            serde_json::to_vec_pretty(&sidecar).expect("serialize sidecar"),
+        )
+        .expect("write Go facts");
+        context_sha256
+    }
+
+    fn fixture_context_settings() -> BTreeMap<String, String> {
+        [
+            "GO111MODULE",
+            "GO386",
+            "GOAMD64",
+            "GOARCH",
+            "GOARM",
+            "GOARM64",
+            "CGO_ENABLED",
+            "GOEXPERIMENT",
+            "GOFLAGS",
+            "GOMIPS",
+            "GOMIPS64",
+            "GOOS",
+            "GOPPC64",
+            "GORISCV64",
+            "GOTOOLCHAIN",
+            "GOWASM",
+        ]
+        .into_iter()
+        .map(|name| {
+            let value = match name {
+                "GOOS" => "darwin",
+                "GOARCH" => "arm64",
+                "CGO_ENABLED" => "1",
+                _ => "",
+            };
+            (name.to_owned(), value.to_owned())
+        })
+        .collect()
     }
 
     #[test]

@@ -20,6 +20,9 @@ use crate::{CodeGraphArtifact, CodeGraphError, CodeGraphNode, CodeGraphResult};
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct CallGraphBlastRadius {
     pub function: String,
+    /// Fingerprint of the Go analysis context when Go call facts were applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go_callfacts_context_sha256: Option<String>,
     pub callers_by_depth: Vec<Vec<String>>,
     /// Possible callers reached through an ambiguous edge. These are not
     /// included in `callers_by_depth`, which contains only edges the artifact
@@ -35,11 +38,15 @@ pub struct CallGraphPath {
     pub source: String,
     pub target: String,
     pub path: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go_callfacts_context_sha256: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 pub struct CallGraphCluster {
     pub function: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go_callfacts_context_sha256: Option<String>,
     pub cluster_id: usize,
     pub community_count: usize,
     pub quality: f64,
@@ -48,6 +55,8 @@ pub struct CallGraphCluster {
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 pub struct CallGraphClustering {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go_callfacts_context_sha256: Option<String>,
     pub community_count: usize,
     pub quality: f64,
     pub communities: Vec<Vec<String>>,
@@ -83,6 +92,7 @@ pub struct CallGraphIndex {
     by_qualified_name: HashMap<String, Vec<NodeIndex>>,
     by_name: HashMap<String, Vec<NodeIndex>>,
     manifest_key: String,
+    go_callfacts_context_sha256: Option<String>,
     total_calls: usize,
     unresolved_calls: usize,
     ambiguous_calls: usize,
@@ -189,6 +199,7 @@ impl CallGraphIndex {
             by_qualified_name,
             by_name,
             manifest_key: artifact.manifest_key.clone(),
+            go_callfacts_context_sha256: artifact.go_callfacts_context_sha256.clone(),
             total_calls,
             unresolved_calls,
             ambiguous_calls,
@@ -287,6 +298,7 @@ impl CallGraphIndex {
 
         Ok(CallGraphBlastRadius {
             function: self.display_for_index(target),
+            go_callfacts_context_sha256: self.go_callfacts_context_sha256.clone(),
             callers_by_depth,
             possible_callers_by_depth,
             unresolved_calls: self.unresolved_calls,
@@ -323,6 +335,7 @@ impl CallGraphIndex {
             source: self.display_for_index(source_index),
             target: self.display_for_index(target_index),
             path,
+            go_callfacts_context_sha256: self.go_callfacts_context_sha256.clone(),
         })
     }
 
@@ -347,6 +360,7 @@ impl CallGraphIndex {
         members.sort();
         Ok(CallGraphCluster {
             function: self.display_for_index(function_index),
+            go_callfacts_context_sha256: self.go_callfacts_context_sha256.clone(),
             cluster_id,
             community_count: partition.community_count,
             quality: partition.quality,
@@ -384,6 +398,7 @@ impl CallGraphIndex {
             .collect::<Vec<_>>();
         assignments.sort_by(|left, right| left.node_id.cmp(&right.node_id));
         Ok(CallGraphClustering {
+            go_callfacts_context_sha256: self.go_callfacts_context_sha256.clone(),
             community_count: partition.community_count,
             quality: partition.quality,
             communities,

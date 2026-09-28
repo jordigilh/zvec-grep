@@ -26,8 +26,8 @@ pub const CODEGRAPH_SCHEMA: &str = "zvec-grep.codegraph";
 pub const CODEGRAPH_VERSION: u32 = 1;
 pub const CODEGRAPH_FILE: &str = "codegraph-v1.json";
 pub const GO_CALLFACTS_SCHEMA: &str = "zvec-grep.go-callfacts";
-pub const GO_CALLFACTS_VERSION: u32 = 1;
-pub const GO_CALLFACTS_FILE: &str = "go-callfacts-v1.json";
+pub const GO_CALLFACTS_VERSION: u32 = 2;
+pub const GO_CALLFACTS_FILE: &str = "go-callfacts-v2.json";
 
 #[derive(Debug, Error)]
 pub enum CodeGraphError {
@@ -76,6 +76,8 @@ pub struct CodeGraphArtifact {
     pub schema: String,
     pub version: u32,
     pub manifest_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go_callfacts_context_sha256: Option<String>,
     pub files: Vec<CodeGraphFile>,
     pub nodes: Vec<CodeGraphNode>,
     pub edges: Vec<CodeGraphEdge>,
@@ -85,8 +87,27 @@ pub struct CodeGraphArtifact {
 pub struct GoCallFactsArtifact {
     pub schema: String,
     pub version: u32,
+    pub context: GoCallFactsContext,
+    pub context_sha256: String,
     pub files: Vec<GoCallFactsFile>,
     pub calls: Vec<GoCallFact>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GoCallFactsContext {
+    pub go_version: String,
+    pub go_mod: String,
+    pub go_work: String,
+    pub settings: BTreeMap<String, String>,
+    pub context_files: Vec<GoCallFactsFile>,
+}
+
+impl GoCallFactsContext {
+    /// Returns the deterministic fingerprint for this recorded Go analysis context.
+    #[must_use]
+    pub fn fingerprint(&self) -> String {
+        go_callfacts_context_sha256(self)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -489,6 +510,7 @@ fn merge_codegraph_delta(
         schema: CODEGRAPH_SCHEMA.to_owned(),
         version: CODEGRAPH_VERSION,
         manifest_key: manifest_key(&files),
+        go_callfacts_context_sha256: None,
         files,
         nodes,
         edges,
@@ -635,6 +657,7 @@ fn build_artifact(parsed: &[ParsedFile]) -> CodeGraphArtifact {
         schema: CODEGRAPH_SCHEMA.to_owned(),
         version: CODEGRAPH_VERSION,
         manifest_key,
+        go_callfacts_context_sha256: None,
         files,
         nodes,
         edges,
@@ -759,6 +782,9 @@ fn try_apply_go_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> Code
             ),
         ));
     }
+    if !validate_go_callfacts_context(root, &facts.context, &facts.context_sha256, &path)? {
+        return Ok(());
+    }
     let Some(go_paths) = validate_go_callfacts_sources(root, artifact, &facts, &path)? else {
         return Ok(());
     };
@@ -799,6 +825,7 @@ fn try_apply_go_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> Code
 
     let facts_digest = sha256_hex(&bytes);
     artifact.manifest_key = manifest_key_with_go_callfacts(&artifact.files, Some(&facts_digest));
+    artifact.go_callfacts_context_sha256 = Some(facts.context_sha256);
     Ok(())
 }
 
@@ -859,6 +886,176 @@ fn validate_go_callfacts_sources(
     Ok(Some(
         expected.keys().map(|path| (*path).to_owned()).collect(),
     ))
+}
+
+fn validate_go_callfacts_context(
+    root: &Path,
+    context: &GoCallFactsContext,
+    expected_fingerprint: &str,
+    facts_path: &Path,
+) -> CodeGraphResult<bool> {
+    validate_context_settings(context, facts_path)?;
+    validate_context_selections(context, facts_path)?;
+    validate_context_file_list(context, facts_path)?;
+    if go_callfacts_context_sha256(context) != expected_fingerprint {
+        return Err(go_callfacts_error(
+            facts_path,
+            "analysis context fingerprint does not match its contents".to_owned(),
+        ));
+    }
+
+    let current_files = collect_go_context_files(root)?;
+    Ok(current_files == context.context_files)
+}
+
+fn validate_context_settings(
+    context: &GoCallFactsContext,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    if context.go_version.is_empty()
+        || context.settings.get("GOOS").is_none_or(String::is_empty)
+        || context.settings.get("GOARCH").is_none_or(String::is_empty)
+        || context
+            .settings
+            .get("CGO_ENABLED")
+            .is_none_or(String::is_empty)
+    {
+        return Err(go_callfacts_error(
+            facts_path,
+            "analysis context is missing its Go version or target settings".to_owned(),
+        ));
+    }
+    let expected_settings = [
+        "GO111MODULE",
+        "GO386",
+        "GOAMD64",
+        "GOARCH",
+        "GOARM",
+        "GOARM64",
+        "CGO_ENABLED",
+        "GOEXPERIMENT",
+        "GOFLAGS",
+        "GOMIPS",
+        "GOMIPS64",
+        "GOOS",
+        "GOPPC64",
+        "GORISCV64",
+        "GOTOOLCHAIN",
+        "GOWASM",
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    if context
+        .settings
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>()
+        != expected_settings
+    {
+        return Err(go_callfacts_error(
+            facts_path,
+            "analysis context has an unsupported Go setting set".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_context_selections(
+    context: &GoCallFactsContext,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    if context.go_mod.is_empty() {
+        return Err(go_callfacts_error(
+            facts_path,
+            "analysis context must select an in-root go.mod".to_owned(),
+        ));
+    }
+    validate_context_selected_file(&context.go_mod, "go.mod", facts_path)?;
+    if !context.go_work.is_empty() && context.go_work != "off" {
+        validate_context_selected_file(&context.go_work, "go.work", facts_path)?;
+    }
+    Ok(())
+}
+
+fn validate_context_selected_file(
+    path: &str,
+    expected_name: &str,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    validate_relative_source_path(path).map_err(|reason| go_callfacts_error(facts_path, reason))?;
+    if Path::new(path)
+        .file_name()
+        .is_none_or(|name| name != expected_name)
+    {
+        return Err(go_callfacts_error(
+            facts_path,
+            format!("active context input must name a {expected_name} file"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_context_file_list(
+    context: &GoCallFactsContext,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    let mut seen = BTreeSet::new();
+    for file in &context.context_files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| go_callfacts_error(facts_path, reason))?;
+        if !is_go_context_input_path(Path::new(&file.path)) {
+            return Err(go_callfacts_error(
+                facts_path,
+                format!("unsupported Go context input: {}", file.path),
+            ));
+        }
+        if !seen.insert(file.path.as_str()) {
+            return Err(go_callfacts_error(
+                facts_path,
+                format!("duplicate Go context input: {}", file.path),
+            ));
+        }
+    }
+    if !seen.contains(context.go_mod.as_str()) {
+        return Err(go_callfacts_error(
+            facts_path,
+            "active go.mod is absent from analysis context inputs".to_owned(),
+        ));
+    }
+    if !context.go_work.is_empty()
+        && context.go_work != "off"
+        && !seen.contains(context.go_work.as_str())
+    {
+        return Err(go_callfacts_error(
+            facts_path,
+            "active go.work is absent from analysis context inputs".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn go_callfacts_context_sha256(context: &GoCallFactsContext) -> String {
+    let mut hasher = Sha256::new();
+    hash_context_part(&mut hasher, "zvec-grep.go-callfacts-context-v1");
+    hash_context_part(&mut hasher, &context.go_version);
+    hash_context_part(&mut hasher, &context.go_mod);
+    hash_context_part(&mut hasher, &context.go_work);
+    for (name, value) in &context.settings {
+        hash_context_part(&mut hasher, name);
+        hash_context_part(&mut hasher, value);
+    }
+    let mut context_files = context.context_files.clone();
+    context_files.sort_by(|left, right| left.path.cmp(&right.path));
+    for file in &context_files {
+        hash_context_part(&mut hasher, &file.path);
+        hash_context_part(&mut hasher, &file.sha256);
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn hash_context_part(hasher: &mut Sha256, value: &str) {
+    hasher.update(value.as_bytes());
+    hasher.update([0]);
 }
 
 type GoSymbolIndex = HashMap<String, Vec<String>>;
@@ -1143,6 +1340,7 @@ fn go_callfacts_error(path: &Path, reason: String) -> CodeGraphError {
 fn restore_syntax_call_edges(artifact: &mut CodeGraphArtifact) {
     resolve_call_edges(&mut artifact.edges, &artifact.nodes);
     artifact.manifest_key = manifest_key(&artifact.files);
+    artifact.go_callfacts_context_sha256 = None;
 }
 
 fn manifest_key_with_go_callfacts(files: &[CodeGraphFile], digest: Option<&str>) -> String {
@@ -1301,7 +1499,13 @@ pub fn refresh_codegraph(root: &Path) -> CodeGraphResult<(PathBuf, CodeGraphArti
             .collect::<Vec<_>>();
         let expected_manifest =
             manifest_key_with_go_callfacts(&base.files, current_callfacts_digest.as_deref());
-        if changes.is_empty() && base.manifest_key == expected_manifest {
+        // When a call-facts sidecar exists, revalidate its source and context
+        // inputs even if the Go source-file manifest is unchanged. Context
+        // files such as go.mod and go.work are intentionally not graph files.
+        if changes.is_empty()
+            && current_callfacts_digest.is_none()
+            && base.manifest_key == expected_manifest
+        {
             return Ok((artifact_path, base));
         }
         if changes.is_empty() {
@@ -1359,6 +1563,59 @@ fn collect_code_files(root: &Path, output: &mut Vec<PathBuf>) -> CodeGraphResult
     Ok(())
 }
 
+fn collect_go_context_files(root: &Path) -> CodeGraphResult<Vec<GoCallFactsFile>> {
+    let mut paths = Vec::new();
+    collect_go_context_paths(root, &mut paths)?;
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(&path)
+                .map_err(|error| io_failure("read Go context input", &path, error))?;
+            Ok(GoCallFactsFile {
+                path: relative_path(root, &path),
+                sha256: sha256_hex(&bytes),
+            })
+        })
+        .collect()
+}
+
+fn collect_go_context_paths(root: &Path, output: &mut Vec<PathBuf>) -> CodeGraphResult<()> {
+    let entries =
+        fs::read_dir(root).map_err(|error| io_failure("scan Go context inputs", root, error))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| io_failure("read Go context directory entry", root, error))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| io_failure("inspect Go context input", &path, error))?;
+        if file_type.is_dir() {
+            if matches!(
+                entry.file_name().to_str(),
+                Some(".git" | ".zvec-grep" | "node_modules")
+            ) {
+                continue;
+            }
+            collect_go_context_paths(&path, output)?;
+        } else if file_type.is_file() && is_go_context_input_path(&path) {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_go_context_input_path(path: &Path) -> bool {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some("go.mod" | "go.sum" | "go.work" | "go.work.sum") => true,
+        Some("modules.txt") => path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "vendor"),
+        _ => false,
+    }
+}
+
 /// Collects inexpensive change stamps for supported source files under `root`.
 /// Callers may compare these with a previous snapshot before hashing or parsing
 /// file contents.
@@ -1394,6 +1651,30 @@ pub fn codegraph_source_stamps(
                 modified_unix_nanos,
                 changed_unix_nanos,
                 content_sha256: None,
+            },
+        );
+    }
+    for file in collect_go_context_files(&root)? {
+        let path = root.join(&file.path);
+        let metadata = fs::metadata(&path)
+            .map_err(|error| io_failure("stat Go context input", &path, error))?;
+        let modified_unix_nanos = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos());
+        #[cfg(unix)]
+        let changed_unix_nanos =
+            Some(i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec()));
+        #[cfg(not(unix))]
+        let changed_unix_nanos = None;
+        stamps.insert(
+            file.path,
+            CodeGraphSourceStamp {
+                byte_len: metadata.len(),
+                modified_unix_nanos,
+                changed_unix_nanos,
+                content_sha256: Some(file.sha256),
             },
         );
     }
@@ -1547,6 +1828,11 @@ fn collect_file_data(
         }
         "call_expression" => {
             if let Some(call) = call_site(node, source) {
+                calls.push(call);
+            }
+        }
+        "type_conversion_expression" => {
+            if let Some(call) = go_generic_call_site(node, source) {
                 calls.push(call);
             }
         }
@@ -1829,15 +2115,39 @@ fn call_site(node: Node<'_>, source: &[u8]) -> Option<CallSite> {
     })
 }
 
+fn go_generic_call_site(node: Node<'_>, source: &[u8]) -> Option<CallSite> {
+    let generic_type = node.child_by_field_name("type")?;
+    if generic_type.kind() != "generic_type" {
+        return None;
+    }
+    let function = generic_type.child_by_field_name("type")?;
+    let target_name = call_symbol_name(function, source)?;
+    if target_name.is_empty() {
+        return None;
+    }
+    let qualified_target =
+        qualified_call_name(function, source).filter(|qualified| qualified != &target_name);
+    Some(CallSite {
+        start_byte: node.start_byte(),
+        end_byte: node.end_byte(),
+        target_name,
+        qualified_target,
+        range: graph_range(node),
+    })
+}
+
 fn call_symbol_name(function: Node<'_>, source: &[u8]) -> Option<String> {
     match function.kind() {
-        "identifier" => Some(node_text(function, source).to_owned()),
+        "identifier" | "type_identifier" => Some(node_text(function, source).to_owned()),
         "selector_expression" => function
             .child_by_field_name("field")
             .map(|field| node_text(field, source).to_owned()),
         "index_expression" => function
             .child_by_field_name("operand")
             .and_then(|operand| call_symbol_name(operand, source)),
+        "type_instantiation_expression" => function
+            .child_by_field_name("type")
+            .and_then(|typ| call_symbol_name(typ, source)),
         "parenthesized_expression" => named_children(function)
             .into_iter()
             .next()
@@ -1848,7 +2158,7 @@ fn call_symbol_name(function: Node<'_>, source: &[u8]) -> Option<String> {
 
 fn qualified_call_name(function: Node<'_>, source: &[u8]) -> Option<String> {
     match function.kind() {
-        "identifier" => Some(node_text(function, source).to_owned()),
+        "identifier" | "type_identifier" => Some(node_text(function, source).to_owned()),
         "selector_expression" => {
             let operand = function.child_by_field_name("operand")?;
             let field = function.child_by_field_name("field")?;
@@ -1861,6 +2171,9 @@ fn qualified_call_name(function: Node<'_>, source: &[u8]) -> Option<String> {
         "index_expression" => function
             .child_by_field_name("operand")
             .and_then(|operand| qualified_call_name(operand, source)),
+        "type_instantiation_expression" => function
+            .child_by_field_name("type")
+            .and_then(|typ| qualified_call_name(typ, source)),
         "parenthesized_expression" => named_children(function)
             .into_iter()
             .next()
@@ -2038,6 +2351,54 @@ mod tests {
 
     use super::{CodeGraphChange, build_go_codegraph, update_go_codegraph, write_go_codegraph};
 
+    #[test]
+    fn go_analysis_context_fingerprint_matches_go_producer_contract() {
+        let settings = [
+            "GO111MODULE",
+            "GO386",
+            "GOAMD64",
+            "GOARCH",
+            "GOARM",
+            "GOARM64",
+            "CGO_ENABLED",
+            "GOEXPERIMENT",
+            "GOFLAGS",
+            "GOMIPS",
+            "GOMIPS64",
+            "GOOS",
+            "GOPPC64",
+            "GORISCV64",
+            "GOTOOLCHAIN",
+            "GOWASM",
+        ]
+        .into_iter()
+        .map(|name| {
+            let value = match name {
+                "GOARCH" => "arm64",
+                "CGO_ENABLED" => "1",
+                "GOFLAGS" => "-tags=fixture",
+                "GOOS" => "darwin",
+                _ => "",
+            };
+            (name.to_owned(), value.to_owned())
+        })
+        .collect();
+        let context = super::GoCallFactsContext {
+            go_version: "go1.26.0".to_owned(),
+            go_mod: "go.mod".to_owned(),
+            go_work: String::new(),
+            settings,
+            context_files: vec![super::GoCallFactsFile {
+                path: "go.mod".to_owned(),
+                sha256: "abc123".to_owned(),
+            }],
+        };
+        assert_eq!(
+            context.fingerprint(),
+            "5b7f099e8fbdb5261a1e04b1a2183cbecc299f34b7f13a2583f7d0e9f48e0505"
+        );
+    }
+
     fn node_id(artifact: &super::CodeGraphArtifact, kind: &str, name: &str) -> String {
         artifact
             .nodes
@@ -2081,6 +2442,30 @@ mod tests {
                 && edge.target_name.as_deref() == Some("fmt.Println")
                 && !edge.resolved
         }));
+    }
+
+    #[test]
+    fn parses_generic_function_instantiation_as_a_call_site() {
+        let directory = tempdir().expect("workspace");
+        let source = "package main\nfunc identity[T any](value T) T { return value }\nfunc caller() { _ = identity[int](1) }\n";
+        fs::write(directory.path().join("main.go"), source).expect("Go source");
+
+        let artifact = build_go_codegraph(directory.path()).expect("generic call graph");
+        let start = source.find("identity[int](1)").expect("generic call start");
+        let end = start + "identity[int](1)".len();
+        assert!(
+            artifact.edges.iter().any(|edge| {
+                edge.kind == "calls"
+                    && edge.target_name.as_deref() == Some("identity")
+                    && edge.resolved
+                    && edge
+                        .range
+                        .as_ref()
+                        .is_some_and(|range| range.start_byte == start && range.end_byte == end)
+            }),
+            "generic call edge missing: {:#?}",
+            artifact.edges
+        );
     }
 
     #[test]
@@ -2209,6 +2594,38 @@ mod tests {
         fs::write(&sidecar, b"replacement facts").expect("replacement sidecar");
         let replaced = super::codegraph_source_stamps(directory.path()).expect("updated sidecar");
         assert_ne!(after, replaced);
+    }
+
+    #[test]
+    fn source_stamps_include_go_module_context_inputs_for_query_cache_freshness() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("main.go"), "package main\n").expect("Go source");
+        let go_mod = directory.path().join("go.mod");
+        fs::write(&go_mod, "module example.com/stamps\n\ngo 1.22\n").expect("go.mod");
+        let before = super::codegraph_source_stamps(directory.path()).expect("initial stamps");
+        assert!(before.contains_key("go.mod"));
+
+        fs::write(&go_mod, "module example.com/stamps\n\ngo 1.23\n").expect("update go.mod");
+        let after = super::codegraph_source_stamps(directory.path()).expect("updated stamps");
+        assert_ne!(before, after);
+        assert!(after.contains_key("go.mod"));
+    }
+
+    #[test]
+    fn source_stamps_include_vendor_manifest_context_inputs() {
+        let directory = tempdir().expect("workspace");
+        let manifest = directory.path().join("vendor/modules.txt");
+        fs::create_dir_all(manifest.parent().expect("vendor directory"))
+            .expect("create vendor directory");
+        fs::write(&manifest, "# example.com/dep v1.0.0\nexample.com/dep\n")
+            .expect("vendor manifest");
+
+        let before = super::codegraph_source_stamps(directory.path()).expect("initial stamps");
+        assert!(before.contains_key("vendor/modules.txt"));
+        fs::write(&manifest, "# example.com/dep v1.0.1\nexample.com/dep\n")
+            .expect("update vendor manifest");
+        let after = super::codegraph_source_stamps(directory.path()).expect("updated stamps");
+        assert_ne!(before, after);
     }
 
     #[test]
