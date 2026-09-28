@@ -1,7 +1,7 @@
 //! Query operations over a persisted codegraph snapshot.
 
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     sync::OnceLock,
 };
 
@@ -21,6 +21,10 @@ use crate::{CodeGraphArtifact, CodeGraphError, CodeGraphNode, CodeGraphResult};
 pub struct CallGraphBlastRadius {
     pub function: String,
     pub callers_by_depth: Vec<Vec<String>>,
+    /// Possible callers reached through an ambiguous edge. These are not
+    /// included in `callers_by_depth`, which contains only edges the artifact
+    /// marked resolved. A resolved name match is not necessarily type-checked.
+    pub possible_callers_by_depth: Vec<Vec<String>>,
     pub unresolved_calls: usize,
     pub total_calls: usize,
     pub ambiguous_calls: usize,
@@ -71,7 +75,9 @@ struct ClusterPartition {
 #[derive(Debug)]
 pub struct CallGraphIndex {
     nodes: Vec<CodeGraphNode>,
+    display_names: Vec<String>,
     graph: DiGraph<usize, ()>,
+    possible_graph: DiGraph<usize, ()>,
     by_id: HashMap<String, NodeIndex>,
     by_display_name: HashMap<String, Vec<NodeIndex>>,
     by_qualified_name: HashMap<String, Vec<NodeIndex>>,
@@ -95,24 +101,42 @@ impl CallGraphIndex {
             .collect::<Vec<_>>();
         definitions.sort_by_key(|node| (display_name(node), node.id.clone()));
 
+        let mut display_counts = HashMap::new();
+        for node in &definitions {
+            *display_counts.entry(display_name(node)).or_insert(0_usize) += 1;
+        }
+
         let mut graph = DiGraph::<usize, ()>::new();
+        let mut possible_graph = DiGraph::<usize, ()>::new();
         let mut nodes = Vec::new();
+        let mut display_names = Vec::new();
         let mut by_id = HashMap::new();
         let mut by_display_name: HashMap<String, Vec<NodeIndex>> = HashMap::new();
         let mut by_qualified_name: HashMap<String, Vec<NodeIndex>> = HashMap::new();
         let mut by_name: HashMap<String, Vec<NodeIndex>> = HashMap::new();
         for node in &definitions {
-            let display = display_name(node);
-            let index = by_display_name
-                .get(&display)
-                .and_then(|indices| indices.first())
+            let base_display = display_name(node);
+            let display = if display_counts
+                .get(&base_display)
                 .copied()
-                .unwrap_or_else(|| {
-                    let position = nodes.len();
-                    nodes.push(node.clone());
-                    graph.add_node(position)
-                });
+                .unwrap_or_default()
+                > 1
+            {
+                node.qualified_name.as_ref().map_or_else(
+                    || format!("{base_display} [{}]", node.id),
+                    |qualified_name| format!("{base_display} [{qualified_name}]"),
+                )
+            } else {
+                base_display.clone()
+            };
+            let position = nodes.len();
+            nodes.push(node.clone());
+            display_names.push(display.clone());
+            let index = graph.add_node(position);
+            let possible_index = possible_graph.add_node(position);
+            debug_assert_eq!(index, possible_index);
             by_id.insert(node.id.clone(), index);
+            insert_index(&mut by_display_name, base_display, index);
             insert_index(&mut by_display_name, display, index);
             if let Some(qualified_name) = &node.qualified_name {
                 insert_index(&mut by_qualified_name, qualified_name.clone(), index);
@@ -121,6 +145,7 @@ impl CallGraphIndex {
         }
 
         let mut call_pairs = BTreeSet::new();
+        let mut possible_call_pairs = BTreeSet::new();
         let mut total_calls = 0;
         let mut unresolved_calls = 0;
         let mut ambiguous_calls = 0;
@@ -134,21 +159,31 @@ impl CallGraphIndex {
             }
             let Some(target_id) = edge.target.as_deref() else {
                 unresolved_calls += usize::from(edge.ambiguous_candidates.is_empty());
+                for candidate_id in &edge.ambiguous_candidates {
+                    if let Some(candidate) = by_id.get(candidate_id.as_str()).copied() {
+                        possible_call_pairs.insert((source.index(), candidate.index()));
+                    }
+                }
                 continue;
             };
-            let Some(target) = by_id.get(target_id).copied() else {
+            if let Some(target) = by_id.get(target_id).copied() {
+                call_pairs.insert((source.index(), target.index()));
+            } else {
                 unresolved_calls += 1;
-                continue;
-            };
-            call_pairs.insert((source.index(), target.index()));
+            }
         }
         for (source, target) in call_pairs {
             graph.add_edge(NodeIndex::new(source), NodeIndex::new(target), ());
         }
+        for (source, target) in possible_call_pairs {
+            possible_graph.add_edge(NodeIndex::new(source), NodeIndex::new(target), ());
+        }
 
         Self {
             nodes,
+            display_names,
             graph,
+            possible_graph,
             by_id,
             by_display_name,
             by_qualified_name,
@@ -174,6 +209,7 @@ impl CallGraphIndex {
     ) -> CodeGraphResult<CallGraphBlastRadius> {
         let target = self.resolve_node(function)?;
         let mut seen = HashSet::from([target]);
+        let mut definite_depth = HashMap::from([(target, 0_usize)]);
         let mut frontier = vec![target];
         let mut callers_by_depth = Vec::new();
 
@@ -183,6 +219,7 @@ impl CallGraphIndex {
                 for caller in self.graph.neighbors_directed(node, Direction::Incoming) {
                     if seen.insert(caller) {
                         next.push(caller);
+                        definite_depth.insert(caller, callers_by_depth.len() + 1);
                     }
                 }
             }
@@ -198,9 +235,60 @@ impl CallGraphIndex {
             frontier = next;
         }
 
+        let mut possible_depth = HashMap::new();
+        let mut queue = VecDeque::from([(target, false, 0_usize)]);
+        let mut visited_states = HashSet::from([(target, false)]);
+        while let Some((node, uncertain, distance)) = queue.pop_front() {
+            if distance >= depth {
+                continue;
+            }
+            for caller in self.graph.neighbors_directed(node, Direction::Incoming) {
+                let state = (caller, uncertain);
+                if visited_states.insert(state) {
+                    let next_distance = distance + 1;
+                    if uncertain {
+                        possible_depth.insert(caller, next_distance);
+                    }
+                    queue.push_back((caller, uncertain, next_distance));
+                }
+            }
+            for caller in self
+                .possible_graph
+                .neighbors_directed(node, Direction::Incoming)
+            {
+                let state = (caller, true);
+                if visited_states.insert(state) {
+                    let next_distance = distance + 1;
+                    possible_depth.insert(caller, next_distance);
+                    queue.push_back((caller, true, next_distance));
+                }
+            }
+        }
+        let max_possible_depth = possible_depth
+            .iter()
+            .filter(|(node, _)| !definite_depth.contains_key(node) && **node != target)
+            .map(|(_, distance)| *distance)
+            .max()
+            .unwrap_or_default();
+        let mut possible_callers_by_depth = vec![Vec::new(); max_possible_depth];
+        for current_depth in 1..=max_possible_depth {
+            let mut callers = possible_depth
+                .iter()
+                .filter(|(node, found_depth)| {
+                    **found_depth == current_depth
+                        && !definite_depth.contains_key(node)
+                        && **node != target
+                })
+                .map(|(node, _)| self.display_for_index(*node))
+                .collect::<Vec<_>>();
+            callers.sort();
+            possible_callers_by_depth[current_depth - 1] = callers;
+        }
+
         Ok(CallGraphBlastRadius {
             function: self.display_for_index(target),
             callers_by_depth,
+            possible_callers_by_depth,
             unresolved_calls: self.unresolved_calls,
             total_calls: self.total_calls,
             ambiguous_calls: self.ambiguous_calls,
@@ -289,7 +377,7 @@ impl CallGraphIndex {
                 let node = &self.nodes[self.node_position(index)];
                 CallGraphAssignment {
                     node_id: node.id.clone(),
-                    function: display_name(node),
+                    function: self.display_for_index(index),
                     community_id: partition.membership[index.index()],
                 }
             })
@@ -335,7 +423,7 @@ impl CallGraphIndex {
     }
 
     fn display_for_index(&self, index: NodeIndex) -> String {
-        display_name(&self.nodes[self.node_position(index)])
+        self.display_names[self.node_position(index)].clone()
     }
 
     fn node_position(&self, index: NodeIndex) -> usize {
@@ -524,7 +612,7 @@ mod tests {
     }
 
     #[test]
-    fn analysis_projection_matches_cocoindex_path_and_method_name_nodes() {
+    fn callgraph_index_preserves_distinct_receiver_methods() {
         let directory = tempdir().expect("workspace");
         fs::write(
             directory.path().join("main.go"),
@@ -547,16 +635,42 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert_eq!(
             projected.len(),
-            1,
-            "the graph query view mirrors CocoIndex's path/name key"
+            2,
+            "receiver-distinct methods must remain separate graph vertices"
         );
         assert_eq!(
             index
                 .by_display_name
                 .get("main.go::Value")
-                .expect("method display node")
+                .expect("ambiguous short display alias")
                 .len(),
-            1
+            2
         );
+        assert_eq!(index.by_qualified_name["main.alpha.Value"].len(), 1);
+        assert_eq!(index.by_qualified_name["main.beta.Value"].len(), 1);
+        let method_displays = projected
+            .iter()
+            .map(|node_index| index.display_for_index(**node_index))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            method_displays,
+            BTreeSet::from([
+                "main.go::Value [main.alpha.Value]".to_owned(),
+                "main.go::Value [main.beta.Value]".to_owned(),
+            ])
+        );
+        let clustered_methods = index
+            .clustering()
+            .expect("method communities")
+            .assignments
+            .into_iter()
+            .filter(|assignment| method_ids.contains(&assignment.node_id))
+            .map(|assignment| assignment.function)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(clustered_methods, method_displays);
+        assert!(matches!(
+            index.blast_radius("main.go::Value", 1),
+            Err(CodeGraphError::GraphNodeAmbiguous { .. })
+        ));
     }
 }
