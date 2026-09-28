@@ -1,0 +1,132 @@
+{
+  "schema": "zvec-grep.callfacts-benchmark-v1",
+  "language": "typescript",
+  "input_files": [
+    "tsconfig.json",
+    "src/lib.ts"
+  ],
+  "source_files": [
+    "src/lib.ts"
+  ],
+  "context_files": [
+    "tsconfig.json"
+  ],
+  "input_sha256": {
+    "tsconfig.json": "c9fc8a2188b607c05c26997d2cce496660e16cc6afb917b3c06a38fa8b24294e",
+    "src/lib.ts": "e1f24bd67db7f179e5ff70be3de0cb4fbe8d05f886f074d29280a86efb7c6fe3"
+  },
+  "symbols": [
+    {
+      "id": "leaf",
+      "path": "src/lib.ts",
+      "line": 1
+    },
+    {
+      "id": "caller",
+      "path": "src/lib.ts",
+      "line": 5
+    },
+    {
+      "id": "chain",
+      "path": "src/lib.ts",
+      "line": 9
+    },
+    {
+      "id": "Alpha.convert",
+      "path": "src/lib.ts",
+      "line": 14
+    },
+    {
+      "id": "Beta.convert",
+      "path": "src/lib.ts",
+      "line": 20
+    },
+    {
+      "id": "alphaCaller",
+      "path": "src/lib.ts",
+      "line": 25
+    },
+    {
+      "id": "betaCaller",
+      "path": "src/lib.ts",
+      "line": 29
+    },
+    {
+      "id": "Worker.work",
+      "path": "src/lib.ts",
+      "line": 34
+    },
+    {
+      "id": "traitCaller",
+      "path": "src/lib.ts",
+      "line": 37
+    },
+    {
+      "id": "aliasCaller",
+      "path": "src/lib.ts",
+      "line": 41
+    },
+    {
+      "id": "dynamicCaller",
+      "path": "src/lib.ts",
+      "line": 46
+    }
+  ],
+  "calls": [
+    {
+      "path": "src/lib.ts",
+      "line": 6,
+      "caller": "caller",
+      "expected_class": "definite",
+      "target": "leaf"
+    },
+    {
+      "path": "src/lib.ts",
+      "line": 10,
+      "caller": "chain",
+      "expected_class": "definite",
+      "target": "caller"
+    },
+    {
+      "path": "src/lib.ts",
+      "line": 26,
+      "caller": "alphaCaller",
+      "expected_class": "definite",
+      "target": "Alpha.convert"
+    },
+    {
+      "path": "src/lib.ts",
+      "line": 30,
+      "caller": "betaCaller",
+      "expected_class": "definite",
+      "target": "Beta.convert"
+    },
+    {
+      "path": "src/lib.ts",
+      "line": 38,
+      "caller": "traitCaller",
+      "expected_class": "possible",
+      "possible_targets": [
+        "Worker.work"
+      ]
+    },
+    {
+      "path": "src/lib.ts",
+      "line": 43,
+      "caller": "aliasCaller",
+      "expected_class": "non-definite",
+      "allowed_resolutions": [
+        "function-value"
+      ]
+    },
+    {
+      "path": "src/lib.ts",
+      "line": 48,
+      "caller": "dynamicCaller",
+      "expected_class": "non-definite",
+      "allowed_resolutions": [
+        "unresolved"
+      ]
+    }
+  ]
+}

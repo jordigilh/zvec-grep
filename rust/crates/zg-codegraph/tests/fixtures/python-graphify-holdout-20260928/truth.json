@@ -1,0 +1,146 @@
+{
+  "schema": "zvec-grep.callfacts-benchmark-v1",
+  "language": "python",
+  "input_files": [
+    "pyrightconfig.json",
+    "src/lib.py"
+  ],
+  "source_files": [
+    "src/lib.py"
+  ],
+  "context_files": [
+    "pyrightconfig.json"
+  ],
+  "input_sha256": {
+    "pyrightconfig.json": "d62b15c3cc135c8e3acddf7f822f0f7cd5beaa5193ae49c89ad6731de0b32bf3",
+    "src/lib.py": "a32efba0e3322a181daf2b517a3f716b69442e43bfdcc81381432860d83f8042"
+  },
+  "symbols": [
+    {
+      "id": "Worker.work",
+      "path": "src/lib.py",
+      "line": 6
+    },
+    {
+      "id": "Alpha.convert",
+      "path": "src/lib.py",
+      "line": 11
+    },
+    {
+      "id": "Beta.convert",
+      "path": "src/lib.py",
+      "line": 16
+    },
+    {
+      "id": "leaf",
+      "path": "src/lib.py",
+      "line": 20
+    },
+    {
+      "id": "caller",
+      "path": "src/lib.py",
+      "line": 24
+    },
+    {
+      "id": "chain",
+      "path": "src/lib.py",
+      "line": 28
+    },
+    {
+      "id": "trait_caller",
+      "path": "src/lib.py",
+      "line": 32
+    },
+    {
+      "id": "alpha_caller",
+      "path": "src/lib.py",
+      "line": 36
+    },
+    {
+      "id": "beta_caller",
+      "path": "src/lib.py",
+      "line": 40
+    },
+    {
+      "id": "alias_caller",
+      "path": "src/lib.py",
+      "line": 44
+    },
+    {
+      "id": "dynamic_caller",
+      "path": "src/lib.py",
+      "line": 49
+    },
+    {
+      "id": "external_caller",
+      "path": "src/lib.py",
+      "line": 54
+    }
+  ],
+  "calls": [
+    {
+      "path": "src/lib.py",
+      "line": 25,
+      "caller": "caller",
+      "expected_class": "definite",
+      "target": "leaf"
+    },
+    {
+      "path": "src/lib.py",
+      "line": 29,
+      "caller": "chain",
+      "expected_class": "definite",
+      "target": "caller"
+    },
+    {
+      "path": "src/lib.py",
+      "line": 33,
+      "caller": "trait_caller",
+      "expected_class": "possible",
+      "possible_targets": [
+        "Worker.work"
+      ]
+    },
+    {
+      "path": "src/lib.py",
+      "line": 37,
+      "caller": "alpha_caller",
+      "expected_class": "definite",
+      "target": "Alpha.convert"
+    },
+    {
+      "path": "src/lib.py",
+      "line": 41,
+      "caller": "beta_caller",
+      "expected_class": "definite",
+      "target": "Beta.convert"
+    },
+    {
+      "path": "src/lib.py",
+      "line": 46,
+      "caller": "alias_caller",
+      "expected_class": "non-definite",
+      "allowed_resolutions": [
+        "function-value"
+      ]
+    },
+    {
+      "path": "src/lib.py",
+      "line": 51,
+      "caller": "dynamic_caller",
+      "expected_class": "non-definite",
+      "allowed_resolutions": [
+        "unresolved"
+      ]
+    },
+    {
+      "path": "src/lib.py",
+      "line": 55,
+      "caller": "external_caller",
+      "expected_class": "non-definite",
+      "allowed_resolutions": [
+        "external"
+      ]
+    }
+  ]
+}
