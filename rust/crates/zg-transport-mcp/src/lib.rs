@@ -610,7 +610,7 @@ impl ZvecGrepMcpServer {
 
     #[tool(
         name = "zvec_grep_callgraph_blast_radius",
-        description = "Find direct and transitive callers of a function in the selected live checkout. Refreshes a root-scoped Go, Rust, TypeScript/TSX, and Python callgraph from current source contents before querying, including uncommitted changes.",
+        description = "Find direct and transitive callers of a function in the selected live checkout. Returns resolved callers separately from possible callers reached through ambiguous candidates. An explicitly generated Go go/types sidecar is used only when its source hashes match; otherwise the syntax-derived graph is used. Refreshes from current source contents before querying, including uncommitted changes.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CallGraphBlastRadius>(),
         annotations(
             title = "Find code callers",
@@ -3042,6 +3042,106 @@ mod tests {
                 .callers_by_depth
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn blast_radius_tool_consumes_source_pinned_go_callfacts() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../zg-codegraph/tests/fixtures/go-blast-radius");
+        let workspace = tempdir().expect("Go fixture workspace");
+        for relative in ["go.mod", "app/calls.go", "dep/dep.go"] {
+            let source = fixture.join(relative);
+            let target = workspace.path().join(relative);
+            fs::create_dir_all(target.parent().expect("fixture parent"))
+                .expect("fixture directory");
+            fs::copy(source, target).expect("copy Go fixture source");
+        }
+
+        let truth: serde_json::Value =
+            serde_json::from_slice(&fs::read(fixture.join("truth.json")).expect("fixture truth"))
+                .expect("decode fixture truth");
+        let files = truth["source_sha256"]
+            .as_object()
+            .expect("source digests")
+            .iter()
+            .filter(|(path, _)| {
+                std::path::Path::new(path)
+                    .extension()
+                    .is_some_and(|extension| extension == "go")
+            })
+            .map(|(path, digest)| serde_json::json!({"path": path, "sha256": digest}))
+            .collect::<Vec<_>>();
+        let sidecar = serde_json::json!({
+            "schema": "zvec-grep.go-callfacts",
+            "version": 1,
+            "files": files,
+            "calls": truth["calls"],
+        });
+        let sidecar_path = workspace.path().join(".zvec-grep/go-callfacts-v1.json");
+        fs::create_dir_all(sidecar_path.parent().expect("sidecar parent"))
+            .expect("sidecar directory");
+        fs::write(
+            sidecar_path,
+            serde_json::to_vec_pretty(&sidecar).expect("serialize sidecar"),
+        )
+        .expect("write Go facts");
+
+        let server =
+            ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
+        let result = server
+            .zvec_grep_callgraph_blast_radius(super::Parameters(super::CallGraphBlastRadiusInput {
+                root: workspace.path().display().to_string(),
+                function: "app.Target".to_owned(),
+                depth: Some(3),
+            }))
+            .await
+            .expect("blast-radius tool call");
+        let structured = result.structured_content.expect("structured tool result");
+        assert_eq!(
+            structured["callers_by_depth"],
+            serde_json::json!([
+                ["app/calls.go::Direct"],
+                ["app/calls.go::Transitive"],
+                ["app/calls.go::Deep"]
+            ])
+        );
+
+        let possible = server
+            .zvec_grep_callgraph_blast_radius(super::Parameters(super::CallGraphBlastRadiusInput {
+                root: workspace.path().display().to_string(),
+                function: "app.Worker.Execute".to_owned(),
+                depth: Some(2),
+            }))
+            .await
+            .expect("interface blast-radius tool call")
+            .structured_content
+            .expect("structured interface result");
+        assert_eq!(possible["callers_by_depth"], serde_json::json!([]));
+        assert_eq!(
+            possible["possible_callers_by_depth"],
+            serde_json::json!([
+                ["app/calls.go::InterfaceCaller"],
+                ["app/calls.go::InterfaceCallerOuter"]
+            ])
+        );
+
+        fs::remove_file(workspace.path().join(".zvec-grep/go-callfacts-v1.json"))
+            .expect("remove opt-in sidecar");
+        let fallback = server
+            .zvec_grep_callgraph_blast_radius(super::Parameters(super::CallGraphBlastRadiusInput {
+                root: workspace.path().display().to_string(),
+                function: "app.Worker.Execute".to_owned(),
+                depth: Some(1),
+            }))
+            .await
+            .expect("syntax fallback tool call")
+            .structured_content
+            .expect("structured fallback result");
+        assert_eq!(
+            fallback["callers_by_depth"],
+            serde_json::json!([["app/calls.go::InterfaceCaller"]])
+        );
+        assert_eq!(fallback["possible_callers_by_depth"], serde_json::json!([]));
     }
 
     #[test]

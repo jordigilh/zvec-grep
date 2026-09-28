@@ -641,7 +641,11 @@ const GRAPH_HELP: &str = r"Usage:
 Builds a deterministic structural sidecar for Go, Rust, TypeScript/TSX, and
 Python. The default artifact is
 <root>/.zvec-grep/codegraph-v1.json and includes definitions, imports, and
-lexical call edges. Unresolved calls are retained with their target name.
+lexical call edges. An optional, source-hash-matched Go call-facts sidecar at
+<root>/.zvec-grep/go-callfacts-v1.json replaces covered Go call edges with
+go/types-resolved edges; stale facts fall back to syntax-derived edges. Generate
+it explicitly with tools/go-callfacts. Unresolved calls are retained with their
+target name.
 
 With --base, only supported --changed source files are reparsed. --deleted removes a file;
 represent a rename with both --deleted <old-path> and --changed <new-path>.
@@ -655,7 +659,8 @@ const GRAPH_QUERY_HELP: &str = r"Usage:
 
 Queries a codegraph-v1 JSON artifact. Function names may be bare, path-qualified
 as <path>::<name>, or an exact sidecar node ID. Ambiguous or missing names
-return an error with candidate details.";
+return an error with candidate details. Blast-radius output separates resolved
+callers from possible callers reached through ambiguous candidate edges.";
 
 const CONFIG_HELP: &str = r"Usage:
   zg --config provider set <provider> --api-key <key>
