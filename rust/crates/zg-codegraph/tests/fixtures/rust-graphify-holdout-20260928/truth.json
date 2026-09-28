@@ -1,0 +1,109 @@
+{
+  "schema": "zvec-grep.callfacts-benchmark-v1",
+  "language": "rust",
+  "input_files": [
+    "Cargo.lock",
+    "Cargo.toml",
+    "src/lib.rs"
+  ],
+  "source_files": [
+    "src/lib.rs"
+  ],
+  "context_files": [
+    "Cargo.lock",
+    "Cargo.toml"
+  ],
+  "input_sha256": {
+    "Cargo.lock": "26dc3aec5ddaae05f5249dafdeb6b31abfa13835662a29380120dee2880bfbf0",
+    "Cargo.toml": "a16d3ffe447b014d874097edd48845fb855ebeb0c19d0d0d5f3e7e6398619512",
+    "src/lib.rs": "06765a9ba747715c9d16b794a91d342d4f002f9ec25058882bd61c4aad95b3a3"
+  },
+  "symbols": [
+    {
+      "id": "Worker.work",
+      "path": "src/lib.rs",
+      "line": 2
+    },
+    {
+      "id": "Impl.work",
+      "path": "src/lib.rs",
+      "line": 8
+    },
+    {
+      "id": "leaf",
+      "path": "src/lib.rs",
+      "line": 13
+    },
+    {
+      "id": "caller",
+      "path": "src/lib.rs",
+      "line": 17
+    },
+    {
+      "id": "chain",
+      "path": "src/lib.rs",
+      "line": 21
+    },
+    {
+      "id": "dyn_caller",
+      "path": "src/lib.rs",
+      "line": 25
+    },
+    {
+      "id": "alias_caller",
+      "path": "src/lib.rs",
+      "line": 30
+    },
+    {
+      "id": "Impl.adjust",
+      "path": "src/lib.rs",
+      "line": 36
+    },
+    {
+      "id": "inherent_caller",
+      "path": "src/lib.rs",
+      "line": 41
+    }
+  ],
+  "calls": [
+    {
+      "path": "src/lib.rs",
+      "line": 18,
+      "caller": "caller",
+      "expected_class": "definite",
+      "target": "leaf"
+    },
+    {
+      "path": "src/lib.rs",
+      "line": 22,
+      "caller": "chain",
+      "expected_class": "definite",
+      "target": "caller"
+    },
+    {
+      "path": "src/lib.rs",
+      "line": 27,
+      "caller": "dyn_caller",
+      "expected_class": "possible",
+      "possible_targets": [
+        "Worker.work"
+      ]
+    },
+    {
+      "path": "src/lib.rs",
+      "line": 32,
+      "caller": "alias_caller",
+      "expected_class": "non-definite",
+      "allowed_resolutions": [
+        "function-value"
+      ]
+    },
+    {
+      "path": "src/lib.rs",
+      "line": 42,
+      "caller": "inherent_caller",
+      "expected_class": "definite",
+      "target": "Impl.adjust"
+    }
+  ]
+}

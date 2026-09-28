@@ -23,6 +23,15 @@ pub struct CallGraphBlastRadius {
     /// Fingerprint of the Go analysis context when Go call facts were applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub go_callfacts_context_sha256: Option<String>,
+    /// Fingerprint of the Rust analysis context when Rust call facts were applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust_callfacts_context_sha256: Option<String>,
+    /// Fingerprint of the TypeScript analysis context when TypeScript call facts were applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typescript_callfacts_context_sha256: Option<String>,
+    /// Fingerprint of the Python analysis context when Python call facts were applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_callfacts_context_sha256: Option<String>,
     pub callers_by_depth: Vec<Vec<String>>,
     /// Possible callers reached through an ambiguous edge. These are not
     /// included in `callers_by_depth`, which contains only edges the artifact
@@ -40,6 +49,12 @@ pub struct CallGraphPath {
     pub path: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub go_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typescript_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_callfacts_context_sha256: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
@@ -47,6 +62,12 @@ pub struct CallGraphCluster {
     pub function: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub go_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typescript_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_callfacts_context_sha256: Option<String>,
     pub cluster_id: usize,
     pub community_count: usize,
     pub quality: f64,
@@ -57,6 +78,12 @@ pub struct CallGraphCluster {
 pub struct CallGraphClustering {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub go_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typescript_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_callfacts_context_sha256: Option<String>,
     pub community_count: usize,
     pub quality: f64,
     pub communities: Vec<Vec<String>>,
@@ -77,6 +104,14 @@ struct ClusterPartition {
     quality: f64,
 }
 
+struct CallPairSummary {
+    call_pairs: BTreeSet<(usize, usize)>,
+    possible_call_pairs: BTreeSet<(usize, usize)>,
+    total_calls: usize,
+    unresolved_calls: usize,
+    ambiguous_calls: usize,
+}
+
 /// Reusable graph algorithms over the resolved function/method call edges.
 ///
 /// Leiden runs lazily and is cached for this index instance. Construct one
@@ -93,6 +128,9 @@ pub struct CallGraphIndex {
     by_name: HashMap<String, Vec<NodeIndex>>,
     manifest_key: String,
     go_callfacts_context_sha256: Option<String>,
+    rust_callfacts_context_sha256: Option<String>,
+    typescript_callfacts_context_sha256: Option<String>,
+    python_callfacts_context_sha256: Option<String>,
     total_calls: usize,
     unresolved_calls: usize,
     ambiguous_calls: usize,
@@ -154,34 +192,14 @@ impl CallGraphIndex {
             insert_index(&mut by_name, node.name.clone(), index);
         }
 
-        let mut call_pairs = BTreeSet::new();
-        let mut possible_call_pairs = BTreeSet::new();
-        let mut total_calls = 0;
-        let mut unresolved_calls = 0;
-        let mut ambiguous_calls = 0;
-        for edge in artifact.edges.iter().filter(|edge| edge.kind == "calls") {
-            let Some(source) = by_id.get(&edge.source).copied() else {
-                continue;
-            };
-            total_calls += 1;
-            if !edge.ambiguous_candidates.is_empty() {
-                ambiguous_calls += 1;
-            }
-            let Some(target_id) = edge.target.as_deref() else {
-                unresolved_calls += usize::from(edge.ambiguous_candidates.is_empty());
-                for candidate_id in &edge.ambiguous_candidates {
-                    if let Some(candidate) = by_id.get(candidate_id.as_str()).copied() {
-                        possible_call_pairs.insert((source.index(), candidate.index()));
-                    }
-                }
-                continue;
-            };
-            if let Some(target) = by_id.get(target_id).copied() {
-                call_pairs.insert((source.index(), target.index()));
-            } else {
-                unresolved_calls += 1;
-            }
-        }
+        let call_pair_summary = collect_call_pairs(artifact, &by_id);
+        let CallPairSummary {
+            call_pairs,
+            possible_call_pairs,
+            total_calls,
+            unresolved_calls,
+            ambiguous_calls,
+        } = call_pair_summary;
         for (source, target) in call_pairs {
             graph.add_edge(NodeIndex::new(source), NodeIndex::new(target), ());
         }
@@ -200,6 +218,11 @@ impl CallGraphIndex {
             by_name,
             manifest_key: artifact.manifest_key.clone(),
             go_callfacts_context_sha256: artifact.go_callfacts_context_sha256.clone(),
+            rust_callfacts_context_sha256: artifact.rust_callfacts_context_sha256.clone(),
+            typescript_callfacts_context_sha256: artifact
+                .typescript_callfacts_context_sha256
+                .clone(),
+            python_callfacts_context_sha256: artifact.python_callfacts_context_sha256.clone(),
             total_calls,
             unresolved_calls,
             ambiguous_calls,
@@ -299,6 +322,9 @@ impl CallGraphIndex {
         Ok(CallGraphBlastRadius {
             function: self.display_for_index(target),
             go_callfacts_context_sha256: self.go_callfacts_context_sha256.clone(),
+            rust_callfacts_context_sha256: self.rust_callfacts_context_sha256.clone(),
+            typescript_callfacts_context_sha256: self.typescript_callfacts_context_sha256.clone(),
+            python_callfacts_context_sha256: self.python_callfacts_context_sha256.clone(),
             callers_by_depth,
             possible_callers_by_depth,
             unresolved_calls: self.unresolved_calls,
@@ -336,6 +362,9 @@ impl CallGraphIndex {
             target: self.display_for_index(target_index),
             path,
             go_callfacts_context_sha256: self.go_callfacts_context_sha256.clone(),
+            rust_callfacts_context_sha256: self.rust_callfacts_context_sha256.clone(),
+            typescript_callfacts_context_sha256: self.typescript_callfacts_context_sha256.clone(),
+            python_callfacts_context_sha256: self.python_callfacts_context_sha256.clone(),
         })
     }
 
@@ -361,6 +390,9 @@ impl CallGraphIndex {
         Ok(CallGraphCluster {
             function: self.display_for_index(function_index),
             go_callfacts_context_sha256: self.go_callfacts_context_sha256.clone(),
+            rust_callfacts_context_sha256: self.rust_callfacts_context_sha256.clone(),
+            typescript_callfacts_context_sha256: self.typescript_callfacts_context_sha256.clone(),
+            python_callfacts_context_sha256: self.python_callfacts_context_sha256.clone(),
             cluster_id,
             community_count: partition.community_count,
             quality: partition.quality,
@@ -399,6 +431,9 @@ impl CallGraphIndex {
         assignments.sort_by(|left, right| left.node_id.cmp(&right.node_id));
         Ok(CallGraphClustering {
             go_callfacts_context_sha256: self.go_callfacts_context_sha256.clone(),
+            rust_callfacts_context_sha256: self.rust_callfacts_context_sha256.clone(),
+            typescript_callfacts_context_sha256: self.typescript_callfacts_context_sha256.clone(),
+            python_callfacts_context_sha256: self.python_callfacts_context_sha256.clone(),
             community_count: partition.community_count,
             quality: partition.quality,
             communities,
@@ -506,6 +541,47 @@ fn insert_index(index: &mut HashMap<String, Vec<NodeIndex>>, key: String, node_i
     let indices = index.entry(key).or_default();
     if !indices.contains(&node_index) {
         indices.push(node_index);
+    }
+}
+
+fn collect_call_pairs(
+    artifact: &CodeGraphArtifact,
+    by_id: &HashMap<String, NodeIndex>,
+) -> CallPairSummary {
+    let mut call_pairs = BTreeSet::new();
+    let mut possible_call_pairs = BTreeSet::new();
+    let mut total_calls = 0;
+    let mut unresolved_calls = 0;
+    let mut ambiguous_calls = 0;
+    for edge in artifact.edges.iter().filter(|edge| edge.kind == "calls") {
+        let Some(source) = by_id.get(&edge.source).copied() else {
+            continue;
+        };
+        total_calls += 1;
+        if !edge.ambiguous_candidates.is_empty() {
+            ambiguous_calls += 1;
+        }
+        let Some(target_id) = edge.target.as_deref() else {
+            unresolved_calls += usize::from(edge.ambiguous_candidates.is_empty());
+            for candidate_id in &edge.ambiguous_candidates {
+                if let Some(candidate) = by_id.get(candidate_id.as_str()).copied() {
+                    possible_call_pairs.insert((source.index(), candidate.index()));
+                }
+            }
+            continue;
+        };
+        if let Some(target) = by_id.get(target_id).copied() {
+            call_pairs.insert((source.index(), target.index()));
+        } else {
+            unresolved_calls += 1;
+        }
+    }
+    CallPairSummary {
+        call_pairs,
+        possible_call_pairs,
+        total_calls,
+        unresolved_calls,
+        ambiguous_calls,
     }
 }
 

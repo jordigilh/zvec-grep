@@ -232,12 +232,14 @@ lexical lookup to the agent's native tools:
 
 `zvec_grep_search` needs an existing index. The callgraph tools refresh a
 root-scoped structural sidecar without requiring the semantic index. When a
-valid, source- and context-matched Go call-facts sidecar is present,
-blast-radius results separate statically bound callers from possible callers such as interface
-dispatch. Without valid Go facts, the graph falls back to syntax-derived edges,
-which may rely on name matching. Go facts carry a generation-context fingerprint
-and apply only to the recorded Go build configuration; regenerate them after
-changing the Go toolchain, target, build flags, workspace, or dependency inputs.
+valid, source- and context-matched Go, Rust, TypeScript, or Python call-facts
+sidecar is present,
+blast-radius results separate statically bound callers from possible callers
+such as interface or trait dispatch. Without valid facts, the graph falls back
+to syntax-derived edges, which may rely on name matching. Each sidecar carries
+a generation-context fingerprint and applies only to its recorded
+toolchain/build configuration; regenerate it after changing the relevant
+compiler, target, build flags, workspace, or dependency inputs.
 Managed rg remains available through `zg --rg`
 and through the optional `full` MCP toolset. See the [Pipeline guide](./04-pipeline.md)
 for the distinction and the [MCP guide](./03-mcp.md) for tool inputs.

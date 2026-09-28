@@ -28,6 +28,15 @@ pub const CODEGRAPH_FILE: &str = "codegraph-v1.json";
 pub const GO_CALLFACTS_SCHEMA: &str = "zvec-grep.go-callfacts";
 pub const GO_CALLFACTS_VERSION: u32 = 2;
 pub const GO_CALLFACTS_FILE: &str = "go-callfacts-v2.json";
+pub const RUST_CALLFACTS_SCHEMA: &str = "zvec-grep.rust-callfacts";
+pub const RUST_CALLFACTS_VERSION: u32 = 1;
+pub const RUST_CALLFACTS_FILE: &str = "rust-callfacts-v1.json";
+pub const TYPESCRIPT_CALLFACTS_SCHEMA: &str = "zvec-grep.typescript-callfacts";
+pub const TYPESCRIPT_CALLFACTS_VERSION: u32 = 1;
+pub const TYPESCRIPT_CALLFACTS_FILE: &str = "typescript-callfacts-v1.json";
+pub const PYTHON_CALLFACTS_SCHEMA: &str = "zvec-grep.python-callfacts";
+pub const PYTHON_CALLFACTS_VERSION: u32 = 1;
+pub const PYTHON_CALLFACTS_FILE: &str = "python-callfacts-v1.json";
 
 #[derive(Debug, Error)]
 pub enum CodeGraphError {
@@ -56,6 +65,12 @@ pub enum CodeGraphError {
     IncompatibleArtifact { schema: String, version: u32 },
     #[error("invalid Go call-facts artifact {path}: {reason}")]
     GoCallFacts { path: PathBuf, reason: String },
+    #[error("invalid Rust call-facts artifact {path}: {reason}")]
+    RustCallFacts { path: PathBuf, reason: String },
+    #[error("invalid TypeScript call-facts artifact {path}: {reason}")]
+    TypeScriptCallFacts { path: PathBuf, reason: String },
+    #[error("invalid Python call-facts artifact {path}: {reason}")]
+    PythonCallFacts { path: PathBuf, reason: String },
     #[error("codegraph node was not found: {query}")]
     GraphNodeNotFound { query: String },
     #[error("codegraph node is ambiguous: {query}; candidates: {candidates:?}")]
@@ -78,6 +93,12 @@ pub struct CodeGraphArtifact {
     pub manifest_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub go_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typescript_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_callfacts_context_sha256: Option<String>,
     pub files: Vec<CodeGraphFile>,
     pub nodes: Vec<CodeGraphNode>,
     pub edges: Vec<CodeGraphEdge>,
@@ -129,6 +150,184 @@ pub struct GoCallFact {
     pub target_name: String,
     pub target: Option<String>,
     pub possible_targets: Vec<String>,
+    pub resolution: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RustCallFactsArtifact {
+    pub schema: String,
+    pub version: u32,
+    pub context: RustCallFactsContext,
+    pub context_sha256: String,
+    pub files: Vec<RustCallFactsFile>,
+    pub calls: Vec<RustCallFact>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RustCallFactsContext {
+    pub rustc_version: String,
+    pub rustc_commit: String,
+    pub host: String,
+    pub target: String,
+    pub edition: String,
+    pub manifest_path: String,
+    pub lockfile_path: Option<String>,
+    pub toolchain_path: Option<String>,
+    pub settings: BTreeMap<String, String>,
+    pub context_files: Vec<RustCallFactsFile>,
+}
+
+impl RustCallFactsContext {
+    /// Returns the deterministic fingerprint for this recorded Rust analysis context.
+    #[must_use]
+    pub fn fingerprint(&self) -> String {
+        rust_callfacts_context_sha256(self)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RustCallFactsFile {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RustCallFactsSymbol {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TypeScriptCallFactsArtifact {
+    pub schema: String,
+    pub version: u32,
+    pub context: TypeScriptCallFactsContext,
+    pub context_sha256: String,
+    pub files: Vec<TypeScriptCallFactsFile>,
+    pub calls: Vec<TypeScriptCallFact>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TypeScriptCallFactsContext {
+    pub typescript_version: String,
+    pub node_version: String,
+    pub project_path: String,
+    pub target: String,
+    pub module: String,
+    pub jsx: String,
+    pub settings: BTreeMap<String, String>,
+    pub context_files: Vec<TypeScriptCallFactsFile>,
+}
+
+impl TypeScriptCallFactsContext {
+    /// Returns the deterministic fingerprint for the recorded TypeScript context.
+    #[must_use]
+    pub fn fingerprint(&self) -> String {
+        typescript_callfacts_context_sha256(self)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TypeScriptCallFactsFile {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TypeScriptCallFactsSymbol {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TypeScriptCallFact {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub start_column: usize,
+    pub end_column: usize,
+    pub caller: TypeScriptCallFactsSymbol,
+    pub target_name: String,
+    pub target: Option<TypeScriptCallFactsSymbol>,
+    pub possible_targets: Vec<TypeScriptCallFactsSymbol>,
+    pub resolution: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PythonCallFactsArtifact {
+    pub schema: String,
+    pub version: u32,
+    pub context: PythonCallFactsContext,
+    pub context_sha256: String,
+    pub files: Vec<PythonCallFactsFile>,
+    pub calls: Vec<PythonCallFact>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PythonCallFactsContext {
+    pub pyright_version: String,
+    pub python_version: String,
+    pub target_version: String,
+    pub project_path: String,
+    pub typeshed_sha256: String,
+    pub settings: BTreeMap<String, String>,
+    pub context_files: Vec<PythonCallFactsFile>,
+}
+
+impl PythonCallFactsContext {
+    /// Returns the deterministic fingerprint for the recorded Python context.
+    #[must_use]
+    pub fn fingerprint(&self) -> String {
+        python_callfacts_context_sha256(self)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PythonCallFactsFile {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PythonCallFactsSymbol {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PythonCallFact {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub start_column: usize,
+    pub end_column: usize,
+    pub caller: PythonCallFactsSymbol,
+    pub target_name: String,
+    pub target: Option<PythonCallFactsSymbol>,
+    pub possible_targets: Vec<PythonCallFactsSymbol>,
+    pub resolution: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RustCallFact {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub start_column: usize,
+    pub end_column: usize,
+    pub caller: RustCallFactsSymbol,
+    pub target_name: String,
+    pub target: Option<RustCallFactsSymbol>,
+    pub possible_targets: Vec<RustCallFactsSymbol>,
     pub resolution: String,
 }
 
@@ -330,7 +529,7 @@ pub fn build_codegraph(root: &Path) -> CodeGraphResult<CodeGraphArtifact> {
         .map(|path| parse_file(&root, path))
         .collect::<CodeGraphResult<Vec<_>>>()?;
     let mut artifact = build_artifact(&parsed);
-    apply_go_callfacts(&root, &mut artifact)?;
+    apply_semantic_callfacts(&root, &mut artifact)?;
     Ok(artifact)
 }
 
@@ -351,7 +550,7 @@ pub fn build_go_codegraph(root: &Path) -> CodeGraphResult<CodeGraphArtifact> {
         .map(|path| parse_file(&root, path))
         .collect::<CodeGraphResult<Vec<_>>>()?;
     let mut artifact = build_artifact(&parsed);
-    apply_go_callfacts(&root, &mut artifact)?;
+    apply_semantic_callfacts(&root, &mut artifact)?;
     Ok(artifact)
 }
 
@@ -405,7 +604,7 @@ pub fn update_codegraph(
     }
     let changed_artifact = build_artifact(&parsed);
     let mut artifact = merge_codegraph_delta(base, &changed_paths, changed_artifact);
-    apply_go_callfacts(&root, &mut artifact)?;
+    apply_semantic_callfacts(&root, &mut artifact)?;
     Ok(artifact)
 }
 
@@ -511,6 +710,9 @@ fn merge_codegraph_delta(
         version: CODEGRAPH_VERSION,
         manifest_key: manifest_key(&files),
         go_callfacts_context_sha256: None,
+        rust_callfacts_context_sha256: None,
+        typescript_callfacts_context_sha256: None,
+        python_callfacts_context_sha256: None,
         files,
         nodes,
         edges,
@@ -658,6 +860,9 @@ fn build_artifact(parsed: &[ParsedFile]) -> CodeGraphArtifact {
         version: CODEGRAPH_VERSION,
         manifest_key,
         go_callfacts_context_sha256: None,
+        rust_callfacts_context_sha256: None,
+        typescript_callfacts_context_sha256: None,
+        python_callfacts_context_sha256: None,
         files,
         nodes,
         edges,
@@ -752,25 +957,50 @@ fn resolve_call_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) {
     }
 }
 
-fn apply_go_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> CodeGraphResult<()> {
+fn apply_semantic_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> CodeGraphResult<()> {
     // Start from parser-derived names so replacing/removing a prior overlay
     // cannot leave semantic edges behind.
     restore_syntax_call_edges(artifact);
-    match try_apply_go_callfacts(root, artifact) {
-        Ok(()) => Ok(()),
+    if let Err(error) = try_apply_go_callfacts(root, artifact) {
         // Semantic facts are an optional enhancement. Invalid, unsupported, or
         // internally inconsistent facts must not prevent the syntax graph from
-        // remaining queryable.
-        Err(CodeGraphError::GoCallFacts { .. }) => {
-            restore_syntax_call_edges(artifact);
-            Ok(())
+        // remaining queryable. A Rust sidecar may still be valid when the Go
+        // sidecar is not, so restore only the syntax overlay before continuing.
+        match error {
+            CodeGraphError::GoCallFacts { .. } => restore_syntax_call_edges(artifact),
+            error => return Err(error),
         }
-        Err(error) => Err(error),
     }
+    if let Err(error) = try_apply_rust_callfacts(root, artifact) {
+        match error {
+            CodeGraphError::RustCallFacts { .. } => {
+                // Rust validation is completed before its edges are committed;
+                // preserve any valid Go overlay already applied.
+            }
+            error => return Err(error),
+        }
+    }
+    if let Err(error) = try_apply_typescript_callfacts(root, artifact) {
+        match error {
+            CodeGraphError::TypeScriptCallFacts { .. } => {
+                // TypeScript facts are optional and independently scoped.
+            }
+            error => return Err(error),
+        }
+    }
+    if let Err(error) = try_apply_python_callfacts(root, artifact) {
+        match error {
+            CodeGraphError::PythonCallFacts { .. } => {
+                // Python facts are optional and independently scoped.
+            }
+            error => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 fn try_apply_go_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> CodeGraphResult<()> {
-    let Some((path, bytes, facts)) = read_go_callfacts(root)? else {
+    let Some((path, _bytes, facts)) = read_go_callfacts(root)? else {
         return Ok(());
     };
     if facts.schema != GO_CALLFACTS_SCHEMA || facts.version != GO_CALLFACTS_VERSION {
@@ -823,9 +1053,8 @@ fn try_apply_go_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> Code
     artifact.edges.extend(semantic_edges);
     sort_graph(&mut artifact.nodes, &mut artifact.edges);
 
-    let facts_digest = sha256_hex(&bytes);
-    artifact.manifest_key = manifest_key_with_go_callfacts(&artifact.files, Some(&facts_digest));
     artifact.go_callfacts_context_sha256 = Some(facts.context_sha256);
+    update_callfacts_manifest(root, artifact)?;
     Ok(())
 }
 
@@ -841,6 +1070,1346 @@ fn read_go_callfacts(
     let facts = serde_json::from_slice(&bytes)
         .map_err(|error| go_callfacts_error(&path, format!("decode JSON: {error}")))?;
     Ok(Some((path, bytes, facts)))
+}
+
+fn read_rust_callfacts(
+    root: &Path,
+) -> CodeGraphResult<Option<(PathBuf, Vec<u8>, RustCallFactsArtifact)>> {
+    let path = root.join(".zvec-grep").join(RUST_CALLFACTS_FILE);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(io_failure("read Rust call-facts artifact", &path, error)),
+    };
+    let facts = serde_json::from_slice(&bytes)
+        .map_err(|error| rust_callfacts_error(&path, format!("decode JSON: {error}")))?;
+    Ok(Some((path, bytes, facts)))
+}
+
+fn try_apply_rust_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> CodeGraphResult<()> {
+    let Some((path, _bytes, facts)) = read_rust_callfacts(root)? else {
+        return Ok(());
+    };
+    if facts.schema != RUST_CALLFACTS_SCHEMA || facts.version != RUST_CALLFACTS_VERSION {
+        return Err(rust_callfacts_error(
+            &path,
+            format!(
+                "unsupported schema/version: {} v{}",
+                facts.schema, facts.version
+            ),
+        ));
+    }
+    if !validate_rust_callfacts_context(root, &facts.context, &facts.context_sha256, &path)? {
+        return Ok(());
+    }
+    let Some(rust_paths) = validate_rust_callfacts_sources(root, artifact, &facts, &path)? else {
+        return Ok(());
+    };
+    let (semantic_edges, covered_call_sites) = rust_callfact_edges(
+        &facts.calls,
+        &rust_paths,
+        &artifact.edges,
+        &artifact.nodes,
+        &path,
+    )?;
+    let node_paths = artifact
+        .nodes
+        .iter()
+        .filter_map(|node| Some((node.id.clone(), node.path.clone()?)))
+        .collect::<HashMap<_, _>>();
+    artifact.edges.retain(|edge| {
+        if edge.kind != "calls" {
+            return true;
+        }
+        let Some(path) = node_paths.get(edge.source.as_str()) else {
+            return true;
+        };
+        if !rust_paths.contains(path) {
+            return true;
+        }
+        let Some(range) = edge.range.as_ref() else {
+            return true;
+        };
+        !covered_call_sites.contains(&(
+            path.clone(),
+            range.start_byte,
+            range.end_byte,
+            edge.source.clone(),
+        ))
+    });
+    artifact.edges.extend(semantic_edges);
+    sort_graph(&mut artifact.nodes, &mut artifact.edges);
+    artifact.rust_callfacts_context_sha256 = Some(facts.context_sha256);
+    update_callfacts_manifest(root, artifact)?;
+    Ok(())
+}
+
+fn try_apply_typescript_callfacts(
+    root: &Path,
+    artifact: &mut CodeGraphArtifact,
+) -> CodeGraphResult<()> {
+    let Some((path, _bytes, facts)) = read_typescript_callfacts(root)? else {
+        return Ok(());
+    };
+    if facts.schema != TYPESCRIPT_CALLFACTS_SCHEMA || facts.version != TYPESCRIPT_CALLFACTS_VERSION
+    {
+        return Err(typescript_callfacts_error(
+            &path,
+            format!(
+                "unsupported schema/version: {} v{}",
+                facts.schema, facts.version
+            ),
+        ));
+    }
+    if !validate_typescript_callfacts_context(root, &facts.context, &facts.context_sha256, &path)? {
+        return Ok(());
+    }
+    let Some(source_paths) = validate_typescript_callfacts_sources(root, artifact, &facts, &path)?
+    else {
+        return Ok(());
+    };
+    let external_facts = facts.calls.iter().map(Into::into).collect::<Vec<_>>();
+    let (semantic_edges, covered_call_sites) = external_callfact_edges(
+        &external_facts,
+        &source_paths,
+        &artifact.edges,
+        &artifact.nodes,
+        &path,
+        "TypeScript",
+    )?;
+    let node_paths = artifact
+        .nodes
+        .iter()
+        .filter_map(|node| Some((node.id.clone(), node.path.clone()?)))
+        .collect::<HashMap<_, _>>();
+    artifact.edges.retain(|edge| {
+        if edge.kind != "calls" {
+            return true;
+        }
+        let Some(path) = node_paths.get(edge.source.as_str()) else {
+            return true;
+        };
+        if !source_paths.contains(path) {
+            return true;
+        }
+        let Some(range) = edge.range.as_ref() else {
+            return true;
+        };
+        !covered_call_sites.contains(&(
+            path.clone(),
+            range.start_byte,
+            range.end_byte,
+            edge.source.clone(),
+        ))
+    });
+    artifact.edges.extend(semantic_edges);
+    sort_graph(&mut artifact.nodes, &mut artifact.edges);
+    artifact.typescript_callfacts_context_sha256 = Some(facts.context_sha256);
+    update_callfacts_manifest(root, artifact)?;
+    Ok(())
+}
+
+fn try_apply_python_callfacts(
+    root: &Path,
+    artifact: &mut CodeGraphArtifact,
+) -> CodeGraphResult<()> {
+    let Some((path, _bytes, facts)) = read_python_callfacts(root)? else {
+        return Ok(());
+    };
+    if facts.schema != PYTHON_CALLFACTS_SCHEMA || facts.version != PYTHON_CALLFACTS_VERSION {
+        return Err(python_callfacts_error(
+            &path,
+            format!(
+                "unsupported schema/version: {} v{}",
+                facts.schema, facts.version
+            ),
+        ));
+    }
+    if !validate_python_callfacts_context(root, &facts.context, &facts.context_sha256, &path)? {
+        return Ok(());
+    }
+    let Some(source_paths) = validate_python_callfacts_sources(root, artifact, &facts, &path)?
+    else {
+        return Ok(());
+    };
+    let external_facts = facts.calls.iter().map(Into::into).collect::<Vec<_>>();
+    let (semantic_edges, covered_call_sites) = external_callfact_edges(
+        &external_facts,
+        &source_paths,
+        &artifact.edges,
+        &artifact.nodes,
+        &path,
+        "Python",
+    )?;
+    let node_paths = artifact
+        .nodes
+        .iter()
+        .filter_map(|node| Some((node.id.clone(), node.path.clone()?)))
+        .collect::<HashMap<_, _>>();
+    artifact.edges.retain(|edge| {
+        if edge.kind != "calls" {
+            return true;
+        }
+        let Some(path) = node_paths.get(edge.source.as_str()) else {
+            return true;
+        };
+        if !source_paths.contains(path) {
+            return true;
+        }
+        let Some(range) = edge.range.as_ref() else {
+            return true;
+        };
+        !covered_call_sites.contains(&(
+            path.clone(),
+            range.start_byte,
+            range.end_byte,
+            edge.source.clone(),
+        ))
+    });
+    artifact.edges.extend(semantic_edges);
+    sort_graph(&mut artifact.nodes, &mut artifact.edges);
+    artifact.python_callfacts_context_sha256 = Some(facts.context_sha256);
+    update_callfacts_manifest(root, artifact)?;
+    Ok(())
+}
+
+fn read_typescript_callfacts(
+    root: &Path,
+) -> CodeGraphResult<Option<(PathBuf, Vec<u8>, TypeScriptCallFactsArtifact)>> {
+    let path = root.join(".zvec-grep").join(TYPESCRIPT_CALLFACTS_FILE);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(io_failure(
+                "read TypeScript call-facts artifact",
+                &path,
+                error,
+            ));
+        }
+    };
+    let facts = serde_json::from_slice(&bytes)
+        .map_err(|error| typescript_callfacts_error(&path, format!("decode JSON: {error}")))?;
+    Ok(Some((path, bytes, facts)))
+}
+
+fn read_python_callfacts(
+    root: &Path,
+) -> CodeGraphResult<Option<(PathBuf, Vec<u8>, PythonCallFactsArtifact)>> {
+    let path = root.join(".zvec-grep").join(PYTHON_CALLFACTS_FILE);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(io_failure("read Python call-facts artifact", &path, error));
+        }
+    };
+    let facts = serde_json::from_slice(&bytes)
+        .map_err(|error| python_callfacts_error(&path, format!("decode JSON: {error}")))?;
+    Ok(Some((path, bytes, facts)))
+}
+
+fn validate_typescript_callfacts_sources(
+    root: &Path,
+    artifact: &CodeGraphArtifact,
+    facts: &TypeScriptCallFactsArtifact,
+    facts_path: &Path,
+) -> CodeGraphResult<Option<BTreeSet<String>>> {
+    let expected = artifact
+        .files
+        .iter()
+        .filter(|file| matches!(file.language.as_str(), "typescript" | "tsx"))
+        .map(|file| (file.path.as_str(), file.sha256.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut actual = BTreeMap::new();
+    for file in &facts.files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| typescript_callfacts_error(facts_path, reason))?;
+        if actual
+            .insert(file.path.as_str(), file.sha256.as_str())
+            .is_some()
+        {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("duplicate source file: {}", file.path),
+            ));
+        }
+    }
+    if expected != actual {
+        return Ok(None);
+    }
+    for (relative_path, expected_digest) in &expected {
+        let path = root.join(relative_path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(io_failure(
+                    "verify TypeScript call-facts source",
+                    &path,
+                    error,
+                ));
+            }
+        };
+        if sha256_hex(&bytes) != *expected_digest {
+            return Ok(None);
+        }
+    }
+    Ok(Some(
+        expected.keys().map(|path| (*path).to_owned()).collect(),
+    ))
+}
+
+fn validate_python_callfacts_sources(
+    root: &Path,
+    artifact: &CodeGraphArtifact,
+    facts: &PythonCallFactsArtifact,
+    facts_path: &Path,
+) -> CodeGraphResult<Option<BTreeSet<String>>> {
+    let expected = artifact
+        .files
+        .iter()
+        .filter(|file| file.language == "python")
+        .map(|file| (file.path.as_str(), file.sha256.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut actual = BTreeMap::new();
+    for file in &facts.files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| python_callfacts_error(facts_path, reason))?;
+        if actual
+            .insert(file.path.as_str(), file.sha256.as_str())
+            .is_some()
+        {
+            return Err(python_callfacts_error(
+                facts_path,
+                format!("duplicate source file: {}", file.path),
+            ));
+        }
+    }
+    if expected != actual {
+        return Ok(None);
+    }
+    for (relative_path, expected_digest) in &expected {
+        let path = root.join(relative_path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(io_failure("verify Python call-facts source", &path, error));
+            }
+        };
+        if sha256_hex(&bytes) != *expected_digest {
+            return Ok(None);
+        }
+    }
+    Ok(Some(
+        expected.keys().map(|path| (*path).to_owned()).collect(),
+    ))
+}
+
+fn validate_typescript_callfacts_context(
+    root: &Path,
+    context: &TypeScriptCallFactsContext,
+    expected_fingerprint: &str,
+    facts_path: &Path,
+) -> CodeGraphResult<bool> {
+    if context.typescript_version.is_empty()
+        || context.node_version.is_empty()
+        || context.target.is_empty()
+        || context.module.is_empty()
+        || context.jsx.is_empty()
+    {
+        return Err(typescript_callfacts_error(
+            facts_path,
+            "analysis context is missing TypeScript, Node, or compiler-option attestation"
+                .to_owned(),
+        ));
+    }
+    if typescript_callfacts_context_sha256(context) != expected_fingerprint {
+        return Err(typescript_callfacts_error(
+            facts_path,
+            "analysis context fingerprint does not match its contents".to_owned(),
+        ));
+    }
+    if !context.project_path.is_empty() {
+        validate_relative_source_path(&context.project_path)
+            .map_err(|reason| typescript_callfacts_error(facts_path, reason))?;
+        if !context
+            .context_files
+            .iter()
+            .any(|file| file.path == context.project_path)
+        {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                "selected TypeScript project is absent from context_files".to_owned(),
+            ));
+        }
+    }
+    validate_typescript_context_file_list(context, facts_path)?;
+    if !validate_typescript_context_file_digests(root, context)? {
+        return Ok(false);
+    }
+    validate_typescript_context_extends(root, context, facts_path)?;
+    let current_files = collect_typescript_context_files(root)?;
+    Ok(current_files == context.context_files)
+}
+
+fn validate_python_callfacts_context(
+    root: &Path,
+    context: &PythonCallFactsContext,
+    expected_fingerprint: &str,
+    facts_path: &Path,
+) -> CodeGraphResult<bool> {
+    if context.pyright_version.is_empty()
+        || context.python_version.is_empty()
+        || context.target_version.is_empty()
+        || context.typeshed_sha256.is_empty()
+        || context.typeshed_sha256 == "unknown"
+    {
+        return Err(python_callfacts_error(
+            facts_path,
+            "analysis context is missing Pyright, Python, target, or typeshed attestation"
+                .to_owned(),
+        ));
+    }
+    if python_callfacts_context_sha256(context) != expected_fingerprint {
+        return Err(python_callfacts_error(
+            facts_path,
+            "analysis context fingerprint does not match its contents".to_owned(),
+        ));
+    }
+    if !context.project_path.is_empty() {
+        validate_relative_source_path(&context.project_path)
+            .map_err(|reason| python_callfacts_error(facts_path, reason))?;
+        if !context
+            .context_files
+            .iter()
+            .any(|file| file.path == context.project_path)
+        {
+            return Err(python_callfacts_error(
+                facts_path,
+                "selected Python project is absent from context_files".to_owned(),
+            ));
+        }
+    }
+    validate_python_context_file_list(context, facts_path)?;
+    if !validate_python_context_file_digests(root, context)? {
+        return Ok(false);
+    }
+    let current_files = collect_python_context_files(root)?;
+    Ok(current_files == context.context_files)
+}
+
+fn validate_typescript_context_file_list(
+    context: &TypeScriptCallFactsContext,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    let mut seen = BTreeSet::new();
+    for file in &context.context_files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| typescript_callfacts_error(facts_path, reason))?;
+        if !is_typescript_context_file_path(Path::new(&file.path)) {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("unsupported TypeScript context input: {}", file.path),
+            ));
+        }
+        if !seen.insert(file.path.as_str()) {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("duplicate TypeScript context input: {}", file.path),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_python_context_file_list(
+    context: &PythonCallFactsContext,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    let mut seen = BTreeSet::new();
+    for file in &context.context_files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| python_callfacts_error(facts_path, reason))?;
+        if !is_python_context_input_path(Path::new(&file.path)) {
+            return Err(python_callfacts_error(
+                facts_path,
+                format!("unsupported Python context input: {}", file.path),
+            ));
+        }
+        if !seen.insert(file.path.as_str()) {
+            return Err(python_callfacts_error(
+                facts_path,
+                format!("duplicate Python context input: {}", file.path),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_typescript_context_file_digests(
+    root: &Path,
+    context: &TypeScriptCallFactsContext,
+) -> CodeGraphResult<bool> {
+    for file in &context.context_files {
+        let path = root.join(&file.path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(io_failure("verify TypeScript context input", &path, error)),
+        };
+        if sha256_hex(&bytes) != file.sha256 {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn validate_python_context_file_digests(
+    root: &Path,
+    context: &PythonCallFactsContext,
+) -> CodeGraphResult<bool> {
+    for file in &context.context_files {
+        let path = root.join(&file.path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(io_failure("verify Python context input", &path, error)),
+        };
+        if sha256_hex(&bytes) != file.sha256 {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn validate_typescript_context_extends(
+    root: &Path,
+    context: &TypeScriptCallFactsContext,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    let context_paths = context
+        .context_files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut pending = context
+        .context_files
+        .iter()
+        .filter(|file| is_typescript_context_input_path(Path::new(&file.path)))
+        .map(|file| root.join(&file.path))
+        .collect::<Vec<_>>();
+    let mut seen = BTreeSet::new();
+    while let Some(config_path) = pending.pop() {
+        if !seen.insert(config_path.clone()) {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&config_path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        let Some(extends) = value.get("extends").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if !extends.starts_with('.') {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("external TypeScript config extends is not attested: {extends}"),
+            ));
+        }
+        let Some(parent) = config_path.parent() else {
+            continue;
+        };
+        let base = parent.join(extends);
+        let candidates = [
+            base.clone(),
+            base.with_extension("json"),
+            base.join("tsconfig.json"),
+        ];
+        let Some(extended) = candidates
+            .iter()
+            .find(|candidate| candidate.is_file())
+            .and_then(|candidate| candidate.canonicalize().ok())
+        else {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("TypeScript config extends file does not exist: {extends}"),
+            ));
+        };
+        if !extended.starts_with(root) {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("TypeScript config extends outside root: {extends}"),
+            ));
+        }
+        let relative = relative_path(root, &extended);
+        if !context_paths.contains(relative.as_str()) {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("extended TypeScript config is absent from context_files: {relative}"),
+            ));
+        }
+        pending.push(extended);
+    }
+    Ok(())
+}
+
+fn validate_rust_callfacts_sources(
+    root: &Path,
+    artifact: &CodeGraphArtifact,
+    facts: &RustCallFactsArtifact,
+    facts_path: &Path,
+) -> CodeGraphResult<Option<BTreeSet<String>>> {
+    let expected = artifact
+        .files
+        .iter()
+        .filter(|file| file.language == "rust")
+        .map(|file| (file.path.as_str(), file.sha256.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut actual = BTreeMap::new();
+    for file in &facts.files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+        if actual
+            .insert(file.path.as_str(), file.sha256.as_str())
+            .is_some()
+        {
+            return Err(rust_callfacts_error(
+                facts_path,
+                format!("duplicate source file: {}", file.path),
+            ));
+        }
+    }
+    if expected != actual {
+        return Ok(None);
+    }
+    for (relative_path, expected_digest) in &expected {
+        let path = root.join(relative_path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(io_failure("verify Rust call-facts source", &path, error)),
+        };
+        if sha256_hex(&bytes) != *expected_digest {
+            return Ok(None);
+        }
+    }
+    Ok(Some(
+        expected.keys().map(|path| (*path).to_owned()).collect(),
+    ))
+}
+
+fn validate_rust_callfacts_context(
+    root: &Path,
+    context: &RustCallFactsContext,
+    expected_fingerprint: &str,
+    facts_path: &Path,
+) -> CodeGraphResult<bool> {
+    if context.rustc_version.is_empty()
+        || context.rustc_commit.is_empty()
+        || context.host.is_empty()
+        || context.target.is_empty()
+        || context.edition.is_empty()
+    {
+        return Err(rust_callfacts_error(
+            facts_path,
+            "analysis context is missing compiler, host, target, or edition attestation".to_owned(),
+        ));
+    }
+    if rust_callfacts_context_sha256(context) != expected_fingerprint {
+        return Err(rust_callfacts_error(
+            facts_path,
+            "analysis context fingerprint does not match its contents".to_owned(),
+        ));
+    }
+    validate_relative_source_path(&context.manifest_path)
+        .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+    if Path::new(&context.manifest_path)
+        .file_name()
+        .is_none_or(|name| name != "Cargo.toml")
+    {
+        return Err(rust_callfacts_error(
+            facts_path,
+            "analysis context manifest_path must name Cargo.toml".to_owned(),
+        ));
+    }
+    if let Some(path) = &context.lockfile_path {
+        validate_relative_source_path(path)
+            .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+        if Path::new(path)
+            .file_name()
+            .is_none_or(|name| name != "Cargo.lock")
+        {
+            return Err(rust_callfacts_error(
+                facts_path,
+                "analysis context lockfile_path must name Cargo.lock".to_owned(),
+            ));
+        }
+    }
+    if let Some(path) = &context.toolchain_path {
+        validate_relative_source_path(path)
+            .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+        if !matches!(
+            Path::new(path).file_name().and_then(|name| name.to_str()),
+            Some("rust-toolchain" | "rust-toolchain.toml")
+        ) {
+            return Err(rust_callfacts_error(
+                facts_path,
+                "analysis context toolchain_path must name rust-toolchain.toml or rust-toolchain"
+                    .to_owned(),
+            ));
+        }
+    }
+
+    let mut seen = BTreeSet::new();
+    for file in &context.context_files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+        if !seen.insert(file.path.as_str()) {
+            return Err(rust_callfacts_error(
+                facts_path,
+                format!("duplicate Rust context input: {}", file.path),
+            ));
+        }
+        let path = root.join(&file.path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(io_failure("verify Rust context input", &path, error)),
+        };
+        if sha256_hex(&bytes) != file.sha256 {
+            return Ok(false);
+        }
+    }
+    if !seen.contains(context.manifest_path.as_str())
+        || context
+            .lockfile_path
+            .as_deref()
+            .is_some_and(|path| !seen.contains(path))
+        || context
+            .toolchain_path
+            .as_deref()
+            .is_some_and(|path| !seen.contains(path))
+    {
+        return Err(rust_callfacts_error(
+            facts_path,
+            "selected Rust context input is absent from context_files".to_owned(),
+        ));
+    }
+    Ok(collect_rust_context_files(root)? == context.context_files)
+}
+
+fn rust_callfact_edges(
+    facts: &[RustCallFact],
+    rust_paths: &BTreeSet<String>,
+    graph_edges: &[CodeGraphEdge],
+    nodes: &[CodeGraphNode],
+    facts_path: &Path,
+) -> CodeGraphResult<(Vec<CodeGraphEdge>, BTreeSet<CallSiteKey>)> {
+    let nodes_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let syntax_sites = graph_edges
+        .iter()
+        .filter(|edge| edge.kind == "calls")
+        .filter_map(|edge| {
+            let caller = nodes_by_id.get(edge.source.as_str())?;
+            let path = caller.path.as_deref()?;
+            if !rust_paths.contains(path) {
+                return None;
+            }
+            let range = edge.range.as_ref()?;
+            Some((
+                (
+                    path.to_owned(),
+                    range.start_byte,
+                    range.end_byte,
+                    edge.source.clone(),
+                ),
+                range.clone(),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut fact_sites = BTreeSet::new();
+    let mut covered_sites = BTreeSet::new();
+    let mut edges = Vec::with_capacity(facts.len());
+    for fact in facts {
+        let (edge, site) = rust_callfact_edge(
+            fact,
+            rust_paths,
+            nodes,
+            &nodes_by_id,
+            &syntax_sites,
+            facts_path,
+        )?;
+        if !fact_sites.insert((fact.path.as_str(), fact.start_byte, fact.end_byte)) {
+            return Err(rust_callfacts_error(
+                facts_path,
+                format!(
+                    "duplicate call-site fact: {}:{}-{}",
+                    fact.path, fact.start_byte, fact.end_byte
+                ),
+            ));
+        }
+        covered_sites.insert(site);
+        edges.push(edge);
+    }
+    Ok((edges, covered_sites))
+}
+
+fn rust_callfact_edge(
+    fact: &RustCallFact,
+    rust_paths: &BTreeSet<String>,
+    nodes: &[CodeGraphNode],
+    nodes_by_id: &HashMap<&str, &CodeGraphNode>,
+    syntax_sites: &BTreeMap<CallSiteKey, CodeGraphRange>,
+    facts_path: &Path,
+) -> CodeGraphResult<(CodeGraphEdge, CallSiteKey)> {
+    validate_relative_source_path(&fact.path)
+        .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+    if !rust_paths.contains(&fact.path)
+        || fact.start_byte >= fact.end_byte
+        || fact.start_line == 0
+        || fact.end_line < fact.start_line
+        || fact.target_name.is_empty()
+    {
+        return Err(rust_callfacts_error(
+            facts_path,
+            format!(
+                "invalid call-site range or non-Rust source: {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let caller_id = rust_symbol_id(&fact.caller, rust_paths, nodes, facts_path)?;
+    let Some(caller) = nodes_by_id.get(caller_id.as_str()) else {
+        return Err(rust_callfacts_error(
+            facts_path,
+            format!("missing caller node for {}", fact.path),
+        ));
+    };
+    if caller.path.as_deref() != Some(fact.path.as_str())
+        || !caller.range.as_ref().is_some_and(|range| {
+            range.start_byte <= fact.start_byte && fact.end_byte <= range.end_byte
+        })
+        || fact.caller.start_byte > fact.start_byte
+        || fact.end_byte > fact.caller.end_byte
+    {
+        return Err(rust_callfacts_error(
+            facts_path,
+            format!(
+                "caller/range does not match source node at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let site = (
+        fact.path.clone(),
+        fact.start_byte,
+        fact.end_byte,
+        caller_id.clone(),
+    );
+    let Some(syntax_range) = syntax_sites.get(&site) else {
+        return Err(rust_callfacts_error(
+            facts_path,
+            format!(
+                "call-site range does not match parsed Rust syntax at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    };
+    let fact_range = CodeGraphRange {
+        start_byte: fact.start_byte,
+        end_byte: fact.end_byte,
+        start_line: fact.start_line,
+        end_line: fact.end_line,
+        start_column: fact.start_column,
+        end_column: fact.end_column,
+    };
+    if syntax_range != &fact_range {
+        return Err(rust_callfacts_error(
+            facts_path,
+            format!(
+                "call-site coordinates do not match parsed syntax at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let (target, candidates, resolved) = rust_fact_target(fact, rust_paths, nodes, facts_path)?;
+    Ok((
+        CodeGraphEdge {
+            kind: "calls".to_owned(),
+            source: caller_id,
+            target,
+            target_name: Some(fact.target_name.clone()),
+            resolved,
+            ambiguous_candidates: candidates,
+            range: Some(fact_range),
+        },
+        site,
+    ))
+}
+
+fn rust_symbol_id(
+    symbol: &RustCallFactsSymbol,
+    rust_paths: &BTreeSet<String>,
+    nodes: &[CodeGraphNode],
+    facts_path: &Path,
+) -> CodeGraphResult<String> {
+    validate_relative_source_path(&symbol.path)
+        .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+    if !rust_paths.contains(&symbol.path) || symbol.start_byte >= symbol.end_byte {
+        return Err(rust_callfacts_error(
+            facts_path,
+            format!("invalid Rust symbol range: {}", symbol.path),
+        ));
+    }
+    let mut candidates = nodes
+        .iter()
+        .filter(|node| matches!(node.kind.as_str(), "function" | "method"))
+        .filter(|node| node.path.as_deref() == Some(symbol.path.as_str()))
+        .filter(|node| {
+            node.range.as_ref().is_some_and(|range| {
+                range.start_byte < symbol.end_byte && symbol.start_byte < range.end_byte
+            })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|node| {
+        node.range
+            .as_ref()
+            .map_or(usize::MAX, |range| range.end_byte - range.start_byte)
+    });
+    match candidates.as_slice() {
+        [node, ..] => Ok(node.id.clone()),
+        [] => Err(rust_callfacts_error(
+            facts_path,
+            format!("Rust symbol is absent from graph snapshot: {}", symbol.path),
+        )),
+    }
+}
+
+fn rust_fact_target(
+    fact: &RustCallFact,
+    rust_paths: &BTreeSet<String>,
+    nodes: &[CodeGraphNode],
+    facts_path: &Path,
+) -> CodeGraphResult<(Option<String>, Vec<String>, bool)> {
+    let location = format!("{}:{}", fact.path, fact.start_line);
+    match fact.resolution.as_str() {
+        "static" => {
+            let target = fact.target.as_ref().ok_or_else(|| {
+                rust_callfacts_error(
+                    facts_path,
+                    format!("static Rust call has no target at {location}"),
+                )
+            })?;
+            if !fact.possible_targets.is_empty() {
+                return Err(rust_callfacts_error(
+                    facts_path,
+                    format!("static Rust call has possible targets at {location}"),
+                ));
+            }
+            Ok((
+                Some(rust_symbol_id(target, rust_paths, nodes, facts_path)?),
+                Vec::new(),
+                true,
+            ))
+        }
+        "possible" | "trait-dispatch" | "ambiguous" => {
+            if fact.target.is_some() {
+                return Err(rust_callfacts_error(
+                    facts_path,
+                    format!("uncertain Rust call claims a definite target at {location}"),
+                ));
+            }
+            let mut candidates = fact
+                .possible_targets
+                .iter()
+                .map(|target| rust_symbol_id(target, rust_paths, nodes, facts_path))
+                .collect::<CodeGraphResult<Vec<_>>>()?;
+            candidates.sort();
+            candidates.dedup();
+            Ok((None, candidates, false))
+        }
+        "external" | "function-value" | "unresolved" => {
+            if fact.target.is_some() || !fact.possible_targets.is_empty() {
+                return Err(rust_callfacts_error(
+                    facts_path,
+                    format!(
+                        "{} Rust call has an invalid target at {location}",
+                        fact.resolution
+                    ),
+                ));
+            }
+            Ok((None, Vec::new(), false))
+        }
+        resolution => Err(rust_callfacts_error(
+            facts_path,
+            format!("unsupported Rust call resolution `{resolution}` at {location}"),
+        )),
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ExternalCallFactsSymbol {
+    path: String,
+    start_byte: usize,
+    end_byte: usize,
+}
+
+#[derive(Clone, Debug)]
+struct ExternalCallFact {
+    path: String,
+    start_byte: usize,
+    end_byte: usize,
+    start_line: usize,
+    end_line: usize,
+    start_column: usize,
+    end_column: usize,
+    caller: ExternalCallFactsSymbol,
+    target_name: String,
+    target: Option<ExternalCallFactsSymbol>,
+    possible_targets: Vec<ExternalCallFactsSymbol>,
+    resolution: String,
+}
+
+impl From<&TypeScriptCallFactsSymbol> for ExternalCallFactsSymbol {
+    fn from(symbol: &TypeScriptCallFactsSymbol) -> Self {
+        Self {
+            path: symbol.path.clone(),
+            start_byte: symbol.start_byte,
+            end_byte: symbol.end_byte,
+        }
+    }
+}
+
+impl From<&PythonCallFactsSymbol> for ExternalCallFactsSymbol {
+    fn from(symbol: &PythonCallFactsSymbol) -> Self {
+        Self {
+            path: symbol.path.clone(),
+            start_byte: symbol.start_byte,
+            end_byte: symbol.end_byte,
+        }
+    }
+}
+
+impl From<&TypeScriptCallFact> for ExternalCallFact {
+    fn from(fact: &TypeScriptCallFact) -> Self {
+        Self {
+            path: fact.path.clone(),
+            start_byte: fact.start_byte,
+            end_byte: fact.end_byte,
+            start_line: fact.start_line,
+            end_line: fact.end_line,
+            start_column: fact.start_column,
+            end_column: fact.end_column,
+            caller: (&fact.caller).into(),
+            target_name: fact.target_name.clone(),
+            target: fact.target.as_ref().map(Into::into),
+            possible_targets: fact.possible_targets.iter().map(Into::into).collect(),
+            resolution: fact.resolution.clone(),
+        }
+    }
+}
+
+impl From<&PythonCallFact> for ExternalCallFact {
+    fn from(fact: &PythonCallFact) -> Self {
+        Self {
+            path: fact.path.clone(),
+            start_byte: fact.start_byte,
+            end_byte: fact.end_byte,
+            start_line: fact.start_line,
+            end_line: fact.end_line,
+            start_column: fact.start_column,
+            end_column: fact.end_column,
+            caller: (&fact.caller).into(),
+            target_name: fact.target_name.clone(),
+            target: fact.target.as_ref().map(Into::into),
+            possible_targets: fact.possible_targets.iter().map(Into::into).collect(),
+            resolution: fact.resolution.clone(),
+        }
+    }
+}
+
+fn external_callfact_edges(
+    facts: &[ExternalCallFact],
+    source_paths: &BTreeSet<String>,
+    graph_edges: &[CodeGraphEdge],
+    nodes: &[CodeGraphNode],
+    facts_path: &Path,
+    language: &str,
+) -> CodeGraphResult<(Vec<CodeGraphEdge>, BTreeSet<CallSiteKey>)> {
+    let nodes_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let syntax_sites = graph_edges
+        .iter()
+        .filter(|edge| edge.kind == "calls")
+        .filter_map(|edge| {
+            let caller = nodes_by_id.get(edge.source.as_str())?;
+            let path = caller.path.as_deref()?;
+            if !source_paths.contains(path) {
+                return None;
+            }
+            let range = edge.range.as_ref()?;
+            Some((
+                (
+                    path.to_owned(),
+                    range.start_byte,
+                    range.end_byte,
+                    edge.source.clone(),
+                ),
+                range.clone(),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut fact_sites = BTreeSet::new();
+    let mut covered_sites = BTreeSet::new();
+    let mut edges = Vec::with_capacity(facts.len());
+    for fact in facts {
+        let (edge, site) = external_callfact_edge(
+            fact,
+            source_paths,
+            nodes,
+            &nodes_by_id,
+            &syntax_sites,
+            facts_path,
+            language,
+        )?;
+        if !fact_sites.insert((fact.path.as_str(), fact.start_byte, fact.end_byte)) {
+            return Err(external_callfacts_error(
+                facts_path,
+                language,
+                format!(
+                    "duplicate call-site fact: {}:{}-{}",
+                    fact.path, fact.start_byte, fact.end_byte
+                ),
+            ));
+        }
+        covered_sites.insert(site);
+        edges.push(edge);
+    }
+    Ok((edges, covered_sites))
+}
+
+fn external_callfact_edge(
+    fact: &ExternalCallFact,
+    source_paths: &BTreeSet<String>,
+    nodes: &[CodeGraphNode],
+    nodes_by_id: &HashMap<&str, &CodeGraphNode>,
+    syntax_sites: &BTreeMap<CallSiteKey, CodeGraphRange>,
+    facts_path: &Path,
+    language: &str,
+) -> CodeGraphResult<(CodeGraphEdge, CallSiteKey)> {
+    validate_relative_source_path(&fact.path)
+        .map_err(|reason| external_callfacts_error(facts_path, language, reason))?;
+    if !source_paths.contains(&fact.path)
+        || fact.start_byte >= fact.end_byte
+        || fact.start_line == 0
+        || fact.end_line < fact.start_line
+        || fact.target_name.is_empty()
+    {
+        return Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!(
+                "invalid call-site range or target name: {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let caller_id = external_symbol_id(&fact.caller, source_paths, nodes, facts_path, language)?;
+    let Some(caller) = nodes_by_id.get(caller_id.as_str()) else {
+        return Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!("missing caller node for {}", fact.path),
+        ));
+    };
+    if caller.path.as_deref() != Some(fact.path.as_str())
+        || !caller.range.as_ref().is_some_and(|range| {
+            range.start_byte <= fact.start_byte && fact.end_byte <= range.end_byte
+        })
+        || fact.caller.start_byte > fact.start_byte
+        || fact.end_byte > fact.caller.end_byte
+    {
+        return Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!(
+                "caller/range does not match source node at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let site = (
+        fact.path.clone(),
+        fact.start_byte,
+        fact.end_byte,
+        caller_id.clone(),
+    );
+    let Some(syntax_range) = syntax_sites.get(&site) else {
+        return Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!(
+                "call-site range does not match parsed syntax at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    };
+    let fact_range = CodeGraphRange {
+        start_byte: fact.start_byte,
+        end_byte: fact.end_byte,
+        start_line: fact.start_line,
+        end_line: fact.end_line,
+        start_column: fact.start_column,
+        end_column: fact.end_column,
+    };
+    if syntax_range != &fact_range {
+        return Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!(
+                "call-site coordinates do not match parsed syntax at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let (target, candidates, resolved) =
+        external_fact_target(fact, source_paths, nodes, facts_path, language)?;
+    Ok((
+        CodeGraphEdge {
+            kind: "calls".to_owned(),
+            source: caller_id,
+            target,
+            target_name: Some(fact.target_name.clone()),
+            resolved,
+            ambiguous_candidates: candidates,
+            range: Some(fact_range),
+        },
+        site,
+    ))
+}
+
+fn external_symbol_id(
+    symbol: &ExternalCallFactsSymbol,
+    source_paths: &BTreeSet<String>,
+    nodes: &[CodeGraphNode],
+    facts_path: &Path,
+    language: &str,
+) -> CodeGraphResult<String> {
+    validate_relative_source_path(&symbol.path)
+        .map_err(|reason| external_callfacts_error(facts_path, language, reason))?;
+    if !source_paths.contains(&symbol.path) || symbol.start_byte >= symbol.end_byte {
+        return Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!("invalid symbol range: {}", symbol.path),
+        ));
+    }
+    let mut candidates = nodes
+        .iter()
+        .filter(|node| matches!(node.kind.as_str(), "function" | "method"))
+        .filter(|node| node.path.as_deref() == Some(symbol.path.as_str()))
+        .filter(|node| {
+            node.range.as_ref().is_some_and(|range| {
+                range.start_byte < symbol.end_byte && symbol.start_byte < range.end_byte
+            })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|node| {
+        node.range
+            .as_ref()
+            .map_or(usize::MAX, |range| range.end_byte - range.start_byte)
+    });
+    match candidates.as_slice() {
+        [node, ..] => Ok(node.id.clone()),
+        [] => Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!("symbol is absent from graph snapshot: {}", symbol.path),
+        )),
+    }
+}
+
+fn external_fact_target(
+    fact: &ExternalCallFact,
+    source_paths: &BTreeSet<String>,
+    nodes: &[CodeGraphNode],
+    facts_path: &Path,
+    language: &str,
+) -> CodeGraphResult<(Option<String>, Vec<String>, bool)> {
+    let location = format!("{}:{}", fact.path, fact.start_line);
+    match fact.resolution.as_str() {
+        "static" => {
+            let target = fact.target.as_ref().ok_or_else(|| {
+                external_callfacts_error(
+                    facts_path,
+                    language,
+                    format!("static call has no target at {location}"),
+                )
+            })?;
+            if !fact.possible_targets.is_empty() {
+                return Err(external_callfacts_error(
+                    facts_path,
+                    language,
+                    format!("static call has possible targets at {location}"),
+                ));
+            }
+            Ok((
+                Some(external_symbol_id(
+                    target,
+                    source_paths,
+                    nodes,
+                    facts_path,
+                    language,
+                )?),
+                Vec::new(),
+                true,
+            ))
+        }
+        "possible" | "ambiguous" | "interface-dispatch" | "trait-dispatch" => {
+            if fact.target.is_some() {
+                return Err(external_callfacts_error(
+                    facts_path,
+                    language,
+                    format!("uncertain call claims a definite target at {location}"),
+                ));
+            }
+            let mut candidates = fact
+                .possible_targets
+                .iter()
+                .map(|target| external_symbol_id(target, source_paths, nodes, facts_path, language))
+                .collect::<CodeGraphResult<Vec<_>>>()?;
+            candidates.sort();
+            candidates.dedup();
+            Ok((None, candidates, false))
+        }
+        "external" | "function-value" | "unresolved" => {
+            if fact.target.is_some() || !fact.possible_targets.is_empty() {
+                return Err(external_callfacts_error(
+                    facts_path,
+                    language,
+                    format!(
+                        "{} call has an invalid target at {location}",
+                        fact.resolution
+                    ),
+                ));
+            }
+            Ok((None, Vec::new(), false))
+        }
+        resolution => Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!("unsupported call resolution `{resolution}` at {location}"),
+        )),
+    }
 }
 
 fn validate_go_callfacts_sources(
@@ -1058,9 +2627,82 @@ fn hash_context_part(hasher: &mut Sha256, value: &str) {
     hasher.update([0]);
 }
 
+fn rust_callfacts_context_sha256(context: &RustCallFactsContext) -> String {
+    let mut hasher = Sha256::new();
+    hash_context_part(&mut hasher, "zvec-grep.rust-callfacts-context-v1");
+    hash_context_part(&mut hasher, &context.rustc_version);
+    hash_context_part(&mut hasher, &context.rustc_commit);
+    hash_context_part(&mut hasher, &context.host);
+    hash_context_part(&mut hasher, &context.target);
+    hash_context_part(&mut hasher, &context.edition);
+    hash_context_part(&mut hasher, &context.manifest_path);
+    hash_context_part(
+        &mut hasher,
+        context.lockfile_path.as_deref().unwrap_or_default(),
+    );
+    hash_context_part(
+        &mut hasher,
+        context.toolchain_path.as_deref().unwrap_or_default(),
+    );
+    for (name, value) in &context.settings {
+        hash_context_part(&mut hasher, name);
+        hash_context_part(&mut hasher, value);
+    }
+    let mut context_files = context.context_files.clone();
+    context_files.sort_by(|left, right| left.path.cmp(&right.path));
+    for file in &context_files {
+        hash_context_part(&mut hasher, &file.path);
+        hash_context_part(&mut hasher, &file.sha256);
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn typescript_callfacts_context_sha256(context: &TypeScriptCallFactsContext) -> String {
+    let mut hasher = Sha256::new();
+    hash_context_part(&mut hasher, "zvec-grep.typescript-callfacts-context-v1");
+    hash_context_part(&mut hasher, &context.typescript_version);
+    hash_context_part(&mut hasher, &context.node_version);
+    hash_context_part(&mut hasher, &context.project_path);
+    hash_context_part(&mut hasher, &context.target);
+    hash_context_part(&mut hasher, &context.module);
+    hash_context_part(&mut hasher, &context.jsx);
+    for (name, value) in &context.settings {
+        hash_context_part(&mut hasher, name);
+        hash_context_part(&mut hasher, value);
+    }
+    let mut context_files = context.context_files.clone();
+    context_files.sort_by(|left, right| left.path.cmp(&right.path));
+    for file in &context_files {
+        hash_context_part(&mut hasher, &file.path);
+        hash_context_part(&mut hasher, &file.sha256);
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn python_callfacts_context_sha256(context: &PythonCallFactsContext) -> String {
+    let mut hasher = Sha256::new();
+    hash_context_part(&mut hasher, "zvec-grep.python-callfacts-context-v1");
+    hash_context_part(&mut hasher, &context.pyright_version);
+    hash_context_part(&mut hasher, &context.python_version);
+    hash_context_part(&mut hasher, &context.target_version);
+    hash_context_part(&mut hasher, &context.project_path);
+    hash_context_part(&mut hasher, &context.typeshed_sha256);
+    for (name, value) in &context.settings {
+        hash_context_part(&mut hasher, name);
+        hash_context_part(&mut hasher, value);
+    }
+    let mut context_files = context.context_files.clone();
+    context_files.sort_by(|left, right| left.path.cmp(&right.path));
+    for file in &context_files {
+        hash_context_part(&mut hasher, &file.path);
+        hash_context_part(&mut hasher, &file.sha256);
+    }
+    hex::encode(hasher.finalize())
+}
+
 type GoSymbolIndex = HashMap<String, Vec<String>>;
 type GraphNodeIndex<'a> = HashMap<&'a str, &'a CodeGraphNode>;
-type GoCallSiteKey = (String, usize, usize, String);
+type CallSiteKey = (String, usize, usize, String);
 
 fn graph_callfact_indexes<'a>(
     artifact: &'a CodeGraphArtifact,
@@ -1098,7 +2740,7 @@ fn go_callfact_edges(
     nodes_by_id: &GraphNodeIndex<'_>,
     graph_edges: &[CodeGraphEdge],
     facts_path: &Path,
-) -> CodeGraphResult<(Vec<CodeGraphEdge>, BTreeSet<GoCallSiteKey>)> {
+) -> CodeGraphResult<(Vec<CodeGraphEdge>, BTreeSet<CallSiteKey>)> {
     let syntax_sites = graph_edges
         .iter()
         .filter(|edge| edge.kind == "calls")
@@ -1149,9 +2791,9 @@ fn go_callfact_edge(
     go_paths: &BTreeSet<String>,
     symbols: &GoSymbolIndex,
     nodes_by_id: &GraphNodeIndex<'_>,
-    syntax_sites: &BTreeMap<GoCallSiteKey, CodeGraphRange>,
+    syntax_sites: &BTreeMap<CallSiteKey, CodeGraphRange>,
     facts_path: &Path,
-) -> CodeGraphResult<(CodeGraphEdge, GoCallSiteKey)> {
+) -> CodeGraphResult<(CodeGraphEdge, CallSiteKey)> {
     validate_relative_source_path(&fact.path)
         .map_err(|reason| go_callfacts_error(facts_path, reason))?;
     if !go_paths.contains(&fact.path)
@@ -1337,20 +2979,131 @@ fn go_callfacts_error(path: &Path, reason: String) -> CodeGraphError {
     }
 }
 
+fn rust_callfacts_error(path: &Path, reason: String) -> CodeGraphError {
+    CodeGraphError::RustCallFacts {
+        path: path.to_path_buf(),
+        reason,
+    }
+}
+
+fn external_callfacts_error(path: &Path, language: &str, reason: String) -> CodeGraphError {
+    match language {
+        "TypeScript" => typescript_callfacts_error(path, reason),
+        "Python" => python_callfacts_error(path, reason),
+        _ => CodeGraphError::Io {
+            operation: format!("validate {language} call-facts artifact"),
+            path: path.to_path_buf(),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidData, reason),
+        },
+    }
+}
+
+fn typescript_callfacts_error(path: &Path, reason: String) -> CodeGraphError {
+    CodeGraphError::TypeScriptCallFacts {
+        path: path.to_path_buf(),
+        reason,
+    }
+}
+
+fn python_callfacts_error(path: &Path, reason: String) -> CodeGraphError {
+    CodeGraphError::PythonCallFacts {
+        path: path.to_path_buf(),
+        reason,
+    }
+}
+
 fn restore_syntax_call_edges(artifact: &mut CodeGraphArtifact) {
     resolve_call_edges(&mut artifact.edges, &artifact.nodes);
     artifact.manifest_key = manifest_key(&artifact.files);
     artifact.go_callfacts_context_sha256 = None;
+    artifact.rust_callfacts_context_sha256 = None;
+    artifact.typescript_callfacts_context_sha256 = None;
+    artifact.python_callfacts_context_sha256 = None;
 }
 
-fn manifest_key_with_go_callfacts(files: &[CodeGraphFile], digest: Option<&str>) -> String {
-    let Some(digest) = digest else {
-        return manifest_key(files);
-    };
+fn manifest_key_with_callfacts(
+    files: &[CodeGraphFile],
+    go_digest: Option<&str>,
+    rust_digest: Option<&str>,
+    typescript_digest: Option<&str>,
+    python_digest: Option<&str>,
+) -> String {
     let mut manifest = manifest_key(files).into_bytes();
-    manifest.extend_from_slice(b"\0go-callfacts\0");
-    manifest.extend_from_slice(digest.as_bytes());
+    if let Some(digest) = go_digest {
+        manifest.extend_from_slice(b"\0go-callfacts\0");
+        manifest.extend_from_slice(digest.as_bytes());
+    }
+    if let Some(digest) = rust_digest {
+        manifest.extend_from_slice(b"\0rust-callfacts\0");
+        manifest.extend_from_slice(digest.as_bytes());
+    }
+    if let Some(digest) = typescript_digest {
+        manifest.extend_from_slice(b"\0typescript-callfacts\0");
+        manifest.extend_from_slice(digest.as_bytes());
+    }
+    if let Some(digest) = python_digest {
+        manifest.extend_from_slice(b"\0python-callfacts\0");
+        manifest.extend_from_slice(digest.as_bytes());
+    }
+    if go_digest.is_none()
+        && rust_digest.is_none()
+        && typescript_digest.is_none()
+        && python_digest.is_none()
+    {
+        return String::from_utf8(manifest).expect("base manifest is UTF-8");
+    }
     sha256_hex(&manifest)
+}
+
+fn update_callfacts_manifest(root: &Path, artifact: &mut CodeGraphArtifact) -> CodeGraphResult<()> {
+    let go_digest = if artifact.go_callfacts_context_sha256.is_some() {
+        Some(read_callfacts_digest(root, GO_CALLFACTS_FILE, "Go")?)
+    } else {
+        None
+    };
+    let rust_digest = if artifact.rust_callfacts_context_sha256.is_some() {
+        Some(read_callfacts_digest(root, RUST_CALLFACTS_FILE, "Rust")?)
+    } else {
+        None
+    };
+    let typescript_digest = if artifact.typescript_callfacts_context_sha256.is_some() {
+        Some(read_callfacts_digest(
+            root,
+            TYPESCRIPT_CALLFACTS_FILE,
+            "TypeScript",
+        )?)
+    } else {
+        None
+    };
+    let python_digest = if artifact.python_callfacts_context_sha256.is_some() {
+        Some(read_callfacts_digest(
+            root,
+            PYTHON_CALLFACTS_FILE,
+            "Python",
+        )?)
+    } else {
+        None
+    };
+    artifact.manifest_key = manifest_key_with_callfacts(
+        &artifact.files,
+        go_digest.as_deref(),
+        rust_digest.as_deref(),
+        typescript_digest.as_deref(),
+        python_digest.as_deref(),
+    );
+    Ok(())
+}
+
+fn read_callfacts_digest(root: &Path, filename: &str, language: &str) -> CodeGraphResult<String> {
+    let path = root.join(".zvec-grep").join(filename);
+    let bytes = fs::read(&path).map_err(|error| {
+        io_failure(
+            &format!("read {language} call-facts artifact"),
+            &path,
+            error,
+        )
+    })?;
+    Ok(sha256_hex(&bytes))
 }
 
 fn validate_relative_source_path(path: &str) -> Result<(), String> {
@@ -1437,6 +3190,23 @@ pub fn write_codegraph_update(
     write_artifact(root, output, artifact)
 }
 
+fn current_callfacts_digest(
+    root: &Path,
+    filename: &str,
+    language: &str,
+) -> CodeGraphResult<Option<String>> {
+    let path = root.join(".zvec-grep").join(filename);
+    match fs::read(&path) {
+        Ok(bytes) => Ok(Some(sha256_hex(&bytes))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(io_failure(
+            &format!("read {language} call-facts artifact"),
+            &path,
+            error,
+        )),
+    }
+}
+
 /// Refreshes the persisted graph snapshot against all supported source files.
 /// Existing artifacts are updated only for added, changed, or deleted files.
 ///
@@ -1467,18 +3237,13 @@ pub fn refresh_codegraph(root: &Path) -> CodeGraphResult<(PathBuf, CodeGraphArti
         let bytes = fs::read(&path).map_err(|error| io_failure("hash source", &path, error))?;
         current.insert(relative_path(&root, &path), sha256_hex(&bytes));
     }
-    let callfacts_path = root.join(".zvec-grep").join(GO_CALLFACTS_FILE);
-    let current_callfacts_digest = match fs::read(&callfacts_path) {
-        Ok(bytes) => Some(sha256_hex(&bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(io_failure(
-                "read Go call-facts artifact",
-                &callfacts_path,
-                error,
-            ));
-        }
-    };
+    let current_go_callfacts_digest = current_callfacts_digest(&root, GO_CALLFACTS_FILE, "Go")?;
+    let current_rust_callfacts_digest =
+        current_callfacts_digest(&root, RUST_CALLFACTS_FILE, "Rust")?;
+    let current_typescript_callfacts_digest =
+        current_callfacts_digest(&root, TYPESCRIPT_CALLFACTS_FILE, "TypeScript")?;
+    let current_python_callfacts_digest =
+        current_callfacts_digest(&root, PYTHON_CALLFACTS_FILE, "Python")?;
 
     let artifact = if let Some(base) = base {
         let previous = base
@@ -1497,20 +3262,29 @@ pub fn refresh_codegraph(root: &Path) -> CodeGraphResult<(PathBuf, CodeGraphArti
                     .map(|file| CodeGraphChange::Delete(PathBuf::from(&file.path))),
             )
             .collect::<Vec<_>>();
-        let expected_manifest =
-            manifest_key_with_go_callfacts(&base.files, current_callfacts_digest.as_deref());
+        let expected_manifest = manifest_key_with_callfacts(
+            &base.files,
+            current_go_callfacts_digest.as_deref(),
+            current_rust_callfacts_digest.as_deref(),
+            current_typescript_callfacts_digest.as_deref(),
+            current_python_callfacts_digest.as_deref(),
+        );
         // When a call-facts sidecar exists, revalidate its source and context
-        // inputs even if the Go source-file manifest is unchanged. Context
-        // files such as go.mod and go.work are intentionally not graph files.
+        // inputs even if the source-file manifest is unchanged. Context files
+        // such as Cargo.toml, go.mod, and rust-toolchain.toml are intentionally
+        // not graph files.
         if changes.is_empty()
-            && current_callfacts_digest.is_none()
+            && current_go_callfacts_digest.is_none()
+            && current_rust_callfacts_digest.is_none()
+            && current_typescript_callfacts_digest.is_none()
+            && current_python_callfacts_digest.is_none()
             && base.manifest_key == expected_manifest
         {
             return Ok((artifact_path, base));
         }
         if changes.is_empty() {
             let mut refreshed = base;
-            apply_go_callfacts(&root, &mut refreshed)?;
+            apply_semantic_callfacts(&root, &mut refreshed)?;
             refreshed
         } else {
             update_codegraph(&base, &root, &changes)?
@@ -1616,6 +3390,244 @@ fn is_go_context_input_path(path: &Path) -> bool {
     }
 }
 
+fn collect_rust_context_files(root: &Path) -> CodeGraphResult<Vec<RustCallFactsFile>> {
+    let mut paths = Vec::new();
+    collect_rust_context_paths(root, &mut paths)?;
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(&path)
+                .map_err(|error| io_failure("read Rust context input", &path, error))?;
+            Ok(RustCallFactsFile {
+                path: relative_path(root, &path),
+                sha256: sha256_hex(&bytes),
+            })
+        })
+        .collect()
+}
+
+fn collect_rust_context_paths(root: &Path, output: &mut Vec<PathBuf>) -> CodeGraphResult<()> {
+    let entries =
+        fs::read_dir(root).map_err(|error| io_failure("scan Rust context inputs", root, error))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| io_failure("read Rust context directory entry", root, error))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| io_failure("inspect Rust context input", &path, error))?;
+        if file_type.is_dir() {
+            if matches!(
+                entry.file_name().to_str(),
+                Some(".git" | ".zvec-grep" | "node_modules" | "target")
+            ) {
+                continue;
+            }
+            collect_rust_context_paths(&path, output)?;
+        } else if file_type.is_file() && is_rust_context_input_path(&path) {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_rust_context_input_path(path: &Path) -> bool {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some("Cargo.toml" | "Cargo.lock" | "rust-toolchain" | "rust-toolchain.toml") => true,
+        Some("config" | "config.toml") => path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == ".cargo"),
+        _ => false,
+    }
+}
+
+fn collect_typescript_context_files(root: &Path) -> CodeGraphResult<Vec<TypeScriptCallFactsFile>> {
+    let mut paths = Vec::new();
+    collect_typescript_context_paths(root, &mut paths)?;
+    collect_typescript_extended_context_paths(root, &mut paths);
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(&path)
+                .map_err(|error| io_failure("read TypeScript context input", &path, error))?;
+            Ok(TypeScriptCallFactsFile {
+                path: relative_path(root, &path),
+                sha256: sha256_hex(&bytes),
+            })
+        })
+        .collect()
+}
+
+fn collect_typescript_extended_context_paths(root: &Path, paths: &mut Vec<PathBuf>) {
+    let mut config_paths = paths
+        .iter()
+        .filter(|path| is_typescript_context_input_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut index = 0;
+    while index < config_paths.len() {
+        let config_path = config_paths[index].clone();
+        index += 1;
+        let Ok(bytes) = fs::read(&config_path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        let Some(extends) = value.get("extends").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if !extends.starts_with('.') {
+            continue;
+        }
+        let Some(parent) = config_path.parent() else {
+            continue;
+        };
+        let base = parent.join(extends);
+        let candidates = [
+            base.clone(),
+            base.with_extension("json"),
+            base.join("tsconfig.json"),
+        ];
+        let Some(extended) = candidates
+            .iter()
+            .find(|candidate| candidate.is_file())
+            .and_then(|candidate| candidate.canonicalize().ok())
+        else {
+            continue;
+        };
+        if !extended.starts_with(root) || paths.contains(&extended) {
+            continue;
+        }
+        paths.push(extended);
+        config_paths.push(paths.last().expect("extended config path").clone());
+    }
+}
+
+fn collect_typescript_context_paths(root: &Path, output: &mut Vec<PathBuf>) -> CodeGraphResult<()> {
+    let entries = fs::read_dir(root)
+        .map_err(|error| io_failure("scan TypeScript context inputs", root, error))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| io_failure("read TypeScript context directory entry", root, error))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| io_failure("inspect TypeScript context input", &path, error))?;
+        if file_type.is_dir() {
+            if matches!(
+                entry.file_name().to_str(),
+                Some(".git" | ".zvec-grep" | "node_modules" | "target" | "dist")
+            ) {
+                continue;
+            }
+            collect_typescript_context_paths(&path, output)?;
+        } else if file_type.is_file() && is_typescript_context_input_path(&path) {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_typescript_context_input_path(path: &Path) -> bool {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some(
+            "package.json"
+            | "package-lock.json"
+            | "npm-shrinkwrap.json"
+            | "yarn.lock"
+            | "pnpm-lock.yaml"
+            | "tsconfig.json",
+        ) => true,
+        Some(name)
+            if name.starts_with("tsconfig.")
+                && Path::new(name)
+                    .extension()
+                    .is_some_and(|extension| extension == "json") =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+fn is_typescript_context_file_path(path: &Path) -> bool {
+    is_typescript_context_input_path(path)
+        || path
+            .extension()
+            .is_some_and(|extension| extension == "json")
+}
+
+fn collect_python_context_files(root: &Path) -> CodeGraphResult<Vec<PythonCallFactsFile>> {
+    let mut paths = Vec::new();
+    collect_python_context_paths(root, &mut paths)?;
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(&path)
+                .map_err(|error| io_failure("read Python context input", &path, error))?;
+            Ok(PythonCallFactsFile {
+                path: relative_path(root, &path),
+                sha256: sha256_hex(&bytes),
+            })
+        })
+        .collect()
+}
+
+fn collect_python_context_paths(root: &Path, output: &mut Vec<PathBuf>) -> CodeGraphResult<()> {
+    let entries = fs::read_dir(root)
+        .map_err(|error| io_failure("scan Python context inputs", root, error))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| io_failure("read Python context directory entry", root, error))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| io_failure("inspect Python context input", &path, error))?;
+        if file_type.is_dir() {
+            if matches!(
+                entry.file_name().to_str(),
+                Some(
+                    ".git"
+                        | ".zvec-grep"
+                        | "node_modules"
+                        | "target"
+                        | ".venv"
+                        | "venv"
+                        | "__pycache__"
+                )
+            ) {
+                continue;
+            }
+            collect_python_context_paths(&path, output)?;
+        } else if file_type.is_file() && is_python_context_input_path(&path) {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_python_context_input_path(path: &Path) -> bool {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some(
+            "pyrightconfig.json" | "pyproject.toml" | "setup.cfg" | "setup.py" | "Pipfile"
+            | "Pipfile.lock" | "poetry.lock" | "uv.lock" | ".python-version",
+        ) => true,
+        Some(name)
+            if name.starts_with("requirements")
+                && Path::new(name).extension() == Some("txt".as_ref()) =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Collects inexpensive change stamps for supported source files under `root`.
 /// Callers may compare these with a previous snapshot before hashing or parsing
 /// file contents.
@@ -1633,92 +3645,99 @@ pub fn codegraph_source_stamps(
     for path in paths {
         let metadata =
             fs::metadata(&path).map_err(|error| io_failure("stat source", &path, error))?;
-        let modified_unix_nanos = metadata
-            .modified()
-            .ok()
-            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-            .map(|duration| duration.as_nanos());
-        #[cfg(unix)]
-        let changed_unix_nanos =
-            Some(i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec()));
-        #[cfg(not(unix))]
-        let changed_unix_nanos = None;
+        stamps.insert(relative_path(&root, &path), source_stamp(&metadata, None));
+    }
+    let go_context = collect_go_context_files(&root)?
+        .into_iter()
+        .map(|file| (file.path, file.sha256));
+    insert_context_stamps(&root, &mut stamps, go_context, "Go")?;
+    let rust_context = collect_rust_context_files(&root)?
+        .into_iter()
+        .map(|file| (file.path, file.sha256));
+    insert_context_stamps(&root, &mut stamps, rust_context, "Rust")?;
+    let typescript_context = collect_typescript_context_files(&root)?
+        .into_iter()
+        .map(|file| (file.path, file.sha256));
+    insert_context_stamps(&root, &mut stamps, typescript_context, "TypeScript")?;
+    let python_context = collect_python_context_files(&root)?
+        .into_iter()
+        .map(|file| (file.path, file.sha256));
+    insert_context_stamps(&root, &mut stamps, python_context, "Python")?;
+    insert_callfacts_stamp(&root, &mut stamps, GO_CALLFACTS_FILE, "Go")?;
+    insert_callfacts_stamp(&root, &mut stamps, RUST_CALLFACTS_FILE, "Rust")?;
+    insert_callfacts_stamp(&root, &mut stamps, TYPESCRIPT_CALLFACTS_FILE, "TypeScript")?;
+    insert_callfacts_stamp(&root, &mut stamps, PYTHON_CALLFACTS_FILE, "Python")?;
+    Ok(stamps)
+}
 
-        stamps.insert(
-            relative_path(&root, &path),
-            CodeGraphSourceStamp {
-                byte_len: metadata.len(),
-                modified_unix_nanos,
-                changed_unix_nanos,
-                content_sha256: None,
-            },
-        );
+fn source_stamp(metadata: &fs::Metadata, content_sha256: Option<String>) -> CodeGraphSourceStamp {
+    let modified_unix_nanos = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos());
+    #[cfg(unix)]
+    let changed_unix_nanos =
+        Some(i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec()));
+    #[cfg(not(unix))]
+    let changed_unix_nanos = None;
+    CodeGraphSourceStamp {
+        byte_len: metadata.len(),
+        modified_unix_nanos,
+        changed_unix_nanos,
+        content_sha256,
     }
-    for file in collect_go_context_files(&root)? {
-        let path = root.join(&file.path);
-        let metadata = fs::metadata(&path)
-            .map_err(|error| io_failure("stat Go context input", &path, error))?;
-        let modified_unix_nanos = metadata
-            .modified()
-            .ok()
-            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-            .map(|duration| duration.as_nanos());
-        #[cfg(unix)]
-        let changed_unix_nanos =
-            Some(i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec()));
-        #[cfg(not(unix))]
-        let changed_unix_nanos = None;
-        stamps.insert(
-            file.path,
-            CodeGraphSourceStamp {
-                byte_len: metadata.len(),
-                modified_unix_nanos,
-                changed_unix_nanos,
-                content_sha256: Some(file.sha256),
-            },
-        );
+}
+
+fn insert_context_stamps<I>(
+    root: &Path,
+    stamps: &mut BTreeMap<String, CodeGraphSourceStamp>,
+    files: I,
+    language: &str,
+) -> CodeGraphResult<()>
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    for (path, digest) in files {
+        let full_path = root.join(&path);
+        let metadata = fs::metadata(&full_path).map_err(|error| {
+            io_failure(&format!("stat {language} context input"), &full_path, error)
+        })?;
+        stamps.insert(path, source_stamp(&metadata, Some(digest)));
     }
-    let callfacts_path = root.join(".zvec-grep").join(GO_CALLFACTS_FILE);
-    match fs::metadata(&callfacts_path) {
-        Ok(metadata) => {
-            let modified_unix_nanos = metadata
-                .modified()
-                .ok()
-                .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-                .map(|duration| duration.as_nanos());
-            #[cfg(unix)]
-            let changed_unix_nanos = Some(
-                i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec()),
-            );
-            #[cfg(not(unix))]
-            let changed_unix_nanos = None;
-            let bytes = fs::read(&callfacts_path).map_err(|error| {
-                io_failure(
-                    "read Go call-facts artifact for freshness",
-                    &callfacts_path,
-                    error,
-                )
-            })?;
-            stamps.insert(
-                format!(".zvec-grep/{GO_CALLFACTS_FILE}"),
-                CodeGraphSourceStamp {
-                    byte_len: metadata.len(),
-                    modified_unix_nanos,
-                    changed_unix_nanos,
-                    content_sha256: Some(sha256_hex(&bytes)),
-                },
-            );
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+    Ok(())
+}
+
+fn insert_callfacts_stamp(
+    root: &Path,
+    stamps: &mut BTreeMap<String, CodeGraphSourceStamp>,
+    filename: &str,
+    language: &str,
+) -> CodeGraphResult<()> {
+    let path = root.join(".zvec-grep").join(filename);
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => {
             return Err(io_failure(
-                "stat Go call-facts artifact",
-                &callfacts_path,
+                &format!("stat {language} call-facts artifact"),
+                &path,
                 error,
             ));
         }
-    }
-    Ok(stamps)
+    };
+    let bytes = fs::read(&path).map_err(|error| {
+        io_failure(
+            &format!("read {language} call-facts artifact for freshness"),
+            &path,
+            error,
+        )
+    })?;
+    stamps.insert(
+        format!(".zvec-grep/{filename}"),
+        source_stamp(&metadata, Some(sha256_hex(&bytes))),
+    );
+    Ok(())
 }
 
 fn parse_file(root: &Path, path: &Path) -> CodeGraphResult<ParsedFile> {
@@ -1862,7 +3881,7 @@ fn language_definition(
     scopes: &[(String, bool)],
 ) -> Option<Definition> {
     let (kind, name) = match (language, node.kind()) {
-        (SourceLanguage::Rust, "function_item") => (
+        (SourceLanguage::Rust, "function_item" | "function_signature_item") => (
             if scopes.iter().rev().any(|(_, class_like)| *class_like) {
                 "method"
             } else {
@@ -2609,6 +4628,87 @@ mod tests {
         let after = super::codegraph_source_stamps(directory.path()).expect("updated stamps");
         assert_ne!(before, after);
         assert!(after.contains_key("go.mod"));
+    }
+
+    #[test]
+    fn source_stamps_include_rust_context_inputs_for_query_cache_freshness() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("lib.rs"), "fn main() {}\n").expect("Rust source");
+        fs::write(
+            directory.path().join("Cargo.toml"),
+            "[package]\nname = \"stamps\"\n",
+        )
+        .expect("Cargo.toml");
+        fs::write(
+            directory.path().join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"stable\"\n",
+        )
+        .expect("rust-toolchain.toml");
+
+        let before = super::codegraph_source_stamps(directory.path()).expect("initial stamps");
+        assert!(before.contains_key("Cargo.toml"));
+        assert!(before.contains_key("rust-toolchain.toml"));
+
+        fs::write(
+            directory.path().join("Cargo.toml"),
+            "[package]\nname = \"stamps\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("update Cargo.toml");
+        let after = super::codegraph_source_stamps(directory.path()).expect("updated stamps");
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn source_stamps_include_typescript_and_python_context_inputs_and_sidecars() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("module.ts"), "function main() {}\n")
+            .expect("TypeScript source");
+        fs::write(
+            directory.path().join("module.py"),
+            "def main():\n    pass\n",
+        )
+        .expect("Python source");
+        fs::write(
+            directory.path().join("tsconfig.json"),
+            "{\"include\":[\"*.ts\"]}\n",
+        )
+        .expect("tsconfig");
+        fs::write(
+            directory.path().join("pyrightconfig.json"),
+            "{\"include\":[\"*.py\"]}\n",
+        )
+        .expect("pyrightconfig");
+
+        let before = super::codegraph_source_stamps(directory.path()).expect("initial stamps");
+        assert!(before.contains_key("tsconfig.json"));
+        assert!(before.contains_key("pyrightconfig.json"));
+
+        fs::write(directory.path().join("tsconfig.json"), "{\"include\":[]}\n")
+            .expect("update tsconfig");
+        let after = super::codegraph_source_stamps(directory.path()).expect("updated stamps");
+        assert_ne!(before, after);
+
+        let typescript_sidecar = directory
+            .path()
+            .join(".zvec-grep")
+            .join(super::TYPESCRIPT_CALLFACTS_FILE);
+        fs::create_dir_all(typescript_sidecar.parent().expect("sidecar parent"))
+            .expect("sidecar directory");
+        fs::write(&typescript_sidecar, b"TypeScript facts").expect("TypeScript sidecar");
+        let with_sidecar =
+            super::codegraph_source_stamps(directory.path()).expect("TypeScript sidecar stamps");
+        assert!(
+            with_sidecar.contains_key(&format!(".zvec-grep/{}", super::TYPESCRIPT_CALLFACTS_FILE))
+        );
+
+        let python_sidecar = directory
+            .path()
+            .join(".zvec-grep")
+            .join(super::PYTHON_CALLFACTS_FILE);
+        fs::write(&python_sidecar, b"Python facts").expect("Python sidecar");
+        let all_sidecars =
+            super::codegraph_source_stamps(directory.path()).expect("Python sidecar stamps");
+        assert!(all_sidecars.contains_key(&format!(".zvec-grep/{}", super::PYTHON_CALLFACTS_FILE)));
     }
 
     #[test]

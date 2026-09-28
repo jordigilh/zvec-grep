@@ -1,0 +1,4 @@
+{
+  "include": ["src"],
+  "pythonVersion": "3.13"
+}
