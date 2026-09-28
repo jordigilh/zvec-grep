@@ -1,0 +1,3 @@
+package rival
+
+func Clear() {}
