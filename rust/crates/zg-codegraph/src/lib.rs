@@ -25,6 +25,9 @@ pub use graph_queries::{
 pub const CODEGRAPH_SCHEMA: &str = "zvec-grep.codegraph";
 pub const CODEGRAPH_VERSION: u32 = 1;
 pub const CODEGRAPH_FILE: &str = "codegraph-v1.json";
+pub const GO_CALLFACTS_SCHEMA: &str = "zvec-grep.go-callfacts";
+pub const GO_CALLFACTS_VERSION: u32 = 1;
+pub const GO_CALLFACTS_FILE: &str = "go-callfacts-v1.json";
 
 #[derive(Debug, Error)]
 pub enum CodeGraphError {
@@ -51,6 +54,8 @@ pub enum CodeGraphError {
     InvalidChangePath(PathBuf),
     #[error("base codegraph schema/version is unsupported: {schema} v{version}")]
     IncompatibleArtifact { schema: String, version: u32 },
+    #[error("invalid Go call-facts artifact {path}: {reason}")]
+    GoCallFacts { path: PathBuf, reason: String },
     #[error("codegraph node was not found: {query}")]
     GraphNodeNotFound { query: String },
     #[error("codegraph node is ambiguous: {query}; candidates: {candidates:?}")]
@@ -76,6 +81,36 @@ pub struct CodeGraphArtifact {
     pub edges: Vec<CodeGraphEdge>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GoCallFactsArtifact {
+    pub schema: String,
+    pub version: u32,
+    pub files: Vec<GoCallFactsFile>,
+    pub calls: Vec<GoCallFact>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GoCallFactsFile {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GoCallFact {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub start_column: usize,
+    pub end_column: usize,
+    pub caller: String,
+    pub target_name: String,
+    pub target: Option<String>,
+    pub possible_targets: Vec<String>,
+    pub resolution: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CodeGraphChange {
     Upsert(PathBuf),
@@ -88,6 +123,7 @@ pub struct CodeGraphSourceStamp {
     byte_len: u64,
     modified_unix_nanos: Option<u128>,
     changed_unix_nanos: Option<i128>,
+    content_sha256: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -272,7 +308,9 @@ pub fn build_codegraph(root: &Path) -> CodeGraphResult<CodeGraphArtifact> {
         .iter()
         .map(|path| parse_file(&root, path))
         .collect::<CodeGraphResult<Vec<_>>>()?;
-    Ok(build_artifact(&parsed))
+    let mut artifact = build_artifact(&parsed);
+    apply_go_callfacts(&root, &mut artifact)?;
+    Ok(artifact)
 }
 
 /// Builds a Go-only graph for existing callers that need the original scope.
@@ -291,7 +329,9 @@ pub fn build_go_codegraph(root: &Path) -> CodeGraphResult<CodeGraphArtifact> {
         .iter()
         .map(|path| parse_file(&root, path))
         .collect::<CodeGraphResult<Vec<_>>>()?;
-    Ok(build_artifact(&parsed))
+    let mut artifact = build_artifact(&parsed);
+    apply_go_callfacts(&root, &mut artifact)?;
+    Ok(artifact)
 }
 
 /// Applies changed, deleted, and renamed files to a previous graph snapshot.
@@ -343,11 +383,9 @@ pub fn update_codegraph(
         parsed.push(parse_file(&root, &canonical)?);
     }
     let changed_artifact = build_artifact(&parsed);
-    Ok(merge_codegraph_delta(
-        base,
-        &changed_paths,
-        changed_artifact,
-    ))
+    let mut artifact = merge_codegraph_delta(base, &changed_paths, changed_artifact);
+    apply_go_callfacts(&root, &mut artifact)?;
+    Ok(artifact)
 }
 
 /// Applies a source-file delta to a previous graph snapshot.
@@ -410,8 +448,9 @@ fn merge_codegraph_delta(
         .map(|node| node.id.clone())
         .collect::<BTreeSet<_>>();
 
-    let mut edges = base
-        .edges
+    let mut base_edges = base.edges.clone();
+    resolve_call_edges(&mut base_edges, &base.nodes);
+    let mut edges = base_edges
         .iter()
         .filter(|edge| {
             valid_node_ids.contains(edge.source.as_str())
@@ -656,6 +695,7 @@ fn resolve_call_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) {
         let Some(target_name) = edge.target_name.as_deref() else {
             edge.target = None;
             edge.resolved = false;
+            edge.ambiguous_candidates.clear();
             continue;
         };
         let simple_name = target_name
@@ -686,6 +726,460 @@ fn resolve_call_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) {
         edge.target = target.map(|definition| definition.node.id.clone());
         edge.resolved = edge.target.is_some();
         edge.ambiguous_candidates = ambiguous_candidates;
+    }
+}
+
+fn apply_go_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> CodeGraphResult<()> {
+    // Start from parser-derived names so replacing/removing a prior overlay
+    // cannot leave semantic edges behind.
+    restore_syntax_call_edges(artifact);
+    match try_apply_go_callfacts(root, artifact) {
+        Ok(()) => Ok(()),
+        // Semantic facts are an optional enhancement. Invalid, unsupported, or
+        // internally inconsistent facts must not prevent the syntax graph from
+        // remaining queryable.
+        Err(CodeGraphError::GoCallFacts { .. }) => {
+            restore_syntax_call_edges(artifact);
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn try_apply_go_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> CodeGraphResult<()> {
+    let Some((path, bytes, facts)) = read_go_callfacts(root)? else {
+        return Ok(());
+    };
+    if facts.schema != GO_CALLFACTS_SCHEMA || facts.version != GO_CALLFACTS_VERSION {
+        return Err(go_callfacts_error(
+            &path,
+            format!(
+                "unsupported schema/version: {} v{}",
+                facts.schema, facts.version
+            ),
+        ));
+    }
+    let Some(go_paths) = validate_go_callfacts_sources(root, artifact, &facts, &path)? else {
+        return Ok(());
+    };
+    let (symbols, nodes_by_id) = graph_callfact_indexes(artifact, &path)?;
+    let (semantic_edges, covered_call_sites) = go_callfact_edges(
+        &facts.calls,
+        &go_paths,
+        &symbols,
+        &nodes_by_id,
+        &artifact.edges,
+        &path,
+    )?;
+    let node_paths = artifact
+        .nodes
+        .iter()
+        .filter_map(|node| Some((node.id.clone(), node.path.clone()?)))
+        .collect::<HashMap<_, _>>();
+    drop(nodes_by_id);
+    artifact.edges.retain(|edge| {
+        if edge.kind != "calls" {
+            return true;
+        }
+        let Some(path) = node_paths.get(edge.source.as_str()) else {
+            return true;
+        };
+        let Some(range) = edge.range.as_ref() else {
+            return true;
+        };
+        !covered_call_sites.contains(&(
+            path.clone(),
+            range.start_byte,
+            range.end_byte,
+            edge.source.clone(),
+        ))
+    });
+    artifact.edges.extend(semantic_edges);
+    sort_graph(&mut artifact.nodes, &mut artifact.edges);
+
+    let facts_digest = sha256_hex(&bytes);
+    artifact.manifest_key = manifest_key_with_go_callfacts(&artifact.files, Some(&facts_digest));
+    Ok(())
+}
+
+fn read_go_callfacts(
+    root: &Path,
+) -> CodeGraphResult<Option<(PathBuf, Vec<u8>, GoCallFactsArtifact)>> {
+    let path = root.join(".zvec-grep").join(GO_CALLFACTS_FILE);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(io_failure("read Go call-facts artifact", &path, error)),
+    };
+    let facts = serde_json::from_slice(&bytes)
+        .map_err(|error| go_callfacts_error(&path, format!("decode JSON: {error}")))?;
+    Ok(Some((path, bytes, facts)))
+}
+
+fn validate_go_callfacts_sources(
+    root: &Path,
+    artifact: &CodeGraphArtifact,
+    facts: &GoCallFactsArtifact,
+    facts_path: &Path,
+) -> CodeGraphResult<Option<BTreeSet<String>>> {
+    let expected = artifact
+        .files
+        .iter()
+        .filter(|file| file.language == "go")
+        .map(|file| (file.path.as_str(), file.sha256.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut actual = BTreeMap::new();
+    for file in &facts.files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| go_callfacts_error(facts_path, reason))?;
+        if actual
+            .insert(file.path.as_str(), file.sha256.as_str())
+            .is_some()
+        {
+            return Err(go_callfacts_error(
+                facts_path,
+                format!("duplicate source file: {}", file.path),
+            ));
+        }
+    }
+    if expected != actual {
+        return Ok(None);
+    }
+    for (relative_path, expected_digest) in &expected {
+        let path = root.join(relative_path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(io_failure("verify Go call-facts source", &path, error)),
+        };
+        if sha256_hex(&bytes) != *expected_digest {
+            return Ok(None);
+        }
+    }
+    Ok(Some(
+        expected.keys().map(|path| (*path).to_owned()).collect(),
+    ))
+}
+
+type GoSymbolIndex = HashMap<String, Vec<String>>;
+type GraphNodeIndex<'a> = HashMap<&'a str, &'a CodeGraphNode>;
+type GoCallSiteKey = (String, usize, usize, String);
+
+fn graph_callfact_indexes<'a>(
+    artifact: &'a CodeGraphArtifact,
+    facts_path: &Path,
+) -> CodeGraphResult<(GoSymbolIndex, GraphNodeIndex<'a>)> {
+    let mut symbols: HashMap<String, Vec<String>> = HashMap::new();
+    let mut nodes_by_id = HashMap::new();
+    for node in &artifact.nodes {
+        nodes_by_id.insert(node.id.as_str(), node);
+        if matches!(node.kind.as_str(), "function" | "method")
+            && let (Some(source_path), Some(qualified_name)) =
+                (node.path.as_deref(), node.qualified_name.as_deref())
+        {
+            symbols
+                .entry(format!("{source_path}::{qualified_name}"))
+                .or_default()
+                .push(node.id.clone());
+        }
+    }
+    for (symbol, ids) in &symbols {
+        if ids.len() != 1 {
+            return Err(go_callfacts_error(
+                facts_path,
+                format!("symbol identity is not unique in graph snapshot: {symbol}"),
+            ));
+        }
+    }
+    Ok((symbols, nodes_by_id))
+}
+
+fn go_callfact_edges(
+    facts: &[GoCallFact],
+    go_paths: &BTreeSet<String>,
+    symbols: &GoSymbolIndex,
+    nodes_by_id: &GraphNodeIndex<'_>,
+    graph_edges: &[CodeGraphEdge],
+    facts_path: &Path,
+) -> CodeGraphResult<(Vec<CodeGraphEdge>, BTreeSet<GoCallSiteKey>)> {
+    let syntax_sites = graph_edges
+        .iter()
+        .filter(|edge| edge.kind == "calls")
+        .filter_map(|edge| {
+            let caller = nodes_by_id.get(edge.source.as_str())?;
+            let path = caller.path.as_deref()?;
+            let range = edge.range.as_ref()?;
+            Some((
+                (
+                    path.to_owned(),
+                    range.start_byte,
+                    range.end_byte,
+                    edge.source.clone(),
+                ),
+                range.clone(),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut fact_sites = BTreeSet::new();
+    let mut covered_sites = BTreeSet::new();
+    let mut edges = Vec::with_capacity(facts.len());
+    for fact in facts {
+        let (edge, site) = go_callfact_edge(
+            fact,
+            go_paths,
+            symbols,
+            nodes_by_id,
+            &syntax_sites,
+            facts_path,
+        )?;
+        if !fact_sites.insert((fact.path.as_str(), fact.start_byte, fact.end_byte)) {
+            return Err(go_callfacts_error(
+                facts_path,
+                format!(
+                    "duplicate call-site fact: {}:{}-{}",
+                    fact.path, fact.start_byte, fact.end_byte
+                ),
+            ));
+        }
+        covered_sites.insert(site);
+        edges.push(edge);
+    }
+    Ok((edges, covered_sites))
+}
+
+fn go_callfact_edge(
+    fact: &GoCallFact,
+    go_paths: &BTreeSet<String>,
+    symbols: &GoSymbolIndex,
+    nodes_by_id: &GraphNodeIndex<'_>,
+    syntax_sites: &BTreeMap<GoCallSiteKey, CodeGraphRange>,
+    facts_path: &Path,
+) -> CodeGraphResult<(CodeGraphEdge, GoCallSiteKey)> {
+    validate_relative_source_path(&fact.path)
+        .map_err(|reason| go_callfacts_error(facts_path, reason))?;
+    if !go_paths.contains(&fact.path)
+        || fact.start_byte >= fact.end_byte
+        || fact.start_line == 0
+        || fact.end_line < fact.start_line
+    {
+        return Err(go_callfacts_error(
+            facts_path,
+            format!(
+                "invalid call-site range or non-Go source: {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let caller_id = unique_symbol_id(symbols, &fact.caller).map_err(|reason| {
+        go_callfacts_error(
+            facts_path,
+            format!("{reason} at {}:{}", fact.path, fact.start_line),
+        )
+    })?;
+    let Some(caller) = nodes_by_id.get(caller_id.as_str()) else {
+        return Err(go_callfacts_error(
+            facts_path,
+            format!("missing caller node: {}", fact.caller),
+        ));
+    };
+    if caller.path.as_deref() != Some(fact.path.as_str())
+        || !caller.range.as_ref().is_some_and(|range| {
+            range.start_byte <= fact.start_byte && fact.end_byte <= range.end_byte
+        })
+    {
+        return Err(go_callfacts_error(
+            facts_path,
+            format!(
+                "caller/range does not match source node at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let site = (
+        fact.path.clone(),
+        fact.start_byte,
+        fact.end_byte,
+        caller_id.clone(),
+    );
+    let Some(syntax_range) = syntax_sites.get(&site) else {
+        return Err(go_callfacts_error(
+            facts_path,
+            format!(
+                "call-site range does not match parsed syntax at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    };
+    let fact_range = CodeGraphRange {
+        start_byte: fact.start_byte,
+        end_byte: fact.end_byte,
+        start_line: fact.start_line,
+        end_line: fact.end_line,
+        start_column: fact.start_column,
+        end_column: fact.end_column,
+    };
+    if syntax_range != &fact_range {
+        return Err(go_callfacts_error(
+            facts_path,
+            format!(
+                "call-site coordinates do not match parsed syntax at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let (target, candidates, resolved) = go_fact_target(fact, go_paths, symbols, facts_path)?;
+    Ok((
+        CodeGraphEdge {
+            kind: "calls".to_owned(),
+            source: caller_id,
+            target,
+            target_name: Some(fact.target_name.clone()),
+            resolved,
+            ambiguous_candidates: candidates,
+            range: Some(CodeGraphRange {
+                start_byte: fact.start_byte,
+                end_byte: fact.end_byte,
+                start_line: fact.start_line,
+                end_line: fact.end_line,
+                start_column: fact.start_column,
+                end_column: fact.end_column,
+            }),
+        },
+        site,
+    ))
+}
+
+fn go_fact_target(
+    fact: &GoCallFact,
+    go_paths: &BTreeSet<String>,
+    symbols: &GoSymbolIndex,
+    facts_path: &Path,
+) -> CodeGraphResult<(Option<String>, Vec<String>, bool)> {
+    let location = format!("{}:{}", fact.path, fact.start_line);
+    match fact.resolution.as_str() {
+        "static" => {
+            let target = fact.target.as_deref().ok_or_else(|| {
+                go_callfacts_error(
+                    facts_path,
+                    format!("static call has no target at {location}"),
+                )
+            })?;
+            if !fact.possible_targets.is_empty() {
+                return Err(go_callfacts_error(
+                    facts_path,
+                    format!("static call has possible targets at {location}"),
+                ));
+            }
+            Ok((
+                Some(
+                    unique_go_symbol_id(symbols, go_paths, target).map_err(|reason| {
+                        go_callfacts_error(facts_path, format!("{reason} at {location}"))
+                    })?,
+                ),
+                Vec::new(),
+                true,
+            ))
+        }
+        "interface-dispatch" => {
+            if fact.target.is_some() {
+                return Err(go_callfacts_error(
+                    facts_path,
+                    format!("interface call claims a definite target at {location}"),
+                ));
+            }
+            let mut candidates = fact
+                .possible_targets
+                .iter()
+                .map(|candidate| {
+                    unique_go_symbol_id(symbols, go_paths, candidate).map_err(|reason| {
+                        go_callfacts_error(facts_path, format!("{reason} at {location}"))
+                    })
+                })
+                .collect::<CodeGraphResult<Vec<_>>>()?;
+            candidates.sort();
+            candidates.dedup();
+            Ok((None, candidates, false))
+        }
+        "external" | "function-value" | "unresolved" => {
+            if fact.target.is_some() || !fact.possible_targets.is_empty() {
+                return Err(go_callfacts_error(
+                    facts_path,
+                    format!(
+                        "{} call has an invalid target at {location}",
+                        fact.resolution
+                    ),
+                ));
+            }
+            Ok((None, Vec::new(), false))
+        }
+        resolution => Err(go_callfacts_error(
+            facts_path,
+            format!("unsupported call resolution `{resolution}` at {location}"),
+        )),
+    }
+}
+
+fn unique_go_symbol_id(
+    symbols: &GoSymbolIndex,
+    go_paths: &BTreeSet<String>,
+    key: &str,
+) -> Result<String, String> {
+    let Some((path, _)) = key.rsplit_once("::") else {
+        return Err(format!("invalid Go symbol identity: {key}"));
+    };
+    if !go_paths.contains(path) {
+        return Err(format!("Go symbol is outside the source snapshot: {key}"));
+    }
+    unique_symbol_id(symbols, key)
+}
+
+fn go_callfacts_error(path: &Path, reason: String) -> CodeGraphError {
+    CodeGraphError::GoCallFacts {
+        path: path.to_path_buf(),
+        reason,
+    }
+}
+
+fn restore_syntax_call_edges(artifact: &mut CodeGraphArtifact) {
+    resolve_call_edges(&mut artifact.edges, &artifact.nodes);
+    artifact.manifest_key = manifest_key(&artifact.files);
+}
+
+fn manifest_key_with_go_callfacts(files: &[CodeGraphFile], digest: Option<&str>) -> String {
+    let Some(digest) = digest else {
+        return manifest_key(files);
+    };
+    let mut manifest = manifest_key(files).into_bytes();
+    manifest.extend_from_slice(b"\0go-callfacts\0");
+    manifest.extend_from_slice(digest.as_bytes());
+    sha256_hex(&manifest)
+}
+
+fn validate_relative_source_path(path: &str) -> Result<(), String> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path.to_string_lossy().contains('\\')
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+                    | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err(format!("invalid relative source path: {}", path.display()));
+    }
+    Ok(())
+}
+
+fn unique_symbol_id(symbols: &HashMap<String, Vec<String>>, key: &str) -> Result<String, String> {
+    match symbols.get(key).map(Vec::as_slice) {
+        Some([id]) => Ok(id.clone()),
+        Some(_) => Err(format!("symbol identity is ambiguous: {key}")),
+        None => Err(format!("symbol is absent from graph snapshot: {key}")),
     }
 }
 
@@ -775,6 +1269,18 @@ pub fn refresh_codegraph(root: &Path) -> CodeGraphResult<(PathBuf, CodeGraphArti
         let bytes = fs::read(&path).map_err(|error| io_failure("hash source", &path, error))?;
         current.insert(relative_path(&root, &path), sha256_hex(&bytes));
     }
+    let callfacts_path = root.join(".zvec-grep").join(GO_CALLFACTS_FILE);
+    let current_callfacts_digest = match fs::read(&callfacts_path) {
+        Ok(bytes) => Some(sha256_hex(&bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(io_failure(
+                "read Go call-facts artifact",
+                &callfacts_path,
+                error,
+            ));
+        }
+    };
 
     let artifact = if let Some(base) = base {
         let previous = base
@@ -793,10 +1299,18 @@ pub fn refresh_codegraph(root: &Path) -> CodeGraphResult<(PathBuf, CodeGraphArti
                     .map(|file| CodeGraphChange::Delete(PathBuf::from(&file.path))),
             )
             .collect::<Vec<_>>();
-        if changes.is_empty() {
+        let expected_manifest =
+            manifest_key_with_go_callfacts(&base.files, current_callfacts_digest.as_deref());
+        if changes.is_empty() && base.manifest_key == expected_manifest {
             return Ok((artifact_path, base));
         }
-        update_codegraph(&base, &root, &changes)?
+        if changes.is_empty() {
+            let mut refreshed = base;
+            apply_go_callfacts(&root, &mut refreshed)?;
+            refreshed
+        } else {
+            update_codegraph(&base, &root, &changes)?
+        }
     } else {
         build_codegraph(&root)?
     };
@@ -879,8 +1393,49 @@ pub fn codegraph_source_stamps(
                 byte_len: metadata.len(),
                 modified_unix_nanos,
                 changed_unix_nanos,
+                content_sha256: None,
             },
         );
+    }
+    let callfacts_path = root.join(".zvec-grep").join(GO_CALLFACTS_FILE);
+    match fs::metadata(&callfacts_path) {
+        Ok(metadata) => {
+            let modified_unix_nanos = metadata
+                .modified()
+                .ok()
+                .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_nanos());
+            #[cfg(unix)]
+            let changed_unix_nanos = Some(
+                i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec()),
+            );
+            #[cfg(not(unix))]
+            let changed_unix_nanos = None;
+            let bytes = fs::read(&callfacts_path).map_err(|error| {
+                io_failure(
+                    "read Go call-facts artifact for freshness",
+                    &callfacts_path,
+                    error,
+                )
+            })?;
+            stamps.insert(
+                format!(".zvec-grep/{GO_CALLFACTS_FILE}"),
+                CodeGraphSourceStamp {
+                    byte_len: metadata.len(),
+                    modified_unix_nanos,
+                    changed_unix_nanos,
+                    content_sha256: Some(sha256_hex(&bytes)),
+                },
+            );
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(io_failure(
+                "stat Go call-facts artifact",
+                &callfacts_path,
+                error,
+            ));
+        }
     }
     Ok(stamps)
 }
@@ -1356,6 +1911,11 @@ fn receiver_type(node: Node<'_>, source: &[u8]) -> Option<String> {
     let receiver = node
         .child_by_field_name("type")
         .map_or_else(|| node_text(node, source), |node| node_text(node, source));
+    let receiver = receiver.trim();
+    let receiver = receiver
+        .strip_prefix('(')
+        .and_then(|receiver| receiver.strip_suffix(')'))
+        .unwrap_or(receiver);
     let receiver = receiver
         .trim()
         .trim_start_matches('*')
@@ -1630,6 +2190,25 @@ mod tests {
         let deleted = super::codegraph_source_stamps(directory.path()).expect("deleted stamps");
         assert_eq!(deleted.len(), 1);
         assert!(deleted.contains_key("added.rs"));
+    }
+
+    #[test]
+    fn source_stamps_include_go_callfacts_sidecar_for_query_cache_freshness() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("main.go"), "package main\n").expect("Go source");
+        let before = super::codegraph_source_stamps(directory.path()).expect("source stamps");
+        let sidecar = directory
+            .path()
+            .join(".zvec-grep")
+            .join(super::GO_CALLFACTS_FILE);
+        fs::create_dir_all(sidecar.parent().expect("sidecar parent")).expect("sidecar directory");
+        fs::write(&sidecar, b"first facts").expect("first sidecar");
+        let after = super::codegraph_source_stamps(directory.path()).expect("sidecar stamps");
+        assert_ne!(before, after);
+        assert!(after.contains_key(&format!(".zvec-grep/{}", super::GO_CALLFACTS_FILE)));
+        fs::write(&sidecar, b"replacement facts").expect("replacement sidecar");
+        let replaced = super::codegraph_source_stamps(directory.path()).expect("updated sidecar");
+        assert_ne!(after, replaced);
     }
 
     #[test]

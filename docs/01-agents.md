@@ -231,10 +231,13 @@ lexical lookup to the agent's native tools:
 | The answer is unrelated open-world knowledge, a current external fact, or web content that does not depend on local evidence | The appropriate external source, not zvec-grep |
 
 `zvec_grep_search` needs an existing index. The callgraph tools refresh a
-root-scoped structural sidecar without requiring the semantic index. Managed rg
-remains available through `zg --rg` and through the optional `full` MCP toolset. See the
-[Pipeline guide](./04-pipeline.md) for the distinction and the
-[MCP guide](./03-mcp.md) for tool inputs.
+root-scoped structural sidecar without requiring the semantic index. When a
+valid, source-matched Go call-facts sidecar is present, blast-radius results
+separate statically bound callers from possible callers such as interface
+dispatch. Without valid Go facts, the graph falls back to syntax-derived edges,
+which may rely on name matching. Managed rg remains available through `zg --rg`
+and through the optional `full` MCP toolset. See the [Pipeline guide](./04-pipeline.md)
+for the distinction and the [MCP guide](./03-mcp.md) for tool inputs.
 
 When semantic discovery is selected because no sufficient exact anchor is
 available and the user asks whether conceptually related material exists
