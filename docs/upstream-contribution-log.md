@@ -516,3 +516,39 @@ the seven-prompt replay is exploratory and has no adjudicated relevance labels.
 
 **Upstream disposition:** Local issue-linked work only; upstream submission
 scope and timing remain undecided.
+
+## 2026-09-28 — LCL-012: Separate Sense and Go blast-radius upstream proposals
+
+**Status:** Local design proposal; no issue or pull request opened against the
+upstream `origin` repository.
+
+The recommended upstream contribution is split into two independent proposals:
+
+1. Port the Sense-inspired qualified-name and identifier-part lexical projection
+   to Rust without changing embeddings, fusion, or default ranking. This is the
+   smaller retrieval-indexing contribution. Commits `87bf286` and `dfb0552`
+   implement the local projection; `540ac22` and `76941c9` record release and
+   rebuild verification. The current evidence proves lexical wiring and smoke
+   search, not a general retrieval-quality improvement.
+2. Add an opt-in, source/context-attested Go call-facts overlay for codegraph
+   blast radius. The local implementation separates definite static callers,
+   possible interface callers, and unresolved function-value calls, and falls
+   back to syntax edges when facts are stale or unavailable. The small
+   hand-authored fixture and the 8,688-line scale fixture match their stated
+   supported static truth; the scale benchmark measured Graphify 1.409s median,
+   zvec syntax 0.288s, and zvec type-aware end-to-end 0.683s, with static-edge
+   precision/recall of 0.985/0.995, 0.990/0.990, and 1.000/1.000 respectively.
+
+The issue-ready scope, evidence, non-goals, acceptance gates, and proposed PR
+split are in
+[`docs/upstream-contribution-proposals-20260928.md`](./upstream-contribution-proposals-20260928.md).
+The “100%” graph statement is deliberately limited to static-edge
+precision/recall on the frozen supported fixtures; it is not a repository-wide
+accuracy claim.
+
+**Local evidence commits:** `87bf286`, `dfb0552`, `f1b04cd`, `0125ccc`,
+`474f1b9`, `bb62f64`, `7aface0`, `ce0ad6b`, and `5a26804`.
+
+**Upstream disposition:** Hold for maintainer feedback. Do not open a combined
+PR; prepare separate issue/PR discussions for lexical retrieval and Go
+semantic call facts.
