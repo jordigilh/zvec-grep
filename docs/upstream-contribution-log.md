@@ -668,7 +668,9 @@ and source-anchored reference/test edges, node/neighbor/affected/explanation
 surfaces, multi-file truth fixtures for all four languages, and one consistent
 published source/context snapshot. The design also records deliberate ways to
 surpass Graphify through certainty classes, provenance, compiler-backed binding,
-and stale-context rejection. No external issue or pull request has been opened.
+and stale-context rejection. Fork PR
+[#24](https://github.com/jordigilh/zvec-grep/pull/24) now carries the committed
+semantic callfacts and evidence slices; no upstream PR has been opened.
 
 ## 2026-09-28 — LCL-019: Branch provenance for four-language Graphify parity
 
@@ -680,14 +682,27 @@ codegraph identity is captured by ZGI-002/ZGI-003, fork issue #3, and the
 earlier LCL entries; the explicit branch handoff is now recorded as ZGI-008 in
 [`docs/local-integration-issues.md`](./local-integration-issues.md).
 
-The current branch is therefore a provenance/evidence branch, not the intended
-review branch for the four-language code-only parity effort. The parity code
-should be committed on a fresh `spike/four-language-codegraph-graphify-parity`
-branch based on the appropriate codegraph integration or current upstream base,
-then reviewed in logical slices. No reset or destructive branch rewrite is
-authorized or required.
+The source branch was therefore a provenance/evidence branch, not the intended
+review branch for the four-language code-only parity effort. No reset or
+destructive branch rewrite was authorized or required.
 
 The original Sense portion is already represented by fork PR
 [#22](https://github.com/jordigilh/zvec-grep/pull/22), whose remote head remains
 `76941c9`. Do not push the later Graphify parity commits to that PR's head
 branch; create a separate stacked parity branch and PR instead.
+
+## 2026-09-28 — LCL-020: Four-language parity review branch and PR
+
+The uncommitted Graphify parity work was preserved, then moved onto
+`spike/four-language-codegraph-graphify-parity` after fork PR #22 merged at
+`f4a52d5`. The branch is based on the updated
+`integration/zvec-live-code-intelligence` tip and contains the eight prior
+codegraph commits plus two logical parity commits:
+
+- `e3f0cca feat(codegraph): add four-language semantic callfacts`;
+- `2d3bed6 docs(codegraph): capture four-language Graphify parity`.
+
+Fork PR [#24](https://github.com/jordigilh/zvec-grep/pull/24) is open as a draft.
+It records the current implementation and fixture-scoped evidence. The next
+implementation slices remain in ZGI-007: richer relations, generic graph
+queries, multi-file truth fixtures, and consistent snapshot publication.

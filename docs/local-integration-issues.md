@@ -115,7 +115,9 @@ logging is enabled. Quality acceptance is pending.
 
 **Status:** Active local issue; design captured in
 [`docs/four-language-codegraph-parity-design-20260928.md`](./four-language-codegraph-parity-design-20260928.md).
-No external issue or pull request is opened yet.
+Fork PR [#24](https://github.com/jordigilh/zvec-grep/pull/24) is open as a
+draft against `integration/zvec-live-code-intelligence`; no upstream PR is open
+yet.
 
 ### Scope
 
@@ -180,8 +182,9 @@ objects; all other programming languages are out of scope.
 
 ## ZGI-008 — Rehome Graphify parity work onto a review branch
 
-**Status:** Branch-hygiene issue; active Graphify parity work remains
-uncommitted on the current checkout.
+**Status:** Resolved handoff; the Graphify parity work is now committed on the
+dedicated review branch and tracked by fork PR
+[#24](https://github.com/jordigilh/zvec-grep/pull/24).
 
 ### Branch provenance
 
@@ -204,7 +207,7 @@ steps:
 
 - `f1b04cd` through `b041814`: Go call-facts certainty, context attestation,
   Graphify comparison fixtures/benchmark, and contribution proposals;
-- current uncommitted changes: Rust, TypeScript, and Python producers,
+- the then-uncommitted changes: Rust, TypeScript, and Python producers,
   four-language consumer validation, synthetic holdouts, benchmark updates, and
   parity design/issue documentation.
 
@@ -232,5 +235,10 @@ evidence. Create a fresh review branch named, for example,
 4. Run the complete four-language codegraph gates before opening the matching
    fork or upstream PR.
 
-The current branch should not be rewritten or reset; it remains the provenance
-copy until the clean branch has been verified.
+This handoff is complete: the dedicated branch was created from the updated
+integration tip, the parity commits were applied there, and fork PR #24 was
+opened. The PR remains draft while the follow-up relation/query work below is
+implemented.
+
+The original source branch should not be rewritten or reset; it remains the
+provenance copy. The dedicated parity branch is the active review checkout.
