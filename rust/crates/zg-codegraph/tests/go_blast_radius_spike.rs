@@ -3,8 +3,9 @@ use std::{collections::HashMap, fs, path::Path};
 use serde::Deserialize;
 use tempfile::TempDir;
 use zg_codegraph::{
-    CallGraphIndex, CodeGraphArtifact, GO_CALLFACTS_SCHEMA, GO_CALLFACTS_VERSION, GoCallFact,
-    GoCallFactsArtifact, GoCallFactsFile, build_go_codegraph, refresh_codegraph,
+    CallGraphIndex, CodeGraphArtifact, GO_CALLFACTS_FILE, GO_CALLFACTS_SCHEMA,
+    GO_CALLFACTS_VERSION, GoCallFact, GoCallFactsArtifact, GoCallFactsContext, GoCallFactsFile,
+    build_go_codegraph, refresh_codegraph,
 };
 
 #[derive(Debug, Deserialize)]
@@ -228,6 +229,48 @@ fn refresh_reverts_to_syntax_edges_when_sidecar_is_removed_or_stale() {
     );
 }
 
+#[test]
+fn refresh_rejects_changed_or_internally_inconsistent_go_context() {
+    let truth = fixture_truth();
+    let workspace = copy_fixture();
+    write_callfacts(workspace.path(), &truth);
+    let (_, initial) = refresh_codegraph(workspace.path()).expect("initial semantic refresh");
+
+    let module_file = workspace.path().join("go.mod");
+    let original_module = fs::read(&module_file).expect("read module input");
+    let mut changed_module = original_module.clone();
+    changed_module.extend_from_slice(b"\n// Go context changed after fact generation\n");
+    fs::write(&module_file, changed_module).expect("change module input");
+    let (_, context_fallback) =
+        refresh_codegraph(workspace.path()).expect("changed Go context should fall back");
+    assert!(context_fallback.go_callfacts_context_sha256.is_none());
+    fs::write(&module_file, original_module).expect("restore module input");
+    let (_, context_restored) =
+        refresh_codegraph(workspace.path()).expect("restored Go context should reapply");
+    assert_eq!(
+        context_restored.go_callfacts_context_sha256,
+        initial.go_callfacts_context_sha256
+    );
+
+    let facts_path = callfacts_path(workspace.path());
+    let mut invalid_context: serde_json::Value =
+        serde_json::from_slice(&fs::read(&facts_path).expect("read valid facts"))
+            .expect("decode valid facts");
+    invalid_context["context_sha256"] = serde_json::json!("not-the-context-fingerprint");
+    fs::write(
+        &facts_path,
+        serde_json::to_vec(&invalid_context).expect("encode invalid context"),
+    )
+    .expect("write inconsistent context");
+    let (_, invalid_context_fallback) =
+        refresh_codegraph(workspace.path()).expect("invalid context should fall back");
+    assert!(
+        invalid_context_fallback
+            .go_callfacts_context_sha256
+            .is_none()
+    );
+}
+
 fn fixture_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/go-blast-radius")
 }
@@ -291,9 +334,61 @@ fn write_callfacts(root: &Path, truth: &FixtureTruth) {
             resolution: call.resolution.clone(),
         })
         .collect();
+    let context_files = truth
+        .source_sha256
+        .iter()
+        .filter(|(path, _)| {
+            matches!(
+                Path::new(path).file_name().and_then(|name| name.to_str()),
+                Some("go.mod" | "go.sum" | "go.work" | "go.work.sum")
+            )
+        })
+        .map(|(path, sha256)| GoCallFactsFile {
+            path: path.clone(),
+            sha256: sha256.clone(),
+        })
+        .collect();
+    let context = GoCallFactsContext {
+        go_version: "go1.26.0".to_owned(),
+        go_mod: "go.mod".to_owned(),
+        go_work: String::new(),
+        settings: [
+            "GO111MODULE",
+            "GO386",
+            "GOAMD64",
+            "GOARCH",
+            "GOARM",
+            "GOARM64",
+            "CGO_ENABLED",
+            "GOEXPERIMENT",
+            "GOFLAGS",
+            "GOMIPS",
+            "GOMIPS64",
+            "GOOS",
+            "GOPPC64",
+            "GORISCV64",
+            "GOTOOLCHAIN",
+            "GOWASM",
+        ]
+        .into_iter()
+        .map(|name| {
+            let value = match name {
+                "GOOS" => "darwin",
+                "GOARCH" => "arm64",
+                "CGO_ENABLED" => "1",
+                _ => "",
+            };
+            (name.to_owned(), value.to_owned())
+        })
+        .collect(),
+        context_files,
+    };
+    let context_sha256 = context.fingerprint();
     let artifact = GoCallFactsArtifact {
         schema: GO_CALLFACTS_SCHEMA.to_owned(),
         version: GO_CALLFACTS_VERSION,
+        context,
+        context_sha256,
         files,
         calls,
     };
@@ -307,7 +402,7 @@ fn write_callfacts(root: &Path, truth: &FixtureTruth) {
 }
 
 fn callfacts_path(root: &Path) -> std::path::PathBuf {
-    root.join(".zvec-grep").join("go-callfacts-v1.json")
+    root.join(".zvec-grep").join(GO_CALLFACTS_FILE)
 }
 
 fn display_layers(layers: &[Vec<String>]) -> Vec<Vec<String>> {
