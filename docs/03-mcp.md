@@ -60,11 +60,16 @@ Graph operations refresh a sidecar from current Go, Rust, TypeScript/TSX, and
 Python source before querying. The sidecar and in-memory query cache are scoped
 to the canonical root, so separate worktrees do not share graph state. Added,
 modified, deleted, and uncommitted source changes are reflected incrementally.
-Go blast-radius queries can additionally consume an explicitly generated
-`go/types` call-facts sidecar when its source hashes and call-site ranges match.
-Those results report interface-dispatch callers as possible, not definite.
-Missing, stale, malformed, or inconsistent facts fall back to syntax-derived
-edges, which may use name matching and are not compiler-verified.
+Go callgraph queries can additionally consume an explicitly generated
+`go/types` call-facts sidecar when its source hashes, recorded Go analysis
+context, module/workspace/vendor manifest hashes, and call-site ranges match.
+Results include the applied context fingerprint. Facts are scoped to the
+environment in which they were generated; Rust does not invoke Go to verify a
+different active environment, so regenerate the sidecar after changing the Go
+toolchain, target, build flags, workspace, or dependency configuration.
+Interface-dispatch callers are reported as possible, not definite. Missing,
+stale, malformed, or inconsistent facts fall back to syntax-derived edges,
+which may use name matching and are not compiler-verified.
 
 ## `zvec_grep_search`
 
