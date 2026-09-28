@@ -185,6 +185,54 @@ optional follow-up.
 - Ask maintainers whether Go facts should be a built-in optional tool, an
   external producer contract, or an experimental branch feature.
 
+## Rust follow-up — bounded compiler-attested callfacts
+
+The Rust extension is intentionally a separate language spike rather than a
+claim that Proposal B's Go producer contract is portable. It adds an opt-in
+`zvec-grep.rust-callfacts` v1 sidecar produced through matching rustup
+`rustc_driver`/HIR libraries and consumed by the same syntax-fallback graph.
+The current bounded classification is:
+
+- locally attested free functions and inherent methods → `static`;
+- trait calls → `trait-dispatch` with possible trait targets, never a definite
+  implementation set;
+- function values, closures, macro-expanded spans, async lowering, unsupported
+  generics, external declarations, and unmappable spans → non-definite or
+  omitted facts;
+- source bytes, complete Rust source lists, Cargo/toolchain/config inputs,
+  compiler identity, and call coordinates are validated before overlay.
+
+The common envelope and certainty rules are recorded in
+[`docs/codegraph-callfacts-contract-20260928.md`](./codegraph-callfacts-contract-20260928.md).
+The Rust producer requires the pinned rustup `1.98.0` toolchain and matching
+`rustc-dev`; Graphify, SCIP, and rust-analyzer are not runtime dependencies.
+
+This remains a local bounded MVP. It has temporary-crate producer/consumer
+coverage for static, trait-dispatch, and function-value calls, deterministic
+sidecar output, and stale/malformed/context fallback tests. It does not yet
+provide a broad Rust precision/recall evaluation or a proposal to enable Rust
+semantic edges by default. Any upstream discussion should be a separate issue
+after independent fixture truth, platform/toolchain coverage, and the
+compiler-private API portability policy are agreed.
+
+## TypeScript and Python follow-ups
+
+The local consumer now also accepts two independent, opt-in v1 sidecars:
+
+- `zvec-grep.typescript-callfacts`, produced with the TypeScript compiler API;
+- `zvec-grep.python-callfacts`, produced with Python AST enumeration plus pinned
+  Pyright LSP definition/hover queries.
+
+Both producers attest source/configuration inputs and exact UTF-8 ranges, and
+both fall back to syntax edges when their artifacts are absent or stale. They
+are deliberately not part of the Go proposal or the Rust compiler-private
+proposal. The local synthetic benchmark now supplies source-pinned fixtures
+and independent certainty truth for all three new language follow-ups, but
+platform/toolchain coverage and a maintainer decision on adding
+TypeScript/Pyright dependencies to the supported producer workflow remain
+open. The benchmark is bounded integration evidence, not a whole-language
+precision or recall claim.
+
 ## Suggested issue labels
 
 - Proposal A: `enhancement`, `rust`, `search`, `code-indexing`.
