@@ -1,0 +1,26 @@
+{
+  "source_sha256": {
+    "matrix/caller.go": "ed07dffd8a9af851fe07e07e52f3a24c63de9bc55d4e061fec0126a539e56ae6",
+    "matrix/generics.go": "358bac914e754c0c6f4930d837fe13861342d33f483c7b8cd102a83bf645e9bc",
+    "go.mod": "870123e00b75c48a8ca63b927494613194cb2993a76638aacbd8b5af66168dd3",
+    "matrix/platform_linux.go": "f1cc37fec9bfe176044abb3308206b842dd8f28acf6726a2545c72ffdfef95a4",
+    "matrix/platform_windows.go": "d49957925c19980d0379fcaadc386d248d35a5c4035728dff698e6fcab02b4ed",
+    "matrix/tag_default.go": "d865ce0f8e65cd3600a14fb02f679cb8a24913f3364510e50540c4783371116b",
+    "matrix/tag_special.go": "75c8c146d7bfc75f23d10627bf21e8529e397bc8e9a49584e62b478c4d97aae2"
+  },
+  "profiles": {
+    "linux-default": {
+      "goos": "linux",
+      "goflags": "",
+      "platform_target": "matrix/platform_linux.go::matrix.platformTarget",
+      "tagged_target": "matrix/tag_default.go::matrix.taggedTarget"
+    },
+    "windows-special": {
+      "goos": "windows",
+      "goflags": "-tags=contextmatrix",
+      "platform_target": "matrix/platform_windows.go::matrix.platformTarget",
+      "tagged_target": "matrix/tag_special.go::matrix.taggedTarget"
+    }
+  },
+  "generic_target": "matrix/generics.go::matrix.identity"
+}
