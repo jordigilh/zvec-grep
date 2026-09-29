@@ -143,6 +143,7 @@ the Rust/TypeScript/Python runner produced these call-resolution results:
 
 | Language / path | Call sites | Syntax-only P/R | Semantic P/R | Graphify P/R | Semantic class accuracy |
 |---|---:|---:|---:|---:|---:|
+| Go (existing scale holdout) | 2,412 | 0.99 / 0.99 | 1.00 / 1.00 | 0.985 / 0.995 | — |
 | Rust | 8 | 0.75 / 0.50 | 1.00 / 1.00 | 0.60 / 0.50 | 8/8 |
 | TypeScript/TSX | 10 | 1.00 / 0.29 | 1.00 / 1.00 | 0.75 / 0.86 | 9/10 |
 | Python | 10 | 0.67 / 0.33 | 1.00 / 1.00 | 1.00 / 0.67 | 10/10 |
@@ -152,6 +153,12 @@ TypeScript 0/1 (the structural/interface case is conservatively non-definite),
 and Python 1/1. Graphify promoted one possible Rust call to a definite edge,
 and missed the possible Python target. The syntax-only graph produced one
 unsafe definite Python edge.
+
+Go is included from the existing large-scale five-repeat run rather than the
+small Rust/TypeScript/Python runner: it covers 2,376 definite calls, 12
+interface-dispatch sites, and 24 function-value/dynamic sites. Its semantic
+path reached 1.00/1.00 versus Graphify 0.985/0.995; the documented median
+semantic end-to-end time was 550 ms versus 1,216 ms for Graphify.
 
 Median semantic end-to-end time in that run was approximately 1.46 s for Rust,
 0.50 s for TypeScript/TSX, and 1.47 s for Python. Those timings include
