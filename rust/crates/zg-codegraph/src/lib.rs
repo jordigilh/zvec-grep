@@ -3916,18 +3916,31 @@ fn toml_container_balance(value: &str) -> Option<usize> {
     let mut containers = Vec::new();
     let mut quote = None;
     let mut escaped = false;
+    let mut unicode_digits = 0;
     for character in value.chars() {
         if let Some(current_quote) = quote {
-            if current_quote == '"' && escaped {
-                if !matches!(
-                    character,
-                    'b' | 't' | 'n' | 'f' | 'r' | '"' | '\\' | 'u' | 'U'
-                ) {
-                    return None;
+            if current_quote == '"' {
+                if unicode_digits > 0 {
+                    if !character.is_ascii_hexdigit() {
+                        return None;
+                    }
+                    unicode_digits -= 1;
+                } else if escaped {
+                    if !matches!(character, 'b' | 't' | 'n' | 'f' | 'r' | '"' | '\\') {
+                        if character == 'u' {
+                            unicode_digits = 4;
+                        } else if character == 'U' {
+                            unicode_digits = 8;
+                        } else {
+                            return None;
+                        }
+                    }
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == current_quote {
+                    quote = None;
                 }
-                escaped = false;
-            } else if current_quote == '"' && character == '\\' {
-                escaped = true;
             } else if character == current_quote {
                 quote = None;
             }
@@ -3945,7 +3958,7 @@ fn toml_container_balance(value: &str) -> Option<usize> {
             _ => {}
         }
     }
-    (quote.is_none() && !escaped).then_some(containers.len())
+    (quote.is_none() && !escaped && unicode_digits == 0).then_some(containers.len())
 }
 
 fn toml_key(value: &str) -> String {
@@ -5729,6 +5742,13 @@ mod tests {
             super::parse_package_manifest(
                 "rust",
                 b"[package]\nname = \"valid-name\"\n[dependencies]\nserde = \"\\q\"\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"valid-name\"\n[dependencies]\nserde = \"\\u12G4\"\n",
             ),
             (None, Vec::new())
         );
