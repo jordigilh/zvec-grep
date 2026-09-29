@@ -4514,8 +4514,7 @@ fn rust_test_attribute(node: Node<'_>, language: SourceLanguage, source: &[u8]) 
     while let Some(parent) = current.parent() {
         if parent.kind() == "function_item" {
             return std::str::from_utf8(&source[..parent.start_byte()])
-                .ok()
-                .is_some_and(|prefix| prefix.trim_end().ends_with("#[test]"));
+                .is_ok_and(|prefix| prefix.trim_end().ends_with("#[test]"));
         }
         current = parent;
     }
