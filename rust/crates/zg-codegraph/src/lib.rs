@@ -3712,11 +3712,19 @@ fn package_manifest_ecosystem(path: &Path) -> Option<&'static str> {
 }
 
 fn parse_package_manifest(ecosystem: &str, bytes: &[u8]) -> (Option<String>, Vec<String>) {
-    let text = String::from_utf8_lossy(bytes);
     let (name, dependencies) = match ecosystem {
-        "go" => parse_go_manifest(&text),
-        "rust" => parse_cargo_manifest(&text),
-        "python" => parse_pyproject_manifest(&text),
+        "go" => match std::str::from_utf8(bytes) {
+            Ok(text) => parse_go_manifest(text),
+            Err(_) => return (None, Vec::new()),
+        },
+        "rust" => match std::str::from_utf8(bytes) {
+            Ok(text) => parse_cargo_manifest(text),
+            Err(_) => return (None, Vec::new()),
+        },
+        "python" => match std::str::from_utf8(bytes) {
+            Ok(text) => parse_pyproject_manifest(text),
+            Err(_) => return (None, Vec::new()),
+        },
         "typescript" => parse_package_json_manifest(bytes),
         _ => (None, Vec::new()),
     };
@@ -3875,11 +3883,12 @@ fn toml_assignments(text: &str) -> Option<Vec<(String, String, String)>> {
             }
             continue;
         }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
+        let (key, value) = line.split_once('=')?;
         let key = toml_key(key);
         let value = value.trim().to_owned();
+        if key.is_empty() || value.is_empty() {
+            return None;
+        }
         let depth = toml_container_balance(&value)?;
         if depth > 0 {
             pending = Some((section.clone(), key, value, depth));
@@ -5749,6 +5758,27 @@ mod tests {
             super::parse_package_manifest(
                 "rust",
                 b"[package]\nname = \"valid-name\"\n[dependencies]\nserde = \"\\u12G4\"\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"valid-name\"\n[dependencies]\nserde =\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"valid-name\"\nnot valid TOML\n[dependencies]\nserde = \"1\"\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"valid-name\"\n[dependencies]\nserde = \"1\"\n\xff",
             ),
             (None, Vec::new())
         );
