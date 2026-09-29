@@ -706,3 +706,29 @@ Fork PR [#24](https://github.com/jordigilh/zvec-grep/pull/24) is open as a draft
 It records the current implementation and fixture-scoped evidence. The next
 implementation slices remain in ZGI-007: richer relations, generic graph
 queries, multi-file truth fixtures, and consistent snapshot publication.
+
+## 2026-09-28 — LCL-021: Generic relation queries and structural truth fixtures
+
+Commit `c246f58 feat(codegraph): add generic relation queries` implements the
+first ZGI-007 follow-up on the dedicated parity branch. The v1 artifact remains
+backward-readable while edges gain optional resolution labels and the relation
+vocabulary is versioned as `zvec-grep.codegraph.relations` v1. Structural
+`inherits`, `implements`, `references`, and `tests` edges are emitted only from
+source-attested syntax and resolved with explicit unresolved/ambiguous states.
+
+The generic `zg-codegraph` API now exposes node, neighbor, relation-filtered
+path, and explanation queries with manifest and language-context provenance.
+Equivalent CLI graph-query actions and root-scoped MCP tools are documented and
+tested. Independent multi-file truth fixtures for Go, Rust, TypeScript, and
+Python live under `rust/crates/zg-codegraph/tests/fixtures/`.
+
+Verification for this slice: `cargo test -p zg-codegraph` (27 tests plus all
+existing integration suites), strict Clippy for `zg-codegraph`, `zg-cli`, and
+`zg-transport-mcp`, `cargo test -p zg-cli` (52), `cargo test -p
+zg-transport-mcp` (34), and `cargo check -p zg` passed. The native macOS Rust
+build used the command-scoped SDK C++ include flags documented above.
+
+**Upstream disposition:** Included in draft fork PR
+[#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
+opened. Reserved `overrides`, `mixes_in`, and `depends_on` relations remain
+non-inferred pending defensible language/compiler evidence.
