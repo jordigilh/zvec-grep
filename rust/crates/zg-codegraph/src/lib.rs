@@ -20,23 +20,23 @@ mod graph_queries;
 
 pub use graph_queries::{
     CallGraphAssignment, CallGraphBlastRadius, CallGraphCluster, CallGraphClustering,
-    CallGraphIndex, CallGraphPath, CodeGraphCapabilities, CodeGraphDirection, CodeGraphExplanation,
-    CodeGraphNeighbor, CodeGraphNeighbors, CodeGraphNodeResult, CodeGraphQueryMetadata,
-    CodeGraphRelationCapability, CodeGraphRelationKind, CodeGraphRelationPath,
-    CodeGraphRelationSupport,
+    CallGraphIndex, CallGraphPath, CodeGraphAffected, CodeGraphCapabilities, CodeGraphDirection,
+    CodeGraphExplanation, CodeGraphNeighbor, CodeGraphNeighbors, CodeGraphNodeResult,
+    CodeGraphQueryMetadata, CodeGraphRelationCapability, CodeGraphRelationKind,
+    CodeGraphRelationPath, CodeGraphRelationSupport, DEFAULT_AFFECTED_RELATIONS,
 };
 
 pub const CODEGRAPH_SCHEMA: &str = "zvec-grep.codegraph";
 pub const CODEGRAPH_VERSION: u32 = 2;
 pub const CODEGRAPH_FILE: &str = "codegraph-v2.json";
 pub const CODEGRAPH_RELATION_SCHEMA: &str = "zvec-grep.codegraph.relations";
-pub const CODEGRAPH_RELATION_VERSION: u32 = 1;
+pub const CODEGRAPH_RELATION_VERSION: u32 = 2;
 /// Generation of the relation extractor serialized into codegraph artifacts.
 ///
 /// This is intentionally separate from the artifact schema version so future
 /// relation-extractor changes can require regeneration without changing the
 /// relation vocabulary itself.
-pub const CODEGRAPH_RELATION_GENERATION: u32 = 2;
+pub const CODEGRAPH_RELATION_GENERATION: u32 = 3;
 pub const GO_CALLFACTS_SCHEMA: &str = "zvec-grep.go-callfacts";
 pub const GO_CALLFACTS_VERSION: u32 = 2;
 pub const GO_CALLFACTS_FILE: &str = "go-callfacts-v2.json";
@@ -459,8 +459,16 @@ struct ParsedFile {
     file_node_id: String,
     definitions: Vec<Definition>,
     imports: Vec<String>,
+    import_sites: Vec<ImportSite>,
     calls: Vec<CallSite>,
     relations: Vec<StructuralRelation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ImportSite {
+    kind: String,
+    target_name: String,
+    range: CodeGraphRange,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -488,6 +496,7 @@ struct LanguageCollector<'source> {
     scopes: Vec<(String, bool)>,
     definitions: Vec<Definition>,
     imports: BTreeSet<String>,
+    import_sites: Vec<ImportSite>,
     calls: Vec<CallSite>,
     relations: Vec<StructuralRelation>,
 }
@@ -501,6 +510,7 @@ impl<'source> LanguageCollector<'source> {
             scopes: Vec::new(),
             definitions: Vec::new(),
             imports: BTreeSet::new(),
+            import_sites: Vec::new(),
             calls: Vec::new(),
             relations: Vec::new(),
         }
@@ -520,8 +530,17 @@ impl<'source> LanguageCollector<'source> {
             &self.scopes,
             definition.as_ref(),
         ));
-        if let Some(import) = language_import(node, self.source, self.language) {
-            self.imports.insert(import);
+        for import in language_imports(node, self.source, self.language) {
+            self.imports.insert(import.target_name.clone());
+            self.import_sites.push(import);
+        }
+        if let Some(reexport) = language_reexport(node, self.source, self.language) {
+            self.imports.insert(reexport.target_name.clone());
+            self.import_sites.push(reexport);
+        }
+        if let Some(dynamic_import) = language_dynamic_import(node, self.source, self.language) {
+            self.imports.insert(dynamic_import.target_name.clone());
+            self.import_sites.push(dynamic_import);
         }
         if let Some(call) = language_call_site(node, self.source, self.language) {
             if let Some(source_id) =
@@ -675,7 +694,9 @@ pub fn update_codegraph(
     // package nodes and edges are retained from the base graph; refresh performs
     // a full rebuild when a manifest input changes.
     let changed_artifact = build_artifact(&parsed, &[]);
-    let mut artifact = merge_codegraph_delta(base, &changed_paths, changed_artifact);
+    let package_manifests = collect_package_manifests(&root)?;
+    let mut artifact =
+        merge_codegraph_delta(base, &changed_paths, changed_artifact, &package_manifests);
     apply_semantic_callfacts(&root, &mut artifact)?;
     Ok(artifact)
 }
@@ -700,6 +721,7 @@ fn merge_codegraph_delta(
     base: &CodeGraphArtifact,
     changed_paths: &BTreeSet<String>,
     changed_artifact: CodeGraphArtifact,
+    package_manifests: &[PackageManifest],
 ) -> CodeGraphArtifact {
     let mut files = base
         .files
@@ -747,7 +769,7 @@ fn merge_codegraph_delta(
         .filter(|edge| {
             valid_node_ids.contains(edge.source.as_str())
                 && !changed_source_ids.contains(&edge.source)
-                && (edge.kind == "calls"
+                && (matches!(edge.kind.as_str(), "calls" | "imports_from" | "re_exports")
                     || edge
                         .target
                         .as_deref()
@@ -756,12 +778,18 @@ fn merge_codegraph_delta(
         .cloned()
         .chain(changed_artifact.edges)
         .collect::<Vec<_>>();
+    refresh_import_edge_targets(&mut edges, &files, &nodes, package_manifests);
     resolve_call_edges(&mut edges, &nodes);
     resolve_relation_edges(&mut edges, &nodes);
 
     let referenced_packages = edges
         .iter()
-        .filter(|edge| matches!(edge.kind.as_str(), "imports" | "depends_on"))
+        .filter(|edge| {
+            matches!(
+                edge.kind.as_str(),
+                "imports" | "imports_from" | "re_exports" | "depends_on"
+            )
+        })
         .flat_map(|edge| [Some(edge.source.as_str()), edge.target.as_deref()])
         .flatten()
         .collect::<BTreeSet<_>>();
@@ -786,7 +814,7 @@ fn merge_codegraph_delta(
     CodeGraphArtifact {
         schema: CODEGRAPH_SCHEMA.to_owned(),
         version: CODEGRAPH_VERSION,
-        manifest_key: manifest_key(&files),
+        manifest_key: package_manifest_key(&files, package_manifests),
         relation_generation: CODEGRAPH_RELATION_GENERATION,
         go_callfacts_context_sha256: None,
         rust_callfacts_context_sha256: None,
@@ -879,6 +907,7 @@ fn build_artifact(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn structural_graph(
     parsed: &[ParsedFile],
     package_manifests: &[PackageManifest],
@@ -922,6 +951,21 @@ fn structural_graph(
                 ambiguous_candidates: Vec::new(),
                 resolution: Some("structural".to_owned()),
                 range: None,
+            });
+        }
+        for import in &file.import_sites {
+            let package_id = package_node_id(&import.target_name);
+            let local_target = resolve_local_import_target(file, import, parsed, package_manifests);
+            ensure_package_node(&mut package_nodes, &import.target_name, None);
+            edges.push(CodeGraphEdge {
+                kind: import.kind.clone(),
+                source: file.file_node_id.clone(),
+                target: Some(local_target.as_deref().map_or(package_id, file_node_id)),
+                target_name: Some(import.target_name.clone()),
+                resolved: true,
+                ambiguous_candidates: Vec::new(),
+                resolution: Some("syntax".to_owned()),
+                range: Some(import.range.clone()),
             });
         }
         for relation in &file.relations {
@@ -989,6 +1033,296 @@ fn ensure_package_node(
         });
     if node.path.is_none() {
         node.path = path.map(str::to_owned);
+    }
+}
+
+fn resolve_local_import_target(
+    file: &ParsedFile,
+    import: &ImportSite,
+    parsed: &[ParsedFile],
+    package_manifests: &[PackageManifest],
+) -> Option<String> {
+    let candidate = match file.file.language.as_str() {
+        "go" => resolve_go_import(file, &import.target_name, parsed, package_manifests),
+        "rust" => resolve_rust_import(file, &import.target_name, parsed, package_manifests),
+        "typescript" | "tsx" => resolve_typescript_import(file, &import.target_name, parsed),
+        "python" => resolve_python_import(file, &import.target_name, parsed),
+        _ => None,
+    }?;
+    parsed
+        .iter()
+        .find(|candidate_file| candidate_file.file.path == candidate)
+        .map(|candidate_file| candidate_file.file.path.clone())
+}
+
+fn resolve_typescript_import(
+    file: &ParsedFile,
+    target: &str,
+    parsed: &[ParsedFile],
+) -> Option<String> {
+    if !target.starts_with('.') {
+        return None;
+    }
+    let base = join_graph_path(&graph_parent(&file.file.path), target);
+    let base_without_runtime_extension = [".js", ".jsx", ".mjs", ".cjs"]
+        .iter()
+        .find_map(|extension| base.strip_suffix(extension))
+        .unwrap_or(base.as_str());
+    let candidates = [
+        base.clone(),
+        format!("{base_without_runtime_extension}.ts"),
+        format!("{base_without_runtime_extension}.tsx"),
+        format!("{base_without_runtime_extension}/index.ts"),
+        format!("{base_without_runtime_extension}/index.tsx"),
+    ];
+    candidates.into_iter().find(|candidate| {
+        parsed.iter().any(|candidate_file| {
+            matches!(candidate_file.file.language.as_str(), "typescript" | "tsx")
+                && candidate_file.file.path == *candidate
+        })
+    })
+}
+
+fn resolve_python_import(file: &ParsedFile, target: &str, parsed: &[ParsedFile]) -> Option<String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return None;
+    }
+    let leading_dots = target.bytes().take_while(|byte| *byte == b'.').count();
+    let module = target.trim_start_matches('.').replace('.', "/");
+    let mut base_directory = if leading_dots == 0 {
+        String::new()
+    } else {
+        graph_parent(&file.file.path)
+    };
+    for _ in 1..leading_dots {
+        base_directory = graph_parent(&base_directory);
+    }
+    let base = join_graph_path(&base_directory, &module);
+    let candidates = if module.is_empty() {
+        vec![format!("{base}/__init__.py")]
+    } else {
+        vec![format!("{base}.py"), format!("{base}/__init__.py")]
+    };
+    candidates.into_iter().find(|candidate| {
+        parsed.iter().any(|candidate_file| {
+            candidate_file.file.language == "python" && candidate_file.file.path == *candidate
+        })
+    })
+}
+
+fn resolve_rust_import(
+    file: &ParsedFile,
+    target: &str,
+    parsed: &[ParsedFile],
+    package_manifests: &[PackageManifest],
+) -> Option<String> {
+    let mut segments = target
+        .trim()
+        .trim_end_matches(';')
+        .split("::")
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if segments.is_empty() {
+        return None;
+    }
+    let module_directory = rust_module_directory(&file.file.path);
+    let crate_directory = package_manifests
+        .iter()
+        .filter(|manifest| manifest.ecosystem == "rust")
+        .filter(|manifest| {
+            let manifest_directory = graph_parent(&manifest.path);
+            manifest_directory.is_empty()
+                || file.file.path == manifest_directory
+                || file
+                    .file
+                    .path
+                    .starts_with(&format!("{manifest_directory}/"))
+        })
+        .max_by_key(|manifest| graph_parent(&manifest.path).len())
+        .map(|manifest| join_graph_path(&graph_parent(&manifest.path), "src"))
+        .or_else(|| {
+            parsed
+                .iter()
+                .filter(|candidate| candidate.file.language == "rust")
+                .find(|candidate| {
+                    candidate.file.path.ends_with("/src/lib.rs")
+                        || candidate.file.path.ends_with("/src/main.rs")
+                        || matches!(candidate.file.path.as_str(), "src/lib.rs" | "src/main.rs")
+                })
+                .map(|root| graph_parent(&root.file.path))
+        })
+        .unwrap_or_else(|| {
+            file.file.path.find("/src/").map_or_else(
+                || "src".to_owned(),
+                |index| file.file.path[..index + 5].to_owned(),
+            )
+        });
+
+    let base_directory = match segments.first().copied() {
+        Some("crate") => {
+            segments.remove(0);
+            crate_directory
+        }
+        Some("self") => {
+            segments.remove(0);
+            module_directory
+        }
+        Some("super") => {
+            segments.remove(0);
+            graph_parent(&module_directory)
+        }
+        _ => crate_directory,
+    };
+    if segments.is_empty() {
+        return None;
+    }
+
+    // `use crate::module::Item` and `use crate::module::{Item}` both describe
+    // the module edge. Try the longest path first, then progressively remove
+    // leaf names that may be declarations inside that module.
+    for length in (1..=segments.len()).rev() {
+        let module_path = segments[..length].join("/");
+        let base = join_graph_path(&base_directory, &module_path);
+        for candidate in [format!("{base}.rs"), format!("{base}/mod.rs")] {
+            if parsed.iter().any(|candidate_file| {
+                candidate_file.file.language == "rust" && candidate_file.file.path == candidate
+            }) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn resolve_go_import(
+    file: &ParsedFile,
+    target: &str,
+    parsed: &[ParsedFile],
+    package_manifests: &[PackageManifest],
+) -> Option<String> {
+    let manifest = package_manifests
+        .iter()
+        .filter(|manifest| manifest.ecosystem == "go")
+        .filter(|manifest| {
+            let manifest_directory = graph_parent(&manifest.path);
+            manifest_directory.is_empty()
+                || file.file.path == manifest_directory
+                || file
+                    .file
+                    .path
+                    .starts_with(&format!("{manifest_directory}/"))
+        })
+        .filter(|manifest| {
+            target == manifest.name.as_deref().unwrap_or_default()
+                || target.starts_with(&format!(
+                    "{}/",
+                    manifest.name.as_deref().unwrap_or_default()
+                ))
+        })
+        .max_by_key(|manifest| manifest.name.as_deref().map_or(0, str::len))?;
+    let module_name = manifest.name.as_deref()?;
+    let relative = target.strip_prefix(module_name)?.trim_start_matches('/');
+    let directory = join_graph_path(&graph_parent(&manifest.path), relative);
+    let matches = parsed
+        .iter()
+        .filter(|candidate| candidate.file.language == "go")
+        .filter(|candidate| graph_parent(&candidate.file.path) == directory)
+        .map(|candidate| candidate.file.path.clone())
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [path] => Some(path.clone()),
+        _ => None,
+    }
+}
+
+fn rust_module_directory(path: &str) -> String {
+    graph_parent(path)
+}
+
+fn graph_parent(path: &str) -> String {
+    path.rsplit_once('/')
+        .map_or_else(String::new, |(parent, _)| parent.to_owned())
+}
+
+fn join_graph_path(parent: &str, child: &str) -> String {
+    let mut components = parent
+        .split('/')
+        .chain(child.split('/'))
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect::<Vec<_>>();
+    let mut normalized = Vec::with_capacity(components.len());
+    for component in components.drain(..) {
+        if component == ".." {
+            normalized.pop();
+        } else {
+            normalized.push(component);
+        }
+    }
+    normalized.join("/")
+}
+
+fn refresh_import_edge_targets(
+    edges: &mut [CodeGraphEdge],
+    files: &[CodeGraphFile],
+    nodes: &[CodeGraphNode],
+    package_manifests: &[PackageManifest],
+) {
+    let parsed = files
+        .iter()
+        .map(|file| ParsedFile {
+            file: file.clone(),
+            file_node_id: file_node_id(&file.path),
+            definitions: Vec::new(),
+            imports: Vec::new(),
+            import_sites: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let nodes_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    for edge in edges
+        .iter_mut()
+        .filter(|edge| matches!(edge.kind.as_str(), "imports_from" | "re_exports"))
+    {
+        let Some(source) = nodes_by_id.get(edge.source.as_str()) else {
+            continue;
+        };
+        let Some(source_file) = source
+            .path
+            .as_deref()
+            .and_then(|path| parsed.iter().find(|file| file.file.path == path))
+        else {
+            continue;
+        };
+        let Some(target_name) = edge.target_name.as_deref() else {
+            edge.target = None;
+            edge.resolved = false;
+            edge.resolution = Some("unresolved".to_owned());
+            continue;
+        };
+        let import = ImportSite {
+            kind: edge.kind.clone(),
+            target_name: target_name.to_owned(),
+            range: edge.range.clone().unwrap_or(CodeGraphRange {
+                start_byte: 0,
+                end_byte: 0,
+                start_line: 0,
+                end_line: 0,
+                start_column: 0,
+                end_column: 0,
+            }),
+        };
+        let target = resolve_local_import_target(source_file, &import, &parsed, package_manifests)
+            .map_or_else(|| package_node_id(target_name), |path| file_node_id(&path));
+        edge.target = Some(target);
+        edge.resolved = true;
+        edge.ambiguous_candidates.clear();
+        edge.resolution = Some("syntax".to_owned());
     }
 }
 
@@ -1156,7 +1490,13 @@ fn resolve_relation_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) 
     for edge in edges.iter_mut().filter(|edge| {
         matches!(
             edge.kind.as_str(),
-            "inherits" | "implements" | "overrides" | "mixes_in" | "references" | "tests"
+            "inherits"
+                | "implements"
+                | "embeds"
+                | "overrides"
+                | "mixes_in"
+                | "references"
+                | "tests"
         )
     }) {
         let Some(target_name) = edge.target_name.as_deref() else {
@@ -1233,7 +1573,7 @@ fn relation_target_kind(relation: &str, node_kind: &str) -> bool {
         "tests" => matches!(node_kind, "function" | "method" | "class"),
         "overrides" => matches!(node_kind, "method" | "function"),
         "depends_on" => node_kind == "package",
-        "inherits" | "implements" | "mixes_in" => {
+        "inherits" | "implements" | "embeds" | "mixes_in" => {
             matches!(node_kind, "class" | "interface" | "type" | "alias" | "enum")
         }
         "references" => matches!(
@@ -4516,6 +4856,7 @@ fn parse_file(root: &Path, path: &Path) -> CodeGraphResult<ParsedFile> {
     let file_node_id = file_node_id(&relative_path);
     let mut definitions = Vec::new();
     let mut imports = BTreeSet::new();
+    let mut import_sites = Vec::new();
     let mut calls = Vec::new();
     let mut relations = Vec::new();
     if language == SourceLanguage::Go {
@@ -4526,6 +4867,7 @@ fn parse_file(root: &Path, path: &Path) -> CodeGraphResult<ParsedFile> {
             &relative_path,
             &mut definitions,
             &mut imports,
+            &mut import_sites,
             &mut calls,
             &mut relations,
         );
@@ -4534,6 +4876,7 @@ fn parse_file(root: &Path, path: &Path) -> CodeGraphResult<ParsedFile> {
         collector.collect(tree.root_node());
         definitions = collector.definitions;
         imports = collector.imports;
+        import_sites = collector.import_sites;
         calls = collector.calls;
         relations = collector.relations;
     }
@@ -4548,6 +4891,7 @@ fn parse_file(root: &Path, path: &Path) -> CodeGraphResult<ParsedFile> {
         file_node_id,
         definitions,
         imports: imports.into_iter().collect(),
+        import_sites,
         calls,
         relations,
     })
@@ -4561,6 +4905,7 @@ fn collect_file_data(
     path: &str,
     definitions: &mut Vec<Definition>,
     imports: &mut BTreeSet<String>,
+    import_sites: &mut Vec<ImportSite>,
     calls: &mut Vec<CallSite>,
     relations: &mut Vec<StructuralRelation>,
 ) {
@@ -4599,6 +4944,11 @@ fn collect_file_data(
         }
         "import_spec" => {
             if let Some(import) = import_path(node, source) {
+                import_sites.push(ImportSite {
+                    kind: "imports_from".to_owned(),
+                    target_name: import.clone(),
+                    range: graph_range(node),
+                });
                 imports.insert(import);
             }
         }
@@ -4624,6 +4974,7 @@ fn collect_file_data(
             path,
             definitions,
             imports,
+            import_sites,
             calls,
             relations,
         );
@@ -4660,6 +5011,7 @@ fn language_definition(
         }
         (SourceLanguage::Rust, "trait_item") => ("interface", node.child_by_field_name("name")?),
         (SourceLanguage::Rust, "type_item") => ("alias", node.child_by_field_name("name")?),
+        (SourceLanguage::Rust, "mod_item") => ("module", node.child_by_field_name("name")?),
         (SourceLanguage::Rust, "const_item") => ("constant", node.child_by_field_name("name")?),
         (SourceLanguage::Rust, "static_item") => ("variable", node.child_by_field_name("name")?),
         (SourceLanguage::TypeScript | SourceLanguage::Tsx, "function_declaration") => {
@@ -4680,6 +5032,9 @@ fn language_definition(
         }
         (SourceLanguage::TypeScript | SourceLanguage::Tsx, "type_alias_declaration") => {
             ("alias", node.child_by_field_name("name")?)
+        }
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "variable_declarator") => {
+            ("variable", node.child_by_field_name("name")?)
         }
         (SourceLanguage::Python, "function_definition") => (
             if scopes.iter().rev().any(|(_, class_like)| *class_like) {
@@ -4944,7 +5299,7 @@ fn go_structural_relations(
                 kind: if field.child_by_field_name("name").is_some() {
                     "references"
                 } else {
-                    "inherits"
+                    "embeds"
                 }
                 .to_owned(),
                 source: definition.node.id.clone(),
@@ -5075,32 +5430,151 @@ fn is_test_name(name: &str) -> bool {
             .is_some_and(|suffix| suffix.chars().next().is_some_and(char::is_uppercase))
 }
 
-fn language_import(node: Node<'_>, source: &[u8], language: SourceLanguage) -> Option<String> {
-    let text = match (language, node.kind()) {
+fn language_imports(node: Node<'_>, source: &[u8], language: SourceLanguage) -> Vec<ImportSite> {
+    let target_names = match (language, node.kind()) {
         (SourceLanguage::Rust, "use_declaration") => {
-            node_text(node, source).trim().strip_prefix("use")?.trim()
+            rust_use_target(node, source).into_iter().collect()
         }
-        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "import_statement") => {
-            node.child_by_field_name("source").map_or_else(
-                || node_text(node, source),
-                |source_node| node_text(source_node, source),
-            )
-        }
-        (SourceLanguage::Python, "import_from_statement") => {
-            node.child_by_field_name("module").map_or_else(
-                || node_text(node, source),
-                |module| node_text(module, source),
-            )
-        }
-        (SourceLanguage::Python, "import_statement") => node_text(node, source),
-        _ => return None,
+        (SourceLanguage::Rust, "mod_item") if node.child_by_field_name("body").is_none() => node
+            .child_by_field_name("name")
+            .map(|name| format!("crate::{}", node_text(name, source).trim()))
+            .filter(|target| !target.ends_with("::"))
+            .into_iter()
+            .collect(),
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "import_statement") => node
+            .child_by_field_name("source")
+            .or_else(|| {
+                named_children(node)
+                    .into_iter()
+                    .find(|child| child.kind() == "string")
+            })
+            .and_then(|source_node| string_literal_value(source_node, source))
+            .into_iter()
+            .collect(),
+        (SourceLanguage::Python, "import_from_statement") => node
+            .child_by_field_name("module_name")
+            .map(|module| node_text(module, source).trim().to_owned())
+            .filter(|module| !module.is_empty())
+            .into_iter()
+            .collect(),
+        (SourceLanguage::Python, "import_statement") => named_children(node)
+            .into_iter()
+            .filter_map(|child| match child.kind() {
+                "aliased_import" => child
+                    .child_by_field_name("name")
+                    .map(|name| node_text(name, source).trim().to_owned()),
+                "dotted_name" => Some(node_text(child, source).trim().to_owned()),
+                _ => None,
+            })
+            .filter(|module| !module.is_empty())
+            .collect(),
+        _ => Vec::new(),
     };
-    let import = text
+
+    target_names
+        .into_iter()
+        .map(|target_name| ImportSite {
+            kind: if language == SourceLanguage::Rust
+                && node.kind() == "use_declaration"
+                && rust_use_is_public(node, source)
+            {
+                "re_exports".to_owned()
+            } else {
+                "imports_from".to_owned()
+            },
+            target_name,
+            range: graph_range(node),
+        })
+        .collect()
+}
+
+fn rust_use_target(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let argument = node
+        .child_by_field_name("argument")
+        .or_else(|| named_children(node).into_iter().last())?;
+    let raw = node_text(argument, source)
         .trim()
         .trim_end_matches(';')
+        .trim();
+    let target = raw.split_once("::{").map_or(raw, |(prefix, _)| prefix);
+    let target = target
+        .split_once(" as ")
+        .map_or(target, |(prefix, _)| prefix)
+        .trim_matches(['{', '}', ',', ';', '"', '\'', '`'])
+        .trim();
+    (!target.is_empty()).then(|| target.to_owned())
+}
+
+fn rust_use_is_public(node: Node<'_>, source: &[u8]) -> bool {
+    named_children(node)
+        .into_iter()
+        .find(|child| child.kind() == "visibility_modifier")
+        .is_some_and(|visibility| node_text(visibility, source).trim().starts_with("pub"))
+}
+
+fn string_literal_value(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let raw = node_text(node, source).trim();
+    let quote = raw.as_bytes().first().copied()?;
+    if !matches!(quote, b'\'' | b'"' | b'`') || raw.as_bytes().last().copied() != Some(quote) {
+        return None;
+    }
+    let value = raw[1..raw.len() - 1].trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+fn language_reexport(
+    node: Node<'_>,
+    source: &[u8],
+    language: SourceLanguage,
+) -> Option<ImportSite> {
+    if !matches!(language, SourceLanguage::TypeScript | SourceLanguage::Tsx)
+        || node.kind() != "export_statement"
+    {
+        return None;
+    }
+    let source_node = node.child_by_field_name("source").or_else(|| {
+        named_children(node)
+            .into_iter()
+            .find(|child| child.kind() == "string")
+    })?;
+    let target_name = node_text(source_node, source)
+        .trim()
         .trim_matches(['\'', '"', '`'])
         .trim();
-    (!import.is_empty()).then(|| import.to_owned())
+    (!target_name.is_empty()).then(|| ImportSite {
+        kind: "re_exports".to_owned(),
+        target_name: target_name.to_owned(),
+        range: graph_range(node),
+    })
+}
+
+fn language_dynamic_import(
+    node: Node<'_>,
+    source: &[u8],
+    language: SourceLanguage,
+) -> Option<ImportSite> {
+    if !matches!(language, SourceLanguage::TypeScript | SourceLanguage::Tsx)
+        || node.kind() != "call_expression"
+    {
+        return None;
+    }
+    let function = node.child_by_field_name("function")?;
+    if node_text(function, source).trim() != "import" {
+        return None;
+    }
+    let argument = named_children(node)
+        .into_iter()
+        .find(|child| child.kind() == "arguments")
+        .and_then(|arguments| named_children(arguments).into_iter().next())?;
+    let target_name = node_text(argument, source)
+        .trim()
+        .trim_matches(['\'', '"', '`'])
+        .trim();
+    (!target_name.is_empty()).then(|| ImportSite {
+        kind: "imports_from".to_owned(),
+        target_name: target_name.to_owned(),
+        range: graph_range(node),
+    })
 }
 
 fn language_call_site(node: Node<'_>, source: &[u8], language: SourceLanguage) -> Option<CallSite> {
@@ -5967,7 +6441,7 @@ mod tests {
                     ),
                 ],
                 vec![
-                    ("inherits", "Child", "Base"),
+                    ("embeds", "Child", "Base"),
                     ("references", "Child", "Base"),
                     ("tests", "TestChild", "helper"),
                 ],
@@ -6058,6 +6532,267 @@ mod tests {
         }
     }
 
+    #[test]
+    fn emits_source_anchored_import_topology_relations() {
+        let cases = [
+            (
+                "main.go",
+                "package main\nimport \"example.test/dep\"\nfunc main() {}\n",
+                "go",
+                false,
+            ),
+            (
+                "lib.rs",
+                "use crate::helper;\nfn main() {}\n",
+                "rust",
+                false,
+            ),
+            (
+                "src.ts",
+                "import { external } from './helper';\nexport { external } from './helper';\nasync function load() { return import('./lazy'); }\n",
+                "typescript",
+                true,
+            ),
+            (
+                "src.py",
+                "from helpers import external\ndef run():\n    pass\n",
+                "python",
+                false,
+            ),
+        ];
+
+        for (filename, source, language, reexports) in cases {
+            let directory = tempdir().expect("workspace");
+            fs::write(directory.path().join(filename), source).expect("source");
+            let artifact = build_codegraph(directory.path()).expect("graph");
+            assert!(artifact.files.iter().all(|file| file.language == language));
+            assert!(artifact.edges.iter().any(|edge| {
+                edge.kind == "imports_from"
+                    && edge.resolved
+                    && edge.resolution.as_deref() == Some("syntax")
+                    && edge.range.is_some()
+            }));
+            if reexports {
+                assert!(artifact.edges.iter().any(|edge| {
+                    edge.kind == "re_exports"
+                        && edge.resolved
+                        && edge.target_name.as_deref() == Some("./helper")
+                }));
+                assert!(
+                    artifact
+                        .edges
+                        .iter()
+                        .filter(|edge| edge.kind == "imports_from")
+                        .count()
+                        >= 2
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn resolves_local_import_topology_for_all_supported_languages() {
+        let directory = tempdir().expect("workspace");
+        fs::write(
+            directory.path().join("go.mod"),
+            "module example.com/app\n\ngo 1.26\n",
+        )
+        .expect("Go manifest");
+        fs::create_dir_all(directory.path().join("internal/dep")).expect("Go package");
+        fs::write(
+            directory.path().join("main.go"),
+            "package main\nimport (\n alias \"example.com/app/internal/dep\"\n \"example.com/app/internal/multi\"\n)\nfunc main() { alias.Run(); multi.Run() }\n",
+        )
+        .expect("Go source");
+        fs::write(
+            directory.path().join("internal/dep/dep.go"),
+            "package dep\nfunc Run() {}\n",
+        )
+        .expect("Go dependency source");
+        fs::create_dir_all(directory.path().join("internal/multi")).expect("multi-file package");
+        fs::write(
+            directory.path().join("internal/multi/first.go"),
+            "package multi\nfunc Run() {}\n",
+        )
+        .expect("first multi-file source");
+        fs::write(
+            directory.path().join("internal/multi/second.go"),
+            "package multi\nfunc Other() {}\n",
+        )
+        .expect("second multi-file source");
+
+        fs::create_dir_all(directory.path().join("web")).expect("TypeScript directory");
+        fs::write(
+            directory.path().join("web/main.ts"),
+            "import { value as renamed } from './helper';\nexport { renamed } from './helper';\n",
+        )
+        .expect("TypeScript source");
+        fs::write(
+            directory.path().join("web/helper.ts"),
+            "export const value = 1;\n",
+        )
+        .expect("TypeScript helper");
+
+        fs::create_dir_all(directory.path().join("pkg")).expect("Python directory");
+        fs::write(
+            directory.path().join("pkg/app.py"),
+            "from .helpers import value as renamed\ndef run():\n    return renamed\n",
+        )
+        .expect("Python source");
+        fs::write(directory.path().join("pkg/helpers.py"), "value = 1\n").expect("Python helper");
+
+        fs::create_dir_all(directory.path().join("rust/src")).expect("Rust directory");
+        fs::write(
+            directory.path().join("rust/Cargo.toml"),
+            "[package]\nname = \"local-rs\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("Rust manifest");
+        fs::write(
+            directory.path().join("rust/src/lib.rs"),
+            "pub mod helper;\nuse crate::helper::Helper;\npub use crate::helper::Helper;\npub fn run(_: Helper) {}\n",
+        )
+        .expect("Rust source");
+        fs::write(
+            directory.path().join("rust/src/helper.rs"),
+            "pub struct Helper;\n",
+        )
+        .expect("Rust helper");
+
+        let artifact = build_codegraph(directory.path()).expect("local import graph");
+        let cases = [
+            (
+                "main.go",
+                "example.com/app/internal/dep",
+                "internal/dep/dep.go",
+            ),
+            ("web/main.ts", "./helper", "web/helper.ts"),
+            ("pkg/app.py", ".helpers", "pkg/helpers.py"),
+            (
+                "rust/src/lib.rs",
+                "crate::helper::Helper",
+                "rust/src/helper.rs",
+            ),
+        ];
+        for (source_path, target_name, target_path) in cases {
+            let source_id = super::file_node_id(source_path);
+            let target_id = super::file_node_id(target_path);
+            let edge = artifact
+                .edges
+                .iter()
+                .find(|edge| {
+                    edge.kind == "imports_from"
+                        && edge.source == source_id
+                        && edge.target_name.as_deref() == Some(target_name)
+                })
+                .unwrap_or_else(|| panic!("missing local import {source_path} -> {target_name}"));
+            assert_eq!(
+                edge.target.as_deref(),
+                Some(target_id.as_str()),
+                "{edge:#?}"
+            );
+            assert!(edge.resolved, "{edge:#?}");
+            assert_eq!(edge.resolution.as_deref(), Some("syntax"));
+        }
+        let rust_mod = artifact
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == "imports_from"
+                    && edge.source == super::file_node_id("rust/src/lib.rs")
+                    && edge.target_name.as_deref() == Some("crate::helper")
+            })
+            .expect("Rust external module declaration");
+        assert_eq!(
+            rust_mod.target.as_deref(),
+            Some(super::file_node_id("rust/src/helper.rs").as_str())
+        );
+        let rust_reexport = artifact
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == "re_exports"
+                    && edge.source == super::file_node_id("rust/src/lib.rs")
+                    && edge.target_name.as_deref() == Some("crate::helper::Helper")
+            })
+            .expect("Rust re-export");
+        assert_eq!(
+            rust_reexport.target.as_deref(),
+            Some(super::file_node_id("rust/src/helper.rs").as_str())
+        );
+        let multi_file_import = artifact
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == "imports_from"
+                    && edge.source == super::file_node_id("main.go")
+                    && edge.target_name.as_deref() == Some("example.com/app/internal/multi")
+            })
+            .expect("multi-file Go import");
+        assert_eq!(
+            multi_file_import.target.as_deref(),
+            Some(super::package_node_id("example.com/app/internal/multi").as_str())
+        );
+        assert!(multi_file_import.resolved);
+        assert!(artifact.nodes.iter().any(|node| {
+            node.kind == "variable"
+                && node.path.as_deref() == Some("web/helper.ts")
+                && node.name == "value"
+        }));
+        let reexport = artifact
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == "re_exports"
+                    && edge.source == super::file_node_id("web/main.ts")
+                    && edge.target_name.as_deref() == Some("./helper")
+            })
+            .expect("local re-export");
+        assert_eq!(
+            reexport.target.as_deref(),
+            Some(super::file_node_id("web/helper.ts").as_str())
+        );
+    }
+
+    #[test]
+    fn incremental_refresh_retargets_local_imports_when_a_target_is_deleted() {
+        let directory = tempdir().expect("workspace");
+        fs::write(
+            directory.path().join("main.ts"),
+            "import { value } from './helper';\nexport { value } from './helper';\n",
+        )
+        .expect("source");
+        fs::write(
+            directory.path().join("helper.ts"),
+            "export const value = 1;\n",
+        )
+        .expect("helper");
+        let base = build_codegraph(directory.path()).expect("base graph");
+        assert!(base.edges.iter().any(|edge| {
+            edge.kind == "imports_from"
+                && edge.target.as_deref() == Some(super::file_node_id("helper.ts").as_str())
+        }));
+
+        fs::remove_file(directory.path().join("helper.ts")).expect("delete helper");
+        let updated = update_codegraph(
+            &base,
+            directory.path(),
+            &[CodeGraphChange::Delete("helper.ts".into())],
+        )
+        .expect("incremental graph");
+        let package_id = super::package_node_id("./helper");
+        assert!(updated.edges.iter().any(|edge| {
+            edge.kind == "imports_from"
+                && edge.source == super::file_node_id("main.ts")
+                && edge.target.as_deref() == Some(package_id.as_str())
+                && edge.resolved
+        }));
+        assert_eq!(
+            updated,
+            build_codegraph(directory.path()).expect("full graph after deletion")
+        );
+    }
+
     #[derive(Deserialize)]
     struct RelationFixture {
         schema: String,
@@ -6082,7 +6817,7 @@ mod tests {
             let truth: RelationFixture =
                 serde_json::from_slice(&fs::read(root.join("truth.json")).expect("relation truth"))
                     .expect("valid relation truth");
-            assert_eq!(truth.schema, "zvec-grep.codegraph-relations-v1");
+            assert_eq!(truth.schema, "zvec-grep.codegraph-relations-v2");
             assert_eq!(truth.language, language);
             for source_file in &truth.source_files {
                 assert!(

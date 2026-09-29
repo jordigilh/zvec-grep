@@ -250,10 +250,32 @@ fn execute_graph_query(
         )
         .into());
     }
+    if artifact.relation_generation != zg_engine::codegraph::CODEGRAPH_RELATION_GENERATION {
+        return Err(format!(
+            "unsupported codegraph relation generation: {} (expected {})",
+            artifact.relation_generation,
+            zg_engine::codegraph::CODEGRAPH_RELATION_GENERATION
+        )
+        .into());
+    }
     let index = zg_engine::codegraph::CallGraphIndex::new(&artifact);
     let result = match action {
         zg_cli::GraphQueryAction::BlastRadius { function, depth } => {
             serde_json::to_value(index.blast_radius(&function, depth)?)?
+        }
+        zg_cli::GraphQueryAction::Affected {
+            query,
+            depth,
+            relations,
+            include_possible,
+        } => {
+            let relations = parse_graph_relations(&relations)?;
+            serde_json::to_value(index.affected(
+                &query,
+                depth,
+                relations.as_deref(),
+                include_possible,
+            )?)?
         }
         zg_cli::GraphQueryAction::ShortestPath { source, target } => {
             serde_json::to_value(index.shortest_path(&source, &target)?)?
@@ -307,7 +329,7 @@ fn parse_graph_relations(
     for value in values {
         let Some(relation) = zg_engine::codegraph::CodeGraphRelationKind::parse(value) else {
             return Err(format!(
-                "unknown graph relation `{value}`; expected one of defines, imports, calls, inherits, implements, overrides, mixes_in, references, tests, depends_on"
+                "unknown graph relation `{value}`; expected one of defines, imports, calls, inherits, implements, embeds, imports_from, re_exports, overrides, mixes_in, references, tests, depends_on"
             )
             .into());
         };

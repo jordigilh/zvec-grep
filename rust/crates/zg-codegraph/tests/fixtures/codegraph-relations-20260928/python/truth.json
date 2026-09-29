@@ -1,5 +1,5 @@
 {
-  "schema": "zvec-grep.codegraph-relations-v1",
+  "schema": "zvec-grep.codegraph-relations-v2",
   "language": "python",
   "source_files": ["tests.py", "types.py"],
   "relations": [

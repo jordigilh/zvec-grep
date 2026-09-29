@@ -1,5 +1,5 @@
 {
-  "schema": "zvec-grep.codegraph-relations-v1",
+  "schema": "zvec-grep.codegraph-relations-v2",
   "language": "rust",
   "source_files": ["tests.rs", "types.rs"],
   "relations": [

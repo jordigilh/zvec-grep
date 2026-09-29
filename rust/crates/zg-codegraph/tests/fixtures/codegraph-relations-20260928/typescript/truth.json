@@ -1,5 +1,5 @@
 {
-  "schema": "zvec-grep.codegraph-relations-v1",
+  "schema": "zvec-grep.codegraph-relations-v2",
   "language": "typescript",
   "source_files": ["tests.ts", "types.ts"],
   "relations": [

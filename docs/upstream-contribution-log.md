@@ -796,3 +796,30 @@ rebuilt. Focused coverage exercises all four ecosystems and manifest refresh.
 **Upstream disposition:** Included in draft fork PR
 [#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
 opened.
+
+## 2026-09-29 — LCL-026: Structural topology and generic affected traversal
+
+Fork PR [#24](https://github.com/jordigilh/zvec-grep/pull/24) merged into
+`integration/zvec-live-code-intelligence` at `b37694f`. The follow-up is isolated
+on `spike/codegraph-graphify-followup` and advances the relation vocabulary to v2
+and the extractor generation to `3`.
+
+The structural graph now emits source-anchored `imports_from` and `re_exports`
+relations with syntax ranges, resolves supported local Go, Rust, TypeScript/TSX,
+and Python module paths to file nodes, preserves external imports as name-only
+package targets, and emits Go `embeds` for anonymous struct fields. Rust module
+declarations/public `use` re-exports and TypeScript variable declarations have
+bounded coverage without guessing compiler-only relationships.
+
+`CallGraphIndex::affected` now traverses incoming relations for any serialized
+node, accepts explicit relation filters, and keeps definite and possible paths
+separate. The CLI and MCP expose the query, the MCP tool lists and lifecycle
+counts are updated, and deletion/alias/multi-language topology tests cover the
+live refresh path.
+
+Local verification: codegraph unit/integration tests (36), strict Clippy for
+`zg-codegraph`, `zg-cli`, `zg-transport-mcp`, and `zg`, CLI tests (53), MCP tests
+(35), and server lifecycle tests (13) passed. Native macOS builds required
+command-scoped `xcrun` clang plus the CLT libc++ include path.
+
+**Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.

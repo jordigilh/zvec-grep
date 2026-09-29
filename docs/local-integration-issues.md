@@ -115,9 +115,10 @@ logging is enabled. Quality acceptance is pending.
 
 **Status:** Active local issue; design captured in
 [`docs/four-language-codegraph-parity-design-20260928.md`](./four-language-codegraph-parity-design-20260928.md).
-Fork PR [#24](https://github.com/jordigilh/zvec-grep/pull/24) is open as a
-draft against `integration/zvec-live-code-intelligence`; no upstream PR is open
-yet.
+Fork PR [#24](https://github.com/jordigilh/zvec-grep/pull/24) merged into
+`integration/zvec-live-code-intelligence`. The structural-relation and generic
+affected-query follow-up is being prepared on
+`spike/codegraph-graphify-followup`; no upstream PR is open yet.
 
 ### Scope
 
@@ -135,10 +136,11 @@ objects; all other programming languages are out of scope.
   source/context validation and syntax fallback.
 - Go cross-package semantic blast-radius behavior is validated. Rust,
   TypeScript, and Python semantic holdouts still need multi-file validation.
-- The first generic relation-aware follow-up is implemented on top of the v1
+- The first generic relation-aware follow-up is implemented on top of the v2
   artifact: versioned relation kinds, node/neighbors/relation-path/explain
   queries, CLI/MCP surfaces, and checked-in four-language multi-file fixtures
-  for syntax-attested inheritance, implementation, references, and tests.
+  for syntax-attested inheritance, implementation, embedding, references, and
+  tests.
 
 ### Parity gap to close
 
@@ -241,8 +243,24 @@ evidence. Create a fresh review branch named, for example,
 
 This handoff is complete: the dedicated branch was created from the updated
 integration tip, the parity commits were applied there, and fork PR #24 was
-opened. The PR remains draft while the follow-up relation/query work below is
-implemented.
+opened and merged. The follow-up relation/query work is isolated on the
+successor review branch.
 
 The original source branch should not be rewritten or reset; it remains the
 provenance copy. The dedicated parity branch is the active review checkout.
+
+## ZGI-009 — Structural topology and generic affected traversal follow-up
+
+**Status:** Active on `spike/codegraph-graphify-followup`, based on the merged
+PR #24 tip.
+
+- Version the relation vocabulary and extractor generation for Go `embeds`,
+  syntax-backed `imports_from`, and `re_exports`.
+- Preserve source ranges and explicit syntax evidence while resolving supported
+  local Go, Rust, TypeScript/TSX, and Python module paths to file nodes; retain
+  external imports as name-only package targets.
+- Add generic reverse affected traversal for any serialized node, with explicit
+  relation filters and separate definite/possible result buckets.
+- Exercise aliases, public/module re-exports, Rust module declarations,
+  TypeScript variable declarations, deletion refreshes, and CLI/MCP tool-list
+  wiring.

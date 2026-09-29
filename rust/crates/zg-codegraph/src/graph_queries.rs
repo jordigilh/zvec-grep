@@ -31,6 +31,9 @@ pub enum CodeGraphRelationKind {
     Calls,
     Inherits,
     Implements,
+    Embeds,
+    ImportsFrom,
+    ReExports,
     Overrides,
     MixesIn,
     References,
@@ -39,14 +42,17 @@ pub enum CodeGraphRelationKind {
 }
 
 impl CodeGraphRelationKind {
-    pub const VERSION: u32 = 1;
+    pub const VERSION: u32 = 2;
 
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 13] = [
         Self::Defines,
         Self::Imports,
         Self::Calls,
         Self::Inherits,
         Self::Implements,
+        Self::Embeds,
+        Self::ImportsFrom,
+        Self::ReExports,
         Self::Overrides,
         Self::MixesIn,
         Self::References,
@@ -62,6 +68,9 @@ impl CodeGraphRelationKind {
             Self::Calls => "calls",
             Self::Inherits => "inherits",
             Self::Implements => "implements",
+            Self::Embeds => "embeds",
+            Self::ImportsFrom => "imports_from",
+            Self::ReExports => "re_exports",
             Self::Overrides => "overrides",
             Self::MixesIn => "mixes_in",
             Self::References => "references",
@@ -78,6 +87,9 @@ impl CodeGraphRelationKind {
             "calls" => Some(Self::Calls),
             "inherits" => Some(Self::Inherits),
             "implements" => Some(Self::Implements),
+            "embeds" => Some(Self::Embeds),
+            "imports_from" | "imports-from" => Some(Self::ImportsFrom),
+            "re_exports" | "re-exports" => Some(Self::ReExports),
             "overrides" => Some(Self::Overrides),
             "mixes_in" | "mixes-in" => Some(Self::MixesIn),
             "references" => Some(Self::References),
@@ -96,8 +108,10 @@ impl CodeGraphRelationKind {
             | Self::Inherits
             | Self::References
             | Self::Tests
-            | Self::DependsOn => &["go", "rust", "typescript", "tsx", "python"],
-            Self::Implements => &["rust", "typescript", "tsx"],
+            | Self::DependsOn
+            | Self::ImportsFrom => &["go", "rust", "typescript", "tsx", "python"],
+            Self::Implements | Self::ReExports => &["rust", "typescript", "tsx"],
+            Self::Embeds => &["go"],
             Self::Overrides | Self::MixesIn => &[],
         }
     }
@@ -220,6 +234,35 @@ pub struct CodeGraphExplanation {
     pub incoming: Vec<CodeGraphEdge>,
     pub outgoing: Vec<CodeGraphEdge>,
     pub relation_counts: BTreeMap<String, usize>,
+    pub metadata: CodeGraphQueryMetadata,
+}
+
+/// Relations used by the generic affected-node traversal when callers do not
+/// provide an explicit allow-list. Ownership edges such as `defines` are
+/// intentionally excluded: a file containing a symbol should not make every
+/// symbol in that file appear affected by a change to one of its siblings.
+pub const DEFAULT_AFFECTED_RELATIONS: [CodeGraphRelationKind; 11] = [
+    CodeGraphRelationKind::Calls,
+    CodeGraphRelationKind::References,
+    CodeGraphRelationKind::Imports,
+    CodeGraphRelationKind::ImportsFrom,
+    CodeGraphRelationKind::ReExports,
+    CodeGraphRelationKind::Inherits,
+    CodeGraphRelationKind::Implements,
+    CodeGraphRelationKind::Embeds,
+    CodeGraphRelationKind::MixesIn,
+    CodeGraphRelationKind::Tests,
+    CodeGraphRelationKind::DependsOn,
+];
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CodeGraphAffected {
+    pub query: String,
+    pub node: CodeGraphNode,
+    pub relation_filter: Vec<String>,
+    pub depth: usize,
+    pub affected_by_depth: Vec<Vec<CodeGraphNeighbor>>,
+    pub possible_affected_by_depth: Vec<Vec<CodeGraphNeighbor>>,
     pub metadata: CodeGraphQueryMetadata,
 }
 
@@ -635,6 +678,125 @@ impl CallGraphIndex {
             unresolved_calls: self.unresolved_calls,
             total_calls: self.total_calls,
             ambiguous_calls: self.ambiguous_calls,
+        })
+    }
+
+    /// Finds reverse dependencies of any codegraph node over the selected
+    /// relation kinds. Definite and possible paths are kept separate so an
+    /// ambiguous syntax match cannot be presented as a guaranteed affected
+    /// caller or dependency.
+    ///
+    /// When `relation_filter` is `None`, [`DEFAULT_AFFECTED_RELATIONS`] is
+    /// used. Pass an explicit empty slice to request no relations.
+    ///
+    /// # Errors
+    ///
+    /// Returns a node-not-found or node-ambiguous error when `query` does not
+    /// identify exactly one serialized node.
+    pub fn affected(
+        &self,
+        query: &str,
+        depth: usize,
+        relation_filter: Option<&[CodeGraphRelationKind]>,
+        include_possible: bool,
+    ) -> CodeGraphResult<CodeGraphAffected> {
+        let target = self.resolve_all_node(query)?;
+        let effective_filter = relation_filter.unwrap_or(&DEFAULT_AFFECTED_RELATIONS);
+        let mut affected_by_depth = Vec::new();
+        let mut definite_seen = HashSet::from([target]);
+        let mut frontier = vec![target];
+
+        for current_depth in 1..=depth {
+            let mut next = Vec::new();
+            for current in frontier {
+                for (neighbor, edge, possible) in self.traversable_edges(
+                    current,
+                    CodeGraphDirection::Incoming,
+                    Some(effective_filter),
+                    false,
+                ) {
+                    debug_assert!(!possible);
+                    if definite_seen.insert(neighbor) {
+                        next.push(neighbor);
+                        affected_by_depth.push((current_depth, neighbor, edge));
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            next.sort_by_key(|index| self.all_display_names[*index].clone());
+            frontier = next;
+        }
+
+        let mut definite_by_depth = vec![Vec::new(); depth];
+        for (current_depth, neighbor, edge) in affected_by_depth {
+            definite_by_depth[current_depth - 1].push(CodeGraphNeighbor {
+                node: self.all_nodes[neighbor].clone(),
+                relation: edge,
+                direction: CodeGraphDirection::Incoming,
+                possible: false,
+            });
+        }
+        for neighbors in &mut definite_by_depth {
+            neighbors.sort_by(|left, right| {
+                self.all_display_names[self.all_by_id[left.node.id.as_str()]]
+                    .cmp(&self.all_display_names[self.all_by_id[right.node.id.as_str()]])
+            });
+        }
+
+        let mut possible_by_depth = vec![Vec::new(); depth];
+        if include_possible {
+            let mut queue = VecDeque::from([(target, false, 0_usize)]);
+            let mut visited_states = HashSet::from([(target, false)]);
+            while let Some((current, uncertain, current_depth)) = queue.pop_front() {
+                if current_depth >= depth {
+                    continue;
+                }
+                for (neighbor, edge, edge_possible) in self.traversable_edges(
+                    current,
+                    CodeGraphDirection::Incoming,
+                    Some(effective_filter),
+                    true,
+                ) {
+                    let next_depth = current_depth + 1;
+                    let next_uncertain = uncertain || edge_possible;
+                    if !visited_states.insert((neighbor, next_uncertain)) {
+                        continue;
+                    }
+                    if next_uncertain && !definite_seen.contains(&neighbor) {
+                        possible_by_depth[next_depth - 1].push(CodeGraphNeighbor {
+                            node: self.all_nodes[neighbor].clone(),
+                            relation: edge.clone(),
+                            direction: CodeGraphDirection::Incoming,
+                            possible: true,
+                        });
+                    }
+                    queue.push_back((neighbor, next_uncertain, next_depth));
+                }
+            }
+            for neighbors in &mut possible_by_depth {
+                neighbors.sort_by(|left, right| {
+                    self.all_display_names[self.all_by_id[left.node.id.as_str()]]
+                        .cmp(&self.all_display_names[self.all_by_id[right.node.id.as_str()]])
+                });
+                neighbors.dedup_by(|left, right| {
+                    left.node.id == right.node.id && left.relation.kind == right.relation.kind
+                });
+            }
+        }
+
+        Ok(CodeGraphAffected {
+            query: query.to_owned(),
+            node: self.all_nodes[target].clone(),
+            relation_filter: effective_filter
+                .iter()
+                .map(|kind| kind.as_str().to_owned())
+                .collect(),
+            depth,
+            affected_by_depth: definite_by_depth,
+            possible_affected_by_depth: possible_by_depth,
+            metadata: self.query_metadata(),
         })
     }
 
@@ -1327,6 +1489,25 @@ mod tests {
         assert_eq!(blast.total_calls, 3);
         assert_eq!(blast.unresolved_calls, 0);
 
+        let affected = index
+            .affected("target", 3, Some(&[CodeGraphRelationKind::Calls]), false)
+            .expect("generic affected traversal");
+        assert_eq!(affected.relation_filter, ["calls"]);
+        assert_eq!(
+            affected.affected_by_depth[0]
+                .iter()
+                .map(|neighbor| neighbor.node.name.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["direct", "middle"])
+        );
+        assert_eq!(
+            affected.affected_by_depth[1]
+                .iter()
+                .map(|neighbor| neighbor.node.name.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["root"])
+        );
+
         let path = index
             .shortest_path("root", "target")
             .expect("shortest path");
@@ -1469,6 +1650,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn generic_queries_cover_nodes_relations_and_possible_targets() {
         let directory = tempdir().expect("workspace");
         fs::write(
@@ -1547,7 +1729,18 @@ mod tests {
         assert!(path.possible);
         assert_eq!(path.relations, ["calls"]);
 
-        let inheritance = [CodeGraphRelationKind::Inherits];
+        let affected_possible = index
+            .affected(target, 1, Some(&calls), true)
+            .expect("possible affected traversal");
+        assert!(affected_possible.affected_by_depth[0].is_empty());
+        assert_eq!(affected_possible.possible_affected_by_depth[0].len(), 1);
+        assert_eq!(
+            affected_possible.possible_affected_by_depth[0][0].node.name,
+            "caller"
+        );
+        assert!(affected_possible.possible_affected_by_depth[0][0].possible);
+
+        let inheritance = [CodeGraphRelationKind::Embeds];
         let inheritance_path = index
             .relation_path(
                 "first.go::Child",
@@ -1558,7 +1751,21 @@ mod tests {
             .expect("structural relation path");
         assert!(inheritance_path.path.is_some());
         assert!(!inheritance_path.possible);
-        assert_eq!(inheritance_path.relations, ["inherits"]);
+        assert_eq!(inheritance_path.relations, ["embeds"]);
+
+        let affected_type = index
+            .affected(
+                "first.go::Base",
+                1,
+                Some(&[CodeGraphRelationKind::Embeds]),
+                false,
+            )
+            .expect("generic type affected traversal");
+        assert_eq!(affected_type.affected_by_depth[0][0].node.name, "Child");
+        assert_eq!(
+            affected_type.affected_by_depth[0][0].relation.kind,
+            "embeds"
+        );
 
         let definition_filter = [CodeGraphRelationKind::Defines];
         let file_neighbors = index

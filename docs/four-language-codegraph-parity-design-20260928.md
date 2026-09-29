@@ -44,19 +44,19 @@ TypeScript/TSX, and Python source. It persists a versioned
 - source files and SHA-256 digests;
 - stable file- and symbol-scoped IDs;
 - declaration nodes and source ranges;
-- `defines`, `imports`, `calls`, `inherits`, `implements`, `references`, and
-  `tests`, and explicit-manifest `depends_on` edges; and
+- `defines`, `imports`, `imports_from`, `re_exports`, `calls`, `inherits`,
+  `implements`, Go `embeds`, `references`, and `tests`, and explicit-manifest
+  `depends_on` edges; and
 - unresolved, ambiguous, and syntax-derived relation metadata.
 
 The relation vocabulary is versioned independently as
-`zvec-grep.codegraph.relations` v1 and currently admits `defines`, `imports`,
-`calls`, `inherits`, `implements`, `overrides`, `mixes_in`, `references`,
-`tests`, and `depends_on`. Older local v1 snapshots are not a compatibility
-contract; unknown future relation strings are preserved by the edge envelope
-rather than discarded. The v2 artifact requires a relation-extraction
-generation marker. The earlier local
-v1 snapshot is not a compatibility contract; users must regenerate the graph
-when moving to v2.
+`zvec-grep.codegraph.relations` v2 and currently admits `defines`, `imports`,
+`imports_from`, `re_exports`, `calls`, `inherits`, `implements`, `embeds`,
+`overrides`, `mixes_in`, `references`, `tests`, and `depends_on`. Older local
+v1 snapshots are not a compatibility contract; unknown future relation strings
+are preserved by the edge envelope rather than discarded. The v2 artifact
+requires a relation-extraction generation marker, so users must regenerate the
+graph when moving to v2.
 
 The graph is separate from the semantic search index and is refreshed against
 the live root, including uncommitted changes.
@@ -77,6 +77,9 @@ evidence-backed language capability matrix is:
 | --- | --- | --- |
 | `defines`, `imports`, `calls`, `inherits`, `references`, `tests` | Go, Rust, TypeScript/TSX, Python | Supported |
 | `implements` | Rust, TypeScript/TSX | Supported only for projects containing one of these languages |
+| `imports_from` | Go, Rust, TypeScript/TSX, Python | Syntax-backed; local file targets resolve when the module path is supported |
+| `re_exports` | Rust, TypeScript/TSX | Syntax-backed public/module re-exports |
+| `embeds` | Go | Syntax-backed anonymous struct fields |
 | `depends_on` | Go, Rust, TypeScript/TSX, Python | Supported from explicit package manifests |
 | `overrides`, `mixes_in` | None | Reserved; no guessed edges |
 
@@ -140,7 +143,9 @@ separate directed graphs and provides:
 - generic node inspection and explanation with manifest/context provenance;
 - root-scoped language and relation capabilities;
 - incoming/outgoing neighbor queries with relation filters; and
-- relation-filtered shortest paths across every serialized edge kind.
+- relation-filtered shortest paths across every serialized edge kind; and
+- generic reverse affected-node traversal with separate definite and possible
+  results across selected relation kinds.
 
 The current blast-radius index is function/method-centric even though the
 artifact contains broader code declaration nodes.
@@ -158,19 +163,19 @@ being applied.
 | Capability | Current state | Parity work |
 |---|---|---|
 | Four-language source snapshot | Implemented | Add broader conformance fixtures |
-| Cross-file `defines`/`imports`/`calls` | Implemented structurally; Go semantic path validated | Validate Rust, TypeScript, and Python with multi-file truth |
+| Cross-file `defines`/`imports`/`calls` | Implemented structurally; Go semantic path and four-language topology validated | Validate Rust, TypeScript, and Python semantic overlays with multi-file truth |
 | Definite/possible/unresolved calls | Implemented | Preserve status on every serialized edge and query surface |
-| Blast radius / affected callers | Implemented for functions and methods | Add relation filters and general node targets |
+| Blast radius / affected callers | Implemented for functions and methods | Preserve certainty separation and source provenance |
 | Shortest path | Implemented for calls | Generalize to selected relation types |
 | Communities | Implemented with Leiden | Compare code-only community semantics and summaries |
-| Inheritance/implementation edges | Implemented for syntax-attested multi-file fixtures | Add bounded semantic adapters and broader language coverage |
+| Inheritance/implementation/embedding edges | Implemented for syntax-attested multi-file fixtures | Add bounded semantic adapters and broader language coverage |
 | Package-manifest `depends_on` edges | Implemented for explicit Go, Rust, Python, and TypeScript/TSX manifests | Add broader manifest-format conformance fixtures |
 | Override/mixin edges | Reserved; not inferred | Add only where syntax/compiler evidence is defensible |
 | References and test relationships | Implemented for source-anchored syntax facts | Add broader annotation/test-framework coverage |
-| Node/neighbor/path/explain inspection | Implemented | Add affected-subgraph queries and richer edge provenance |
+| Node/neighbor/path/explain/affected inspection | Implemented | Add richer edge provenance and publication guarantees |
 | Incremental refresh | Implemented | Add explicit watch/ignore/cache parity tests |
 | Snapshot publication | Graph and sidecars are separately persisted | Publish a consistent graph/facts generation |
-| Four-language semantic accuracy | Go cross-file evidence; other holdouts are single-file | Add independent multi-file benchmarks |
+| Four-language semantic accuracy | Go cross-file evidence; other producers retain opt-in fallback paths | Add independent multi-file benchmarks |
 
 ## Opportunities to surpass Graphify
 

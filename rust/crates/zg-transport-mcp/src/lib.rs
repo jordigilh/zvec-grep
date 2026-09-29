@@ -57,11 +57,12 @@ use zg_engine::{
 };
 
 pub const AGENT_TOOL_NAME: &str = "zvec_grep_search";
-pub const AGENT_TOOL_NAMES: [&str; 10] = [
+pub const AGENT_TOOL_NAMES: [&str; 11] = [
     "zvec_grep_callgraph_blast_radius",
     "zvec_grep_callgraph_cluster",
     "zvec_grep_callgraph_communities",
     "zvec_grep_callgraph_shortest_path",
+    "zvec_grep_codegraph_affected",
     "zvec_grep_codegraph_capabilities",
     "zvec_grep_codegraph_explain",
     "zvec_grep_codegraph_neighbors",
@@ -69,11 +70,12 @@ pub const AGENT_TOOL_NAMES: [&str; 10] = [
     "zvec_grep_codegraph_relation_path",
     AGENT_TOOL_NAME,
 ];
-pub const FULL_TOOL_NAMES: [&str; 15] = [
+pub const FULL_TOOL_NAMES: [&str; 16] = [
     "zvec_grep_callgraph_blast_radius",
     "zvec_grep_callgraph_cluster",
     "zvec_grep_callgraph_communities",
     "zvec_grep_callgraph_shortest_path",
+    "zvec_grep_codegraph_affected",
     "zvec_grep_codegraph_capabilities",
     "zvec_grep_codegraph_explain",
     "zvec_grep_codegraph_neighbors",
@@ -645,6 +647,50 @@ impl ZvecGrepMcpServer {
     }
 
     #[tool(
+        name = "zvec_grep_codegraph_affected",
+        description = "Find definite and possible reverse dependencies of any codegraph node over selected relation kinds. When relations are omitted, uses calls, references, imports, inheritance, implementation, embedding, re-export, test, mix-in, and manifest dependency relationships. Refreshes the selected live checkout from current source contents before querying, including uncommitted changes.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphAffected>(),
+        annotations(
+            title = "Find affected codegraph nodes",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_affected(
+        &self,
+        Parameters(input): Parameters<CodeGraphAffectedInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("query", &input.query, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let depth = input.depth.unwrap_or(2);
+        if depth > 10 {
+            return Err(ErrorData::invalid_params(
+                "depth must be between 0 and 10".to_owned(),
+                None,
+            ));
+        }
+        let relations = parse_codegraph_relations(input.relations.as_deref())
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .affected(
+                input.query.trim(),
+                depth,
+                relations.as_deref(),
+                input.include_possible.unwrap_or(false),
+            )
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
         name = "zvec_grep_callgraph_shortest_path",
         description = "Find a directed call path between two functions in the selected live checkout. Refreshes the root-scoped Go, Rust, TypeScript/TSX, and Python callgraph from current source contents before querying, including uncommitted changes.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CallGraphPath>(),
@@ -1121,6 +1167,25 @@ pub struct CallGraphBlastRadiusInput {
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodeGraphAffectedInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Any source file, package, declaration, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub query: String,
+    /// Maximum reverse relation distance to include (defaults to 2; range 0-10).
+    #[schemars(range(min = 0, max = 10))]
+    pub depth: Option<usize>,
+    /// Optional relation allow-list. Omit to use the default affected relations.
+    #[schemars(length(max = 13))]
+    pub relations: Option<Vec<String>>,
+    /// Include ambiguous candidate paths as possible affected nodes.
+    pub include_possible: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CallGraphShortestPathInput {
     /// Absolute workspace root of the live checkout to inspect.
     #[schemars(length(min = 1, max = 1024))]
@@ -1165,7 +1230,7 @@ pub struct CodeGraphNeighborsInput {
     #[schemars(length(min = 1, max = 4000))]
     pub query: String,
     /// Optional relation allow-list. Omit to traverse every serialized relation.
-    #[schemars(length(max = 10))]
+    #[schemars(length(max = 13))]
     pub relations: Option<Vec<String>>,
     /// Include ambiguous candidate targets as possible neighbors.
     pub include_possible: Option<bool>,
@@ -1184,7 +1249,7 @@ pub struct CodeGraphRelationPathInput {
     #[schemars(length(min = 1, max = 4000))]
     pub target: String,
     /// Optional relation allow-list. Omit to traverse every serialized relation.
-    #[schemars(length(max = 10))]
+    #[schemars(length(max = 13))]
     pub relations: Option<Vec<String>>,
     /// Include ambiguous candidate targets as possible path steps.
     pub include_possible: Option<bool>,
@@ -2076,8 +2141,8 @@ fn parse_codegraph_relations(
     let Some(values) = values else {
         return Ok(None);
     };
-    if values.len() > 10 {
-        return Err("relations accepts at most 10 values".to_owned());
+    if values.len() > 13 {
+        return Err("relations accepts at most 13 values".to_owned());
     }
     let mut relations = Vec::with_capacity(values.len());
     for value in values {
@@ -2085,7 +2150,7 @@ fn parse_codegraph_relations(
         let Some(relation) = zg_engine::codegraph::CodeGraphRelationKind::parse(value.trim())
         else {
             return Err(format!(
-                "unknown graph relation `{value}`; expected one of defines, imports, calls, inherits, implements, overrides, mixes_in, references, tests, depends_on"
+                "unknown graph relation `{value}`; expected one of defines, imports, calls, inherits, implements, embeds, imports_from, re_exports, overrides, mixes_in, references, tests, depends_on"
             ));
         };
         if !relations.contains(&relation) {
