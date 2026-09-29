@@ -43,6 +43,12 @@ Use `--no-all-targets` for a narrower check or pass additional Cargo arguments
 after `--`. The sidecar is optional; remove it or let validation reject it to
 return to syntax-derived Rust edges.
 
+Run the isolated producer smoke check with:
+
+```sh
+tools/rust-callfacts/test.sh
+```
+
 ## Contract and conservative classifications
 
 The sidecar records:
