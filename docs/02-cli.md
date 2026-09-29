@@ -116,12 +116,15 @@ zg --graph [root]
 zg --graph-query .zvec-grep/codegraph-v2.json node src/main.rs::run
 zg --graph-query .zvec-grep/codegraph-v2.json neighbors src/main.rs::run --relation calls
 zg --graph-query .zvec-grep/codegraph-v2.json relation-path source target --relation calls --include-possible
+zg --graph-query .zvec-grep/codegraph-v2.json affected src/main.rs::run --depth 2 --relation calls
 zg --graph-query .zvec-grep/codegraph-v2.json explain src/main.rs::run
 ```
 
 Generic graph queries accept bare or path-qualified names and exact node IDs.
-Relation filters are `defines`, `imports`, `calls`, `inherits`, `implements`,
-`overrides`, `mixes_in`, `references`, `tests`, and `depends_on`. Possible
+Relation filters are `defines`, `imports`, `imports_from`, `re_exports`, `calls`,
+`inherits`, `implements`, `embeds`, `overrides`, `mixes_in`, `references`,
+`tests`, and `depends_on`. The `affected` query traverses incoming relations
+and separates definite results from possible ambiguous candidates. Possible
 ambiguous targets are excluded unless `--include-possible` is supplied. Query
 results include the graph manifest and applied language call-facts context
 fingerprints, project languages, and relation capability statuses. `implements`

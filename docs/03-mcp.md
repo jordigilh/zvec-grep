@@ -45,6 +45,7 @@ incidental, or comparative workspace mentions do not establish relevance.
 | `zvec_grep_codegraph_node` | Inspecting any file, package, or declaration node and its relations | No |
 | `zvec_grep_codegraph_neighbors` | Listing incoming/outgoing neighbors with optional relation filters | No |
 | `zvec_grep_codegraph_relation_path` | Finding paths across selected codegraph relations | No |
+| `zvec_grep_codegraph_affected` | Finding definite and possible reverse dependencies of any codegraph node | No |
 | `zvec_grep_codegraph_explain` | Explaining a node with relation counts and snapshot provenance | No |
 
 Agents use native grep or rg when locating an exact word, quotation, name, date,
@@ -56,7 +57,8 @@ For source-file, package, declaration, neighbor, relation-path, or provenance
 questions, use the corresponding `zvec_grep_codegraph_*` tool. Call
 `zvec_grep_codegraph_capabilities` first when relation support is material to the
 answer. Relation filters are `defines`, `imports`, `calls`, `inherits`,
-`implements`, `overrides`, `mixes_in`, `references`, `tests`, and `depends_on`;
+`imports_from`, `re_exports`, `implements`, `embeds`, `overrides`, `mixes_in`,
+`references`, `tests`, and `depends_on`;
 possible ambiguous targets are excluded unless `includePossible` is requested.
 The capabilities result reports `supported`, `unsupported`, or `reserved` for
 each relation at the selected root. MCP discovery remains static; tools are not
