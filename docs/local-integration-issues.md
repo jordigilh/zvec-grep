@@ -135,6 +135,10 @@ objects; all other programming languages are out of scope.
   source/context validation and syntax fallback.
 - Go cross-package semantic blast-radius behavior is validated. Rust,
   TypeScript, and Python semantic holdouts still need multi-file validation.
+- The first generic relation-aware follow-up is implemented on top of the v1
+  artifact: versioned relation kinds, node/neighbors/relation-path/explain
+  queries, CLI/MCP surfaces, and checked-in four-language multi-file fixtures
+  for syntax-attested inheritance, implementation, references, and tests.
 
 ### Parity gap to close
 

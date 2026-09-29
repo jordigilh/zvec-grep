@@ -601,6 +601,27 @@ pub enum GraphQueryAction {
     },
     /// Find a directed call path between two functions.
     ShortestPath { source: String, target: String },
+    /// Inspect any codegraph node and its directly attached relations.
+    Node { query: String },
+    /// List incoming and outgoing neighbors for any codegraph node.
+    Neighbors {
+        query: String,
+        #[arg(long = "relation", value_name = "KIND", action = clap::ArgAction::Append)]
+        relations: Vec<String>,
+        #[arg(long)]
+        include_possible: bool,
+    },
+    /// Find a shortest path over the selected relation kinds.
+    RelationPath {
+        source: String,
+        target: String,
+        #[arg(long = "relation", value_name = "KIND", action = clap::ArgAction::Append)]
+        relations: Vec<String>,
+        #[arg(long)]
+        include_possible: bool,
+    },
+    /// Explain a node with relation counts and snapshot provenance.
+    Explain { query: String },
     /// Return the Leiden community containing a function.
     Cluster { function: String },
     /// Return all communities in the graph.
@@ -1824,6 +1845,40 @@ mod tests {
         assert!(matches!(
             action,
             GraphQueryAction::BlastRadius { function, depth: 4 } if function == "reconcile"
+        ));
+    }
+
+    #[test]
+    fn graph_query_plan_parses_generic_relation_actions() {
+        let plan = Cli::try_parse_from([
+            "zg",
+            "--graph-query",
+            "graph.json",
+            "relation-path",
+            "Child",
+            "Base",
+            "--relation",
+            "inherits",
+            "--relation",
+            "implements",
+            "--include-possible",
+        ])
+        .expect("parse")
+        .into_plan(PathBuf::from("/workspace"))
+        .expect("plan");
+        let CliPlan::GraphQuery { action, .. } = plan else {
+            panic!("generic graph query plan")
+        };
+        assert!(matches!(
+            action,
+            GraphQueryAction::RelationPath {
+                source,
+                target,
+                relations,
+                include_possible: true,
+            } if source == "Child"
+                && target == "Base"
+                && relations == ["inherits", "implements"]
         ));
     }
 

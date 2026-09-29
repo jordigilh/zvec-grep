@@ -10,6 +10,7 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -19,12 +20,16 @@ mod graph_queries;
 
 pub use graph_queries::{
     CallGraphAssignment, CallGraphBlastRadius, CallGraphCluster, CallGraphClustering,
-    CallGraphIndex, CallGraphPath,
+    CallGraphIndex, CallGraphPath, CodeGraphDirection, CodeGraphExplanation, CodeGraphNeighbor,
+    CodeGraphNeighbors, CodeGraphNodeResult, CodeGraphQueryMetadata, CodeGraphRelationKind,
+    CodeGraphRelationPath,
 };
 
 pub const CODEGRAPH_SCHEMA: &str = "zvec-grep.codegraph";
 pub const CODEGRAPH_VERSION: u32 = 1;
 pub const CODEGRAPH_FILE: &str = "codegraph-v1.json";
+pub const CODEGRAPH_RELATION_SCHEMA: &str = "zvec-grep.codegraph.relations";
+pub const CODEGRAPH_RELATION_VERSION: u32 = 1;
 pub const GO_CALLFACTS_SCHEMA: &str = "zvec-grep.go-callfacts";
 pub const GO_CALLFACTS_VERSION: u32 = 2;
 pub const GO_CALLFACTS_FILE: &str = "go-callfacts-v2.json";
@@ -346,7 +351,7 @@ pub struct CodeGraphSourceStamp {
     content_sha256: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct CodeGraphFile {
     pub path: String,
     #[serde(default = "default_language")]
@@ -402,7 +407,7 @@ fn default_language() -> String {
     "go".to_owned()
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct CodeGraphNode {
     pub id: String,
     pub kind: String,
@@ -413,7 +418,7 @@ pub struct CodeGraphNode {
     pub signature: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct CodeGraphEdge {
     pub kind: String,
     pub source: String,
@@ -422,10 +427,14 @@ pub struct CodeGraphEdge {
     pub resolved: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ambiguous_candidates: Vec<String>,
+    /// Producer or syntax certainty label. Older v1 artifacts omit this field
+    /// and remain readable through the legacy `resolved` and candidate fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
     pub range: Option<CodeGraphRange>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct CodeGraphRange {
     pub start_byte: usize,
     pub end_byte: usize,
@@ -442,6 +451,7 @@ struct ParsedFile {
     definitions: Vec<Definition>,
     imports: Vec<String>,
     calls: Vec<CallSite>,
+    relations: Vec<StructuralRelation>,
 }
 
 #[derive(Clone, Debug)]
@@ -461,6 +471,7 @@ struct LanguageCollector<'source> {
     definitions: Vec<Definition>,
     imports: BTreeSet<String>,
     calls: Vec<CallSite>,
+    relations: Vec<StructuralRelation>,
 }
 
 impl<'source> LanguageCollector<'source> {
@@ -473,19 +484,39 @@ impl<'source> LanguageCollector<'source> {
             definitions: Vec::new(),
             imports: BTreeSet::new(),
             calls: Vec::new(),
+            relations: Vec::new(),
         }
     }
 
     fn collect(&mut self, node: Node<'_>) {
-        if let Some(definition) =
-            language_definition(node, self.source, self.language, self.path, &self.scopes)
-        {
-            self.definitions.push(definition);
+        let definition =
+            language_definition(node, self.source, self.language, self.path, &self.scopes);
+        if let Some(definition) = definition.as_ref() {
+            self.definitions.push(definition.clone());
         }
+        self.relations.extend(language_relations(
+            node,
+            self.source,
+            self.language,
+            self.path,
+            &self.scopes,
+            definition.as_ref(),
+        ));
         if let Some(import) = language_import(node, self.source, self.language) {
             self.imports.insert(import);
         }
         if let Some(call) = language_call_site(node, self.source, self.language) {
+            if let Some(source_id) = test_owner_id(&self.scopes, self.language, self.path) {
+                self.relations.push(StructuralRelation {
+                    kind: "tests".to_owned(),
+                    source: source_id,
+                    target_name: call
+                        .qualified_target
+                        .clone()
+                        .unwrap_or_else(|| call.target_name.clone()),
+                    range: call.range.clone(),
+                });
+            }
             self.calls.push(call);
         }
 
@@ -510,6 +541,14 @@ struct CallSite {
     end_byte: usize,
     target_name: String,
     qualified_target: Option<String>,
+    range: CodeGraphRange,
+}
+
+#[derive(Clone, Debug)]
+struct StructuralRelation {
+    kind: String,
+    source: String,
+    target_name: String,
     range: CodeGraphRange,
 }
 
@@ -685,6 +724,7 @@ fn merge_codegraph_delta(
         .chain(changed_artifact.edges)
         .collect::<Vec<_>>();
     resolve_call_edges(&mut edges, &nodes);
+    resolve_relation_edges(&mut edges, &nodes);
 
     let imported_packages = edges
         .iter()
@@ -770,6 +810,29 @@ fn build_artifact(parsed: &[ParsedFile]) -> CodeGraphArtifact {
         .map(|file| file.file.clone())
         .collect::<Vec<_>>();
     let manifest_key = manifest_key(&files);
+    let (mut nodes, mut edges) = structural_graph(parsed);
+    append_call_edges(parsed, &mut edges);
+
+    nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    resolve_call_edges(&mut edges, &nodes);
+    resolve_relation_edges(&mut edges, &nodes);
+    sort_graph(&mut nodes, &mut edges);
+
+    CodeGraphArtifact {
+        schema: CODEGRAPH_SCHEMA.to_owned(),
+        version: CODEGRAPH_VERSION,
+        manifest_key,
+        go_callfacts_context_sha256: None,
+        rust_callfacts_context_sha256: None,
+        typescript_callfacts_context_sha256: None,
+        python_callfacts_context_sha256: None,
+        files,
+        nodes,
+        edges,
+    }
+}
+
+fn structural_graph(parsed: &[ParsedFile]) -> (Vec<CodeGraphNode>, Vec<CodeGraphEdge>) {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     let mut package_nodes = BTreeMap::new();
@@ -793,6 +856,7 @@ fn build_artifact(parsed: &[ParsedFile]) -> CodeGraphArtifact {
                 target_name: Some(definition.qualified_name.clone()),
                 resolved: true,
                 ambiguous_candidates: Vec::new(),
+                resolution: Some("structural".to_owned()),
                 range: definition.node.range.clone(),
             });
         }
@@ -816,12 +880,28 @@ fn build_artifact(parsed: &[ParsedFile]) -> CodeGraphArtifact {
                 target_name: Some(import.clone()),
                 resolved: true,
                 ambiguous_candidates: Vec::new(),
+                resolution: Some("structural".to_owned()),
                 range: None,
+            });
+        }
+        for relation in &file.relations {
+            edges.push(CodeGraphEdge {
+                kind: relation.kind.clone(),
+                source: relation.source.clone(),
+                target: None,
+                target_name: Some(relation.target_name.clone()),
+                resolved: false,
+                ambiguous_candidates: Vec::new(),
+                resolution: Some("syntax".to_owned()),
+                range: Some(relation.range.clone()),
             });
         }
     }
     nodes.extend(package_nodes.into_values());
+    (nodes, edges)
+}
 
+fn append_call_edges(parsed: &[ParsedFile], edges: &mut Vec<CodeGraphEdge>) {
     for file in parsed {
         for call in &file.calls {
             let owner = file
@@ -835,9 +915,16 @@ fn build_artifact(parsed: &[ParsedFile]) -> CodeGraphArtifact {
                     || file.file_node_id.clone(),
                     |definition| definition.node.id.clone(),
                 );
+            let owner_definition = file
+                .definitions
+                .iter()
+                .filter(|definition| {
+                    definition.start_byte <= call.start_byte && call.end_byte <= definition.end_byte
+                })
+                .min_by_key(|definition| definition.end_byte - definition.start_byte);
             edges.push(CodeGraphEdge {
                 kind: "calls".to_owned(),
-                source: owner,
+                source: owner.clone(),
                 target: None,
                 target_name: Some(
                     call.qualified_target
@@ -846,26 +933,26 @@ fn build_artifact(parsed: &[ParsedFile]) -> CodeGraphArtifact {
                 ),
                 resolved: false,
                 ambiguous_candidates: Vec::new(),
+                resolution: Some("syntax".to_owned()),
                 range: Some(call.range.clone()),
             });
+            if owner_definition.is_some_and(|definition| is_test_name(&definition.simple_name)) {
+                edges.push(CodeGraphEdge {
+                    kind: "tests".to_owned(),
+                    source: owner,
+                    target: None,
+                    target_name: Some(
+                        call.qualified_target
+                            .clone()
+                            .unwrap_or_else(|| call.target_name.clone()),
+                    ),
+                    resolved: false,
+                    ambiguous_candidates: Vec::new(),
+                    resolution: Some("syntax".to_owned()),
+                    range: Some(call.range.clone()),
+                });
+            }
         }
-    }
-
-    nodes.sort_by(|left, right| left.id.cmp(&right.id));
-    resolve_call_edges(&mut edges, &nodes);
-    sort_graph(&mut nodes, &mut edges);
-
-    CodeGraphArtifact {
-        schema: CODEGRAPH_SCHEMA.to_owned(),
-        version: CODEGRAPH_VERSION,
-        manifest_key,
-        go_callfacts_context_sha256: None,
-        rust_callfacts_context_sha256: None,
-        typescript_callfacts_context_sha256: None,
-        python_callfacts_context_sha256: None,
-        files,
-        nodes,
-        edges,
     }
 }
 
@@ -878,6 +965,7 @@ fn sort_graph(nodes: &mut Vec<CodeGraphNode>, edges: &mut [CodeGraphEdge]) {
             left.kind.as_str(),
             left.target.as_deref().unwrap_or_default(),
             left.target_name.as_deref().unwrap_or_default(),
+            left.resolution.as_deref().unwrap_or_default(),
             left.range.as_ref().map_or(0, |range| range.start_byte),
             left.range.as_ref().map_or(0, |range| range.end_byte),
         )
@@ -886,6 +974,7 @@ fn sort_graph(nodes: &mut Vec<CodeGraphNode>, edges: &mut [CodeGraphEdge]) {
                 right.kind.as_str(),
                 right.target.as_deref().unwrap_or_default(),
                 right.target_name.as_deref().unwrap_or_default(),
+                right.resolution.as_deref().unwrap_or_default(),
                 right.range.as_ref().map_or(0, |range| range.start_byte),
                 right.range.as_ref().map_or(0, |range| range.end_byte),
             ))
@@ -954,6 +1043,119 @@ fn resolve_call_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) {
         edge.target = target.map(|definition| definition.node.id.clone());
         edge.resolved = edge.target.is_some();
         edge.ambiguous_candidates = ambiguous_candidates;
+        edge.resolution = Some(
+            if edge.resolved {
+                "syntax"
+            } else if edge.ambiguous_candidates.is_empty() {
+                "unresolved"
+            } else {
+                "ambiguous"
+            }
+            .to_owned(),
+        );
+    }
+}
+
+fn resolve_relation_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) {
+    let nodes_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+
+    for edge in edges.iter_mut().filter(|edge| {
+        matches!(
+            edge.kind.as_str(),
+            "inherits"
+                | "implements"
+                | "overrides"
+                | "mixes_in"
+                | "references"
+                | "tests"
+                | "depends_on"
+        )
+    }) {
+        let Some(target_name) = edge.target_name.as_deref() else {
+            edge.target = None;
+            edge.resolved = false;
+            edge.ambiguous_candidates.clear();
+            edge.resolution = Some("unresolved".to_owned());
+            continue;
+        };
+
+        let normalized_name = clean_relation_target(target_name);
+        let simple_name = normalized_name
+            .rsplit('.')
+            .next()
+            .unwrap_or(normalized_name.as_str());
+        let source_path = nodes_by_id
+            .get(edge.source.as_str())
+            .and_then(|node| node.path.as_deref());
+
+        let mut candidates = nodes
+            .iter()
+            .filter(|node| relation_target_kind(edge.kind.as_str(), node.kind.as_str()))
+            .filter(|node| {
+                node.qualified_name.as_deref() == Some(normalized_name.as_str())
+                    || (normalized_name.contains('.')
+                        && node.qualified_name.as_deref().is_some_and(|qualified| {
+                            qualified.ends_with(format!(".{normalized_name}").as_str())
+                        }))
+                    || node.name == simple_name
+            })
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
+        candidates.sort();
+        candidates.dedup();
+
+        if let Some(source_path) = source_path {
+            let same_file = candidates
+                .iter()
+                .filter(|candidate| {
+                    nodes_by_id
+                        .get(candidate.as_str())
+                        .and_then(|node| node.path.as_deref())
+                        == Some(source_path)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if !same_file.is_empty() {
+                candidates = same_file;
+            }
+        }
+
+        edge.target = (candidates.len() == 1).then(|| candidates[0].clone());
+        edge.resolved = edge.target.is_some();
+        edge.ambiguous_candidates = if edge.resolved {
+            Vec::new()
+        } else {
+            candidates
+        };
+        edge.resolution = Some(
+            if edge.resolved {
+                "syntax"
+            } else if edge.ambiguous_candidates.is_empty() {
+                "unresolved"
+            } else {
+                "ambiguous"
+            }
+            .to_owned(),
+        );
+    }
+}
+
+fn relation_target_kind(relation: &str, node_kind: &str) -> bool {
+    match relation {
+        "tests" => matches!(node_kind, "function" | "method" | "class"),
+        "overrides" => matches!(node_kind, "method" | "function"),
+        "depends_on" => node_kind == "package",
+        "inherits" | "implements" | "mixes_in" => {
+            matches!(node_kind, "class" | "interface" | "type" | "alias" | "enum")
+        }
+        "references" => matches!(
+            node_kind,
+            "class" | "interface" | "type" | "alias" | "enum" | "package"
+        ),
+        _ => false,
     }
 }
 
@@ -1948,6 +2150,7 @@ fn rust_callfact_edge(
             target_name: Some(fact.target_name.clone()),
             resolved,
             ambiguous_candidates: candidates,
+            resolution: Some(fact.resolution.clone()),
             range: Some(fact_range),
         },
         site,
@@ -2291,6 +2494,7 @@ fn external_callfact_edge(
             target_name: Some(fact.target_name.clone()),
             resolved,
             ambiguous_candidates: candidates,
+            resolution: Some(fact.resolution.clone()),
             range: Some(fact_range),
         },
         site,
@@ -2875,6 +3079,7 @@ fn go_callfact_edge(
             target_name: Some(fact.target_name.clone()),
             resolved,
             ambiguous_candidates: candidates,
+            resolution: Some(fact.resolution.clone()),
             range: Some(CodeGraphRange {
                 start_byte: fact.start_byte,
                 end_byte: fact.end_byte,
@@ -3767,6 +3972,7 @@ fn parse_file(root: &Path, path: &Path) -> CodeGraphResult<ParsedFile> {
     let mut definitions = Vec::new();
     let mut imports = BTreeSet::new();
     let mut calls = Vec::new();
+    let mut relations = Vec::new();
     if language == SourceLanguage::Go {
         collect_file_data(
             tree.root_node(),
@@ -3776,6 +3982,7 @@ fn parse_file(root: &Path, path: &Path) -> CodeGraphResult<ParsedFile> {
             &mut definitions,
             &mut imports,
             &mut calls,
+            &mut relations,
         );
     } else {
         let mut collector = LanguageCollector::new(text.as_bytes(), language, &relative_path);
@@ -3783,6 +3990,7 @@ fn parse_file(root: &Path, path: &Path) -> CodeGraphResult<ParsedFile> {
         definitions = collector.definitions;
         imports = collector.imports;
         calls = collector.calls;
+        relations = collector.relations;
     }
     Ok(ParsedFile {
         file: CodeGraphFile {
@@ -3796,9 +4004,11 @@ fn parse_file(root: &Path, path: &Path) -> CodeGraphResult<ParsedFile> {
         definitions,
         imports: imports.into_iter().collect(),
         calls,
+        relations,
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_file_data(
     node: Node<'_>,
     source: &[u8],
@@ -3807,6 +4017,7 @@ fn collect_file_data(
     definitions: &mut Vec<Definition>,
     imports: &mut BTreeSet<String>,
     calls: &mut Vec<CallSite>,
+    relations: &mut Vec<StructuralRelation>,
 ) {
     match node.kind() {
         "function_declaration" => {
@@ -3823,6 +4034,7 @@ fn collect_file_data(
             if is_package_level_spec(node)
                 && let Some(definition) = definition(node, source, package, path, "type")
             {
+                relations.extend(go_structural_relations(node, source, &definition));
                 definitions.push(definition);
             }
         }
@@ -3860,7 +4072,16 @@ fn collect_file_data(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_file_data(child, source, package, path, definitions, imports, calls);
+        collect_file_data(
+            child,
+            source,
+            package,
+            path,
+            definitions,
+            imports,
+            calls,
+            relations,
+        );
     }
 }
 
@@ -3962,6 +4183,269 @@ fn language_definition(
     })
 }
 
+#[allow(clippy::too_many_lines)]
+fn language_relations(
+    node: Node<'_>,
+    source: &[u8],
+    language: SourceLanguage,
+    path: &str,
+    scopes: &[(String, bool)],
+    definition: Option<&Definition>,
+) -> Vec<StructuralRelation> {
+    let mut relations = Vec::new();
+    match (language, node.kind()) {
+        (SourceLanguage::Rust, "impl_item") => {
+            let Some(type_node) = node.child_by_field_name("type") else {
+                return relations;
+            };
+            let source_name = clean_relation_target(node_text(type_node, source));
+            if source_name.is_empty() {
+                return relations;
+            }
+            let qualified_source_name = scopes
+                .iter()
+                .map(|(scope, _)| scope.as_str())
+                .chain(std::iter::once(source_name.as_str()))
+                .collect::<Vec<_>>()
+                .join(".");
+            let source_id = symbol_node_id("type", path, &qualified_source_name);
+            if let Some(trait_node) = node.child_by_field_name("trait")
+                && let Some(target_name) = non_empty_relation_target(node_text(trait_node, source))
+            {
+                relations.push(StructuralRelation {
+                    kind: "implements".to_owned(),
+                    source: source_id,
+                    target_name,
+                    range: graph_range(trait_node),
+                });
+            }
+        }
+        (SourceLanguage::Rust, "trait_item") => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            if let Some(bounds) = node.child_by_field_name("bounds") {
+                for (target_name, range) in relation_targets(bounds, source) {
+                    relations.push(StructuralRelation {
+                        kind: "inherits".to_owned(),
+                        source: definition.node.id.clone(),
+                        target_name,
+                        range,
+                    });
+                }
+            }
+        }
+        (SourceLanguage::Rust, "struct_item") => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            if let Some(fields) = node.child_by_field_name("body") {
+                for field in fields.named_children(&mut fields.walk()) {
+                    let Some(type_node) = field.child_by_field_name("type") else {
+                        continue;
+                    };
+                    if let Some(target_name) =
+                        non_empty_relation_target(node_text(type_node, source))
+                    {
+                        relations.push(StructuralRelation {
+                            kind: "references".to_owned(),
+                            source: definition.node.id.clone(),
+                            target_name,
+                            range: graph_range(type_node),
+                        });
+                    }
+                }
+            }
+        }
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "class_declaration") => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            if let Some(heritage) = node
+                .named_children(&mut node.walk())
+                .find(|child| child.kind() == "class_heritage")
+            {
+                for clause in heritage.named_children(&mut heritage.walk()) {
+                    let kind = match clause.kind() {
+                        "extends_clause" => "inherits",
+                        "implements_clause" => "implements",
+                        _ => continue,
+                    };
+                    for (target_name, range) in relation_targets(clause, source) {
+                        relations.push(StructuralRelation {
+                            kind: kind.to_owned(),
+                            source: definition.node.id.clone(),
+                            target_name,
+                            range,
+                        });
+                    }
+                }
+            }
+            relations.extend(type_field_references(node, source, definition));
+        }
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "interface_declaration") => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            for child in node.named_children(&mut node.walk()) {
+                if child.kind() != "extends_type_clause" {
+                    continue;
+                }
+                for (target_name, range) in relation_targets(child, source) {
+                    relations.push(StructuralRelation {
+                        kind: "inherits".to_owned(),
+                        source: definition.node.id.clone(),
+                        target_name,
+                        range,
+                    });
+                }
+            }
+            relations.extend(type_field_references(node, source, definition));
+        }
+        (SourceLanguage::Python, "class_definition") => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            let Some(superclasses) = node.child_by_field_name("superclasses") else {
+                return relations;
+            };
+            for (target_name, range) in relation_targets(superclasses, source) {
+                relations.push(StructuralRelation {
+                    kind: "inherits".to_owned(),
+                    source: definition.node.id.clone(),
+                    target_name,
+                    range,
+                });
+            }
+        }
+        (SourceLanguage::Python, "function_definition") => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            relations.extend(type_field_references(node, source, definition));
+        }
+        _ => {}
+    }
+    relations
+}
+
+fn relation_targets(node: Node<'_>, source: &[u8]) -> Vec<(String, CodeGraphRange)> {
+    let children = node.named_children(&mut node.walk()).collect::<Vec<_>>();
+    if children.is_empty() {
+        return non_empty_relation_target(node_text(node, source))
+            .map(|target| vec![(target, graph_range(node))])
+            .unwrap_or_default();
+    }
+    children
+        .into_iter()
+        .filter(|child| {
+            !matches!(
+                child.kind(),
+                "type_arguments" | "type_parameters" | "type_parameters_list"
+            )
+        })
+        .filter_map(|child| {
+            non_empty_relation_target(node_text(child, source))
+                .map(|target| (target, graph_range(child)))
+        })
+        .collect()
+}
+
+fn non_empty_relation_target(raw: &str) -> Option<String> {
+    let target = clean_relation_target(raw);
+    (!target.is_empty()).then_some(target)
+}
+
+fn clean_relation_target(raw: &str) -> String {
+    let mut target = raw
+        .trim()
+        .trim_matches(['"', '\'', '`', '(', ')', ',', ';'])
+        .trim_start_matches("dyn ")
+        .trim_start_matches('&')
+        .trim_start_matches('*')
+        .trim_start_matches("mut ")
+        .trim();
+    if let Some((prefix, _)) = target.split_once('<') {
+        target = prefix.trim();
+    }
+    target = target.trim_matches(['"', '\'', '`', '(', ')', ',', ';']);
+    target.replace("::", ".").trim_matches('.').to_owned()
+}
+
+fn go_structural_relations(
+    node: Node<'_>,
+    source: &[u8],
+    definition: &Definition,
+) -> Vec<StructuralRelation> {
+    let Some(type_node) = node.child_by_field_name("type") else {
+        return Vec::new();
+    };
+    if type_node.kind() != "struct_type" {
+        return Vec::new();
+    }
+    let Some(fields) = named_children(type_node)
+        .into_iter()
+        .find(|child| child.kind() == "field_declaration_list")
+    else {
+        return Vec::new();
+    };
+    fields
+        .named_children(&mut fields.walk())
+        .filter(|field| field.kind() == "field_declaration")
+        .filter_map(|field| {
+            let target = field.child_by_field_name("type")?;
+            let target_name = non_empty_relation_target(node_text(target, source))?;
+            Some(StructuralRelation {
+                kind: if field.child_by_field_name("name").is_some() {
+                    "references"
+                } else {
+                    "inherits"
+                }
+                .to_owned(),
+                source: definition.node.id.clone(),
+                target_name,
+                range: graph_range(target),
+            })
+        })
+        .collect()
+}
+
+fn type_field_references(
+    node: Node<'_>,
+    source: &[u8],
+    definition: &Definition,
+) -> Vec<StructuralRelation> {
+    let mut relations = Vec::new();
+    let mut pending = vec![node];
+    while let Some(candidate) = pending.pop() {
+        let type_node = candidate
+            .child_by_field_name("type")
+            .or_else(|| candidate.child_by_field_name("type_annotation"))
+            .or_else(|| candidate.child_by_field_name("return_type"));
+        if matches!(
+            candidate.kind(),
+            "public_field_definition"
+                | "property_signature"
+                | "required_parameter"
+                | "optional_parameter"
+                | "typed_parameter"
+                | "function_definition"
+        ) && let Some(type_node) = type_node
+        {
+            for (target_name, range) in relation_targets(type_node, source) {
+                relations.push(StructuralRelation {
+                    kind: "references".to_owned(),
+                    source: definition.node.id.clone(),
+                    target_name,
+                    range,
+                });
+            }
+        }
+        pending.extend(named_children(candidate));
+    }
+    relations
+}
+
 fn language_scope(
     node: Node<'_>,
     source: &[u8],
@@ -3986,6 +4470,47 @@ fn language_scope(
             .to_owned()
     })?;
     (!name.is_empty()).then_some((name, class_like))
+}
+
+fn test_owner_id(
+    scopes: &[(String, bool)],
+    _language: SourceLanguage,
+    path: &str,
+) -> Option<String> {
+    let owner = scopes
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, (_, class_like))| !*class_like)?;
+    if !is_test_name(&owner.1.0) {
+        return None;
+    }
+    let owner_index = owner.0;
+    let qualified_name = scopes[..=owner_index]
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>()
+        .join(".");
+    let kind = if scopes[..owner_index]
+        .iter()
+        .any(|(_, class_like)| *class_like)
+    {
+        "method"
+    } else {
+        "function"
+    };
+    Some(symbol_node_id(kind, path, &qualified_name))
+}
+
+fn is_test_name(name: &str) -> bool {
+    name == "test"
+        || name.starts_with("test_")
+        || name
+            .strip_prefix("test")
+            .is_some_and(|suffix| suffix.chars().next().is_some_and(char::is_uppercase))
+        || name
+            .strip_prefix("Test")
+            .is_some_and(|suffix| suffix.chars().next().is_some_and(char::is_uppercase))
 }
 
 fn language_import(node: Node<'_>, source: &[u8], language: SourceLanguage) -> Option<String> {
@@ -4366,9 +4891,13 @@ fn io_failure(operation: &str, path: &Path, source: std::io::Error) -> CodeGraph
 mod tests {
     use std::{collections::BTreeSet, fs, path::Path};
 
+    use serde::Deserialize;
     use tempfile::tempdir;
 
-    use super::{CodeGraphChange, build_go_codegraph, update_go_codegraph, write_go_codegraph};
+    use super::{
+        CodeGraphChange, build_codegraph, build_go_codegraph, update_go_codegraph,
+        write_go_codegraph,
+    };
 
     #[test]
     fn go_analysis_context_fingerprint_matches_go_producer_contract() {
@@ -4549,6 +5078,183 @@ mod tests {
                 "{expected_language}: {:#?}",
                 artifact.edges
             );
+        }
+    }
+
+    fn source_node_id(artifact: &super::CodeGraphArtifact, name: &str) -> String {
+        artifact
+            .nodes
+            .iter()
+            .find(|node| node.name == name && !matches!(node.kind.as_str(), "file" | "package"))
+            .map_or_else(
+                || panic!("missing source node {name}"),
+                |node| node.id.clone(),
+            )
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn emits_multifile_structural_relations_for_all_supported_languages() {
+        let cases = [
+            (
+                "go",
+                vec![
+                    (
+                        "types.go",
+                        "package demo\n\ntype Base struct{}\ntype Child struct { Base; Value Base }\n",
+                    ),
+                    (
+                        "test.go",
+                        "package demo\n\nfunc helper() {}\nfunc TestChild() { helper() }\n",
+                    ),
+                ],
+                vec![
+                    ("inherits", "Child", "Base"),
+                    ("references", "Child", "Base"),
+                    ("tests", "TestChild", "helper"),
+                ],
+            ),
+            (
+                "rust",
+                vec![
+                    (
+                        "types.rs",
+                        "trait Parent {}\ntrait Child: Parent {}\nstruct Impl;\nstruct Wrapper { value: Impl }\nimpl Parent for Impl {}\n",
+                    ),
+                    ("tests.rs", "fn helper() {}\nfn test_impl() { helper(); }\n"),
+                ],
+                vec![
+                    ("inherits", "Child", "Parent"),
+                    ("implements", "Impl", "Parent"),
+                    ("references", "Wrapper", "Impl"),
+                    ("tests", "test_impl", "helper"),
+                ],
+            ),
+            (
+                "typescript",
+                vec![
+                    (
+                        "types.ts",
+                        "export class Base {}\nexport interface Contract {}\nexport class Child extends Base implements Contract { value: Base; }\n",
+                    ),
+                    (
+                        "tests.ts",
+                        "function helper() {}\nfunction testChild() { helper(); }\n",
+                    ),
+                ],
+                vec![
+                    ("inherits", "Child", "Base"),
+                    ("implements", "Child", "Contract"),
+                    ("references", "Child", "Base"),
+                    ("tests", "testChild", "helper"),
+                ],
+            ),
+            (
+                "python",
+                vec![
+                    (
+                        "types.py",
+                        "class Base:\n    pass\n\nclass Child(Base):\n    pass\n",
+                    ),
+                    (
+                        "tests.py",
+                        "def helper():\n    pass\n\ndef typed_helper(value: Base) -> Base:\n    return value\n\ndef test_child():\n    helper()\n",
+                    ),
+                ],
+                vec![
+                    ("inherits", "Child", "Base"),
+                    ("references", "typed_helper", "Base"),
+                    ("tests", "test_child", "helper"),
+                ],
+            ),
+        ];
+
+        for (language, files, expected_relations) in cases {
+            let directory = tempdir().expect("workspace");
+            for (path, source) in files {
+                fs::write(directory.path().join(path), source).expect("fixture source");
+            }
+            let artifact = build_codegraph(directory.path()).expect("graph");
+            for (kind, source_name, target_name) in expected_relations {
+                let edge = artifact
+                    .edges
+                    .iter()
+                    .find(|edge| {
+                        edge.kind == kind
+                            && edge
+                                .source
+                                .as_str()
+                                .eq(source_node_id(&artifact, source_name).as_str())
+                            && edge.target_name.as_deref() == Some(target_name)
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{language}: missing {kind} {source_name} -> {target_name}: {:#?}",
+                            artifact.edges
+                        )
+                    });
+                assert!(edge.resolved, "{language}: {edge:#?}");
+                assert!(edge.target.is_some(), "{language}: {edge:#?}");
+                assert_eq!(edge.resolution.as_deref(), Some("syntax"));
+            }
+        }
+    }
+
+    #[derive(Deserialize)]
+    struct RelationFixture {
+        schema: String,
+        language: String,
+        source_files: Vec<String>,
+        relations: Vec<RelationExpectation>,
+    }
+
+    #[derive(Deserialize)]
+    struct RelationExpectation {
+        kind: String,
+        source: String,
+        target: String,
+    }
+
+    #[test]
+    fn checked_in_relation_fixtures_match_structural_graph_output() {
+        let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/codegraph-relations-20260928");
+        for language in ["go", "rust", "typescript", "python"] {
+            let root = fixture_root.join(language);
+            let truth: RelationFixture =
+                serde_json::from_slice(&fs::read(root.join("truth.json")).expect("relation truth"))
+                    .expect("valid relation truth");
+            assert_eq!(truth.schema, "zvec-grep.codegraph-relations-v1");
+            assert_eq!(truth.language, language);
+            for source_file in &truth.source_files {
+                assert!(
+                    root.join(source_file).is_file(),
+                    "{language}: {source_file}"
+                );
+            }
+
+            let artifact = build_codegraph(&root).expect("fixture graph");
+            assert!(artifact.files.iter().all(|file| file.language == language));
+            for expected in truth.relations {
+                let source = source_node_id(&artifact, &expected.source);
+                let edge = artifact
+                    .edges
+                    .iter()
+                    .find(|edge| {
+                        edge.kind == expected.kind
+                            && edge.source == source
+                            && edge.target_name.as_deref() == Some(expected.target.as_str())
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{language}: missing {} {} -> {}: {:#?}",
+                            expected.kind, expected.source, expected.target, artifact.edges
+                        )
+                    });
+                assert!(edge.resolved, "{language}: {edge:#?}");
+                assert!(edge.target.is_some(), "{language}: {edge:#?}");
+                assert_eq!(edge.resolution.as_deref(), Some("syntax"));
+            }
         }
     }
 

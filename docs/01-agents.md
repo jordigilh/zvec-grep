@@ -227,6 +227,7 @@ lexical lookup to the agent's native tools:
 | Workspace-grounded exact words, quotations, names, dates, keys, filenames, paths, or regexes are sufficient | Native grep or rg |
 | Workspace-grounded wording or location is unknown, or the answer requires semantic, fuzzy, relationship, chronology, causality, comparison, or cross-file synthesis | `zvec_grep_search` |
 | Exact callers, a shortest call path, or the callgraph community for a known function are requested | The corresponding `zvec_grep_callgraph_*` tool |
+| A source file, package, declaration, generic neighbor, relation path, or graph provenance is requested | The corresponding `zvec_grep_codegraph_*` tool |
 | Exact anchors are known but the answer requires broader context or synthesis | `zvec_grep_search`, then native grep or rg |
 | The answer is unrelated open-world knowledge, a current external fact, or web content that does not depend on local evidence | The appropriate external source, not zvec-grep |
 
