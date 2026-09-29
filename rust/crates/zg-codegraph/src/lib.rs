@@ -3919,6 +3919,12 @@ fn toml_container_balance(value: &str) -> Option<usize> {
     for character in value.chars() {
         if let Some(current_quote) = quote {
             if current_quote == '"' && escaped {
+                if !matches!(
+                    character,
+                    'b' | 't' | 'n' | 'f' | 'r' | '"' | '\\' | 'u' | 'U'
+                ) {
+                    return None;
+                }
                 escaped = false;
             } else if current_quote == '"' && character == '\\' {
                 escaped = true;
@@ -3939,7 +3945,7 @@ fn toml_container_balance(value: &str) -> Option<usize> {
             _ => {}
         }
     }
-    quote.is_none().then_some(containers.len())
+    (quote.is_none() && !escaped).then_some(containers.len())
 }
 
 fn toml_key(value: &str) -> String {
@@ -5716,6 +5722,13 @@ mod tests {
             super::parse_package_manifest(
                 "python",
                 b"[project]\nname = \"broken\n\ndependencies = [\"requests\"]\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"valid-name\"\n[dependencies]\nserde = \"\\q\"\n",
             ),
             (None, Vec::new())
         );
