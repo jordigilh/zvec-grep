@@ -45,7 +45,7 @@ TypeScript/TSX, and Python source. It persists a versioned
 - stable file- and symbol-scoped IDs;
 - declaration nodes and source ranges;
 - `defines`, `imports`, `calls`, `inherits`, `implements`, `references`, and
-  `tests` edges; and
+  `tests`, and explicit-manifest `depends_on` edges; and
 - unresolved, ambiguous, and syntax-derived relation metadata.
 
 The relation vocabulary is versioned independently as
@@ -77,12 +77,16 @@ evidence-backed language capability matrix is:
 | --- | --- | --- |
 | `defines`, `imports`, `calls`, `inherits`, `references`, `tests` | Go, Rust, TypeScript/TSX, Python | Supported |
 | `implements` | Rust, TypeScript/TSX | Supported only for projects containing one of these languages |
-| `overrides`, `mixes_in`, `depends_on` | None | Reserved; no guessed edges |
+| `depends_on` | Go, Rust, TypeScript/TSX, Python | Supported from explicit package manifests |
+| `overrides`, `mixes_in` | None | Reserved; no guessed edges |
 
 Go intentionally reports `implements` as unsupported rather than treating
 implicit interface satisfaction as a structural edge. `overrides` is reserved
 for all four languages until a producer supplies source/compiler-attested
-evidence. The root-scoped MCP capability result and generic query metadata
+evidence. `depends_on` is emitted only from explicit `go.mod`, `Cargo.toml`,
+`pyproject.toml`, or `package.json` declarations; it is never inferred from
+imports, names, or directory layout. The root-scoped MCP capability result and
+generic query metadata
 report `supported`, `unsupported`, or `reserved` for each relation; they do not
 hide the generic query tools based on project language.
 
@@ -91,7 +95,16 @@ Independent multi-file truth fixtures for the supported subset live under
 Each fixture keeps source files and expected relation labels separate from the
 Graphify comparator and is asserted through the structural graph builder.
 
-### 3. Optional semantic overlays
+### 3. Explicit package-manifest dependencies
+
+Package nodes use the manifest package name as their stable identity. Dependency
+targets without a local manifest remain name-only package nodes, while edges
+retain `resolution: "manifest"` and are refreshed when any recognized manifest
+changes. Malformed or unsupported manifest content produces no dependency edge.
+This is explicit configuration evidence: it proves that a package declares the
+dependency, not that every source import resolves to it.
+
+### 4. Optional semantic overlays
 
 Each language has an independent, opt-in sidecar with exact source locators,
 source hashes, analysis-context hashes, and explicit resolution classes:
@@ -115,7 +128,7 @@ Valid facts replace only matching syntax call sites. Missing, stale, malformed,
 or inconsistent facts fall back to syntax edges. This permits semantic
 improvement without making compiler tooling a runtime requirement.
 
-### 4. Graph queries
+### 5. Graph queries
 
 `CallGraphIndex` currently projects resolved and possible call edges into
 separate directed graphs and provides:
@@ -132,7 +145,7 @@ separate directed graphs and provides:
 The current blast-radius index is function/method-centric even though the
 artifact contains broader code declaration nodes.
 
-### 5. Freshness and lifecycle
+### 6. Freshness and lifecycle
 
 The graph refresh path reuses unchanged files, applies added/modified/deleted
 source deltas, and re-resolves incoming call edges against the current
@@ -151,6 +164,7 @@ being applied.
 | Shortest path | Implemented for calls | Generalize to selected relation types |
 | Communities | Implemented with Leiden | Compare code-only community semantics and summaries |
 | Inheritance/implementation edges | Implemented for syntax-attested multi-file fixtures | Add bounded semantic adapters and broader language coverage |
+| Package-manifest `depends_on` edges | Implemented for explicit Go, Rust, Python, and TypeScript/TSX manifests | Add broader manifest-format conformance fixtures |
 | Override/mixin edges | Reserved; not inferred | Add only where syntax/compiler evidence is defensible |
 | References and test relationships | Implemented for source-anchored syntax facts | Add broader annotation/test-framework coverage |
 | Node/neighbor/path/explain inspection | Implemented | Add affected-subgraph queries and richer edge provenance |

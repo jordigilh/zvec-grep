@@ -780,3 +780,19 @@ Added root-scoped MCP coverage and updated the parity, CLI, and MCP guides.
 **Upstream disposition:** Included in draft fork PR
 [#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
 opened.
+
+## 2026-09-29 — LCL-025: Explicit package-manifest dependency edges
+
+`depends_on` is now supported from explicit package manifests rather than
+remaining reserved. The producer recognizes Go `go.mod`, Rust `Cargo.toml`,
+Python `pyproject.toml`, and TypeScript/TSX `package.json`, emits canonical
+package nodes and `resolution: "manifest"` edges, and never infers a dependency
+from imports, names, or directory layout. Manifest digests participate in graph
+freshness, so refresh rebuilds dependency edges when configuration changes.
+
+The relation-generation marker advanced to `2`; existing local snapshots are
+rebuilt. Focused coverage exercises all four ecosystems and manifest refresh.
+
+**Upstream disposition:** Included in draft fork PR
+[#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
+opened.

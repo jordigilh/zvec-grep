@@ -126,9 +126,9 @@ ambiguous targets are excluded unless `--include-possible` is supplied. Query
 results include the graph manifest and applied language call-facts context
 fingerprints, project languages, and relation capability statuses. `implements`
 is supported structurally for Rust and TypeScript/TSX; Go reports it as
-unsupported because implicit interface satisfaction is not inferred. `overrides`,
-`mixes_in`, and `depends_on` remain reserved until evidence-specific producers
-exist.
+unsupported because implicit interface satisfaction is not inferred. `depends_on`
+is supported only from explicit package manifests (`go.mod`, `Cargo.toml`,
+`pyproject.toml`, and `package.json`); `overrides` and `mixes_in` remain reserved.
 
 ## `zg --index`
 
