@@ -3840,7 +3840,7 @@ fn parse_package_json_manifest(bytes: &[u8]) -> (Option<String>, Vec<String>) {
 fn toml_assignments(text: &str) -> Option<Vec<(String, String, String)>> {
     let mut section = String::new();
     let mut assignments = Vec::new();
-    let mut pending: Option<(String, String, String, i32)> = None;
+    let mut pending: Option<(String, String, String, usize)> = None;
 
     for raw_line in text.lines() {
         let line = strip_toml_comment(raw_line).trim();
@@ -3850,8 +3850,8 @@ fn toml_assignments(text: &str) -> Option<Vec<(String, String, String)>> {
         if let Some((pending_section, pending_key, pending_value, depth)) = pending.as_mut() {
             pending_value.push(' ');
             pending_value.push_str(line);
-            *depth += toml_bracket_balance(line);
-            if *depth <= 0 {
+            *depth = toml_container_balance(pending_value)?;
+            if *depth == 0 {
                 assignments.push((
                     pending_section.clone(),
                     pending_key.clone(),
@@ -3880,7 +3880,7 @@ fn toml_assignments(text: &str) -> Option<Vec<(String, String, String)>> {
         };
         let key = toml_key(key);
         let value = value.trim().to_owned();
-        let depth = toml_bracket_balance(&value);
+        let depth = toml_container_balance(&value)?;
         if depth > 0 {
             pending = Some((section.clone(), key, value, depth));
         } else {
@@ -3912,15 +3912,34 @@ fn strip_toml_comment(line: &str) -> &str {
     line
 }
 
-fn toml_bracket_balance(value: &str) -> i32 {
-    value
-        .chars()
-        .map(|character| match character {
-            '[' => 1,
-            ']' => -1,
-            _ => 0,
-        })
-        .sum()
+fn toml_container_balance(value: &str) -> Option<usize> {
+    let mut containers = Vec::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for character in value.chars() {
+        if let Some(current_quote) = quote {
+            if current_quote == '"' && escaped {
+                escaped = false;
+            } else if current_quote == '"' && character == '\\' {
+                escaped = true;
+            } else if character == current_quote {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '"' | '\'' => quote = Some(character),
+            '[' | '{' => containers.push(character),
+            ']' | '}' => {
+                let expected = if character == ']' { '[' } else { '{' };
+                if containers.pop() != Some(expected) {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    quote.is_none().then_some(containers.len())
 }
 
 fn toml_key(value: &str) -> String {
@@ -3937,21 +3956,35 @@ fn toml_key(value: &str) -> String {
 
 fn toml_string_value(value: &str) -> Option<String> {
     let value = value.trim();
-    if value.starts_with('{') || value.starts_with('[') {
+    let quote = value.chars().next()?;
+    if !matches!(quote, '"' | '\'') {
         return None;
     }
-    if value.starts_with('"') {
-        let end = value.rfind('"')?;
+    let mut escaped = false;
+    let end = value
+        .char_indices()
+        .skip(1)
+        .find_map(|(index, character)| {
+            if quote == '"' && escaped {
+                escaped = false;
+                return None;
+            }
+            if quote == '"' && character == '\\' {
+                escaped = true;
+                return None;
+            }
+            (character == quote).then_some(index)
+        })?;
+    if !value[end + 1..].trim().is_empty() {
+        return None;
+    }
+    if quote == '"' {
         let encoded = &value[..=end];
         return serde_json::from_str(encoded)
             .ok()
             .or_else(|| Some(value[1..end].to_owned()));
     }
-    if value.starts_with('\'') {
-        let end = value.rfind('\'')?;
-        return Some(value[1..end].to_owned());
-    }
-    value.split_whitespace().next().map(str::to_owned)
+    Some(value[1..end].to_owned())
 }
 
 fn toml_array_strings(value: &str) -> Vec<String> {
@@ -5669,6 +5702,20 @@ mod tests {
             super::parse_package_manifest(
                 "python",
                 b"[project]\nname = \"broken\"\ndependencies = [\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"broken\"\n[dependencies]\nserde = \"1\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "python",
+                b"[project]\nname = \"broken\n\ndependencies = [\"requests\"]\n",
             ),
             (None, Vec::new())
         );
