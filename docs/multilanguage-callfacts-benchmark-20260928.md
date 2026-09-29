@@ -57,12 +57,12 @@ producer itself used its pinned rustup `1.98.0` toolchain with `rustc-dev`;
 the default `rustc` shown by the host shell was `1.98.1` Homebrew and is not
 the producer compiler.
 
-## Results
+## Historical pre-extension results
 
 Static precision and recall are over definite `(caller, target)` pairs. The Go
 scale fixture has 2,376 definite static calls across 8,688 source lines and 94
-files. The smaller holdouts have Rust 3/5, TypeScript 4/7, and Python 4/8
-definite calls/call sites.
+files. The following table records the original pre-extension run; the Rust,
+TypeScript, and Python holdout sizes below have since changed.
 
 | Language | Path | Median wall time | Range | Static precision | Static recall | Unsafe definite sites / dynamic promotions |
 |---|---|---:|---:|---:|---:|---:|
@@ -124,3 +124,40 @@ their source/context-attested sidecars, and improve or preserve the expected
 certainty behavior on these fixtures. They do not establish repository-wide
 accuracy, language completeness, or general performance superiority over
 Graphify.
+
+## 2026-09-29 cross-file semantic holdout extension
+
+The Rust, TypeScript/TSX, and Python holdouts were enriched without changing
+the call-facts schema:
+
+- Rust now has helper and same-name decoy modules, imported aliases, and a
+  qualified cross-module call;
+- TypeScript now has helper and same-name decoy modules, imported aliases, and
+  a `.tsx` caller; and
+- Python is now an importable `src` package with helper and same-name decoy
+  modules and imported aliases.
+
+The existing Go holdout already covered cross-package same-name functions,
+interface dispatch, and function-value calls. A fresh five-repeat local run of
+the Rust/TypeScript/Python runner produced these call-resolution results:
+
+| Language / path | Call sites | Syntax-only P/R | Semantic P/R | Graphify P/R | Semantic class accuracy |
+|---|---:|---:|---:|---:|---:|
+| Rust | 8 | 0.75 / 0.50 | 1.00 / 1.00 | 0.60 / 0.50 | 8/8 |
+| TypeScript/TSX | 10 | 1.00 / 0.29 | 1.00 / 1.00 | 0.75 / 0.86 | 9/10 |
+| Python | 10 | 0.67 / 0.33 | 1.00 / 1.00 | 1.00 / 0.67 | 10/10 |
+
+The semantic overlay also preserved the possible-target contract: Rust 1/1,
+TypeScript 0/1 (the structural/interface case is conservatively non-definite),
+and Python 1/1. Graphify promoted one possible Rust call to a definite edge,
+and missed the possible Python target. The syntax-only graph produced one
+unsafe definite Python edge.
+
+Median semantic end-to-end time in that run was approximately 1.46 s for Rust,
+0.50 s for TypeScript/TSX, and 1.47 s for Python. Those timings include
+producer work and must not be compared with the syntax-only graph time without
+including the same semantic analysis cost.
+
+This confirms the intended accuracy effect: cross-file aliases and decoy
+symbols reduce syntax-only recall, while compiler/type-attested facts restore
+the checked static targets without unsafe promotions.

@@ -53,3 +53,15 @@ def dynamic_caller(value: int) -> int:
 
 def external_caller(value: int) -> float:
     return math.sqrt(value)
+
+
+from src.decoy import leaf as decoy_leaf
+from src.helper import leaf as helper_leaf
+
+
+def imported_alias_caller(value: int) -> int:
+    return helper_leaf(value)
+
+
+def decoy_alias_caller(value: int) -> int:
+    return decoy_leaf(value)

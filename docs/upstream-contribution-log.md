@@ -850,3 +850,22 @@ module-item import and re-export granularity remains explicitly outside the
 measured overlap.
 
 **Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.
+
+## 2026-09-29 — LCL-028: Cross-file semantic callfacts holdouts
+
+Enriched the source-pinned Rust, TypeScript/TSX, and Python callfacts holdouts
+with same-name helper/decoy modules, imported aliases, and a cross-file TSX
+caller. The existing Go holdout already covers cross-package same-name calls,
+interface dispatch, and function values. The reusable local runner now
+exercises syntax-only zvec, the language callfacts producer plus semantic zvec,
+and Graphify against the same independently authored call qrels.
+
+On a fresh five-repeat local run, semantic zvec improved static recall from
+0.50 to 1.00 for Rust, 0.29 to 1.00 for TypeScript/TSX, and 0.33 to 1.00 for
+Python, with 1.00 precision in each case. Producer class accuracy was Rust
+8/8, TypeScript/TSX 9/10, and Python 10/10; the TypeScript mismatch is the
+intentional conservative structural/interface case. Graphify remained subject
+to false definite promotions or missed possible targets on the same certainty
+qrels.
+
+**Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.

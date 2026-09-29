@@ -31,3 +31,12 @@ Fixtures:
 - `rust/crates/zg-codegraph/tests/fixtures/rust-graphify-holdout-20260928/`
 - `rust/crates/zg-codegraph/tests/fixtures/typescript-graphify-holdout-20260928/`
 - `rust/crates/zg-codegraph/tests/fixtures/python-graphify-holdout-20260928/`
+
+The Rust holdout includes imported aliases and same-name helper/decoy modules;
+the TypeScript holdout includes imported aliases, same-name modules, and a
+`.tsx` caller; the Python holdout is an importable package with helper/decoy
+modules and imported aliases. These cases are source-pinned in `truth.json`
+and are intended to distinguish syntax-only name matching from the semantic
+call-facts overlay. Go uses the separate
+`tools/go-callgraph-benchmark/benchmark.py` because its producer has a v2
+sidecar and an independently built helper.

@@ -3,9 +3,15 @@
   "language": "python",
   "input_files": [
     "pyrightconfig.json",
+    "src/__init__.py",
+    "src/decoy.py",
+    "src/helper.py",
     "src/lib.py"
   ],
   "source_files": [
+    "src/__init__.py",
+    "src/decoy.py",
+    "src/helper.py",
     "src/lib.py"
   ],
   "context_files": [
@@ -13,7 +19,10 @@
   ],
   "input_sha256": {
     "pyrightconfig.json": "d62b15c3cc135c8e3acddf7f822f0f7cd5beaa5193ae49c89ad6731de0b32bf3",
-    "src/lib.py": "a32efba0e3322a181daf2b517a3f716b69442e43bfdcc81381432860d83f8042"
+    "src/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/decoy.py": "18c97b448b1d06e0642aa5408ce5038b361e66dfb1b52eb35ce316f6b2ce7cde",
+    "src/helper.py": "f5676cb6a74e060a046f493359c94cbcf83abdb0804779f9e38e64a980da1ba0",
+    "src/lib.py": "230c5136fe14763ea4cc8fc9b68eb2d74fff7b5d9292a46b2db4d66138e748a2"
   },
   "symbols": [
     {
@@ -75,6 +84,26 @@
       "id": "external_caller",
       "path": "src/lib.py",
       "line": 54
+    },
+    {
+      "id": "src.helper.leaf",
+      "path": "src/helper.py",
+      "line": 1
+    },
+    {
+      "id": "src.decoy.leaf",
+      "path": "src/decoy.py",
+      "line": 1
+    },
+    {
+      "id": "imported_alias_caller",
+      "path": "src/lib.py",
+      "line": 62
+    },
+    {
+      "id": "decoy_alias_caller",
+      "path": "src/lib.py",
+      "line": 66
     }
   ],
   "calls": [
@@ -141,6 +170,20 @@
       "allowed_resolutions": [
         "external"
       ]
+    },
+    {
+      "path": "src/lib.py",
+      "line": 63,
+      "caller": "imported_alias_caller",
+      "expected_class": "definite",
+      "target": "src.helper.leaf"
+    },
+    {
+      "path": "src/lib.py",
+      "line": 67,
+      "caller": "decoy_alias_caller",
+      "expected_class": "definite",
+      "target": "src.decoy.leaf"
     }
   ]
 }
