@@ -1,0 +1,199 @@
+{
+  "source_sha256": {
+    "app/calls.go": "85cdc9aabbc594b4e5658bdbd5221742cf5cd571914773ae27d15901195caf6f",
+    "dep/dep.go": "c17b72bf71f7bc348b41fb01d9c0ae12380f0c87530e90eea7fa106860637502",
+    "go.mod": "1826a2c4889881824cf4a9d2486405a5df36c96b3fc342d0a5e61f6f2d38f0ad"
+  },
+  "calls": [
+    {
+      "path": "app/calls.go",
+      "line": 18,
+      "start_byte": 226,
+      "end_byte": 237,
+      "start_line": 18,
+      "end_line": 18,
+      "start_column": 29,
+      "end_column": 40,
+      "caller": "app/calls.go::app.CallerExternalFlush",
+      "target_name": "dep.Flush",
+      "target": "dep/dep.go::dep.Flush",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "path": "app/calls.go",
+      "line": 19,
+      "start_byte": 269,
+      "end_byte": 276,
+      "start_line": 19,
+      "end_line": 19,
+      "start_column": 29,
+      "end_column": 36,
+      "caller": "app/calls.go::app.CallerLocalFlush",
+      "target_name": "Flush",
+      "target": "app/calls.go::app.Flush",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "path": "app/calls.go",
+      "line": 24,
+      "start_byte": 353,
+      "end_byte": 360,
+      "start_line": 24,
+      "end_line": 24,
+      "start_column": 28,
+      "end_column": 35,
+      "caller": "app/calls.go::app.AlphaCaller",
+      "target_name": "a.Run",
+      "target": "app/calls.go::app.Alpha.Run",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "path": "app/calls.go",
+      "line": 25,
+      "start_byte": 391,
+      "end_byte": 398,
+      "start_line": 25,
+      "end_line": 25,
+      "start_column": 28,
+      "end_column": 35,
+      "caller": "app/calls.go::app.BetaCaller",
+      "target_name": "b.Run",
+      "target": "app/calls.go::app.Beta.Run",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "path": "app/calls.go",
+      "line": 27,
+      "start_byte": 435,
+      "end_byte": 446,
+      "start_line": 27,
+      "end_line": 27,
+      "start_column": 33,
+      "end_column": 44,
+      "caller": "app/calls.go::app.InterfaceCaller",
+      "target_name": "r.Execute",
+      "target": null,
+      "resolution": "interface-dispatch",
+      "possible_targets": ["app/calls.go::app.Worker.Execute"]
+    },
+    {
+      "path": "app/calls.go",
+      "line": 28,
+      "start_byte": 480,
+      "end_byte": 505,
+      "start_line": 28,
+      "end_line": 28,
+      "start_column": 31,
+      "end_column": 56,
+      "caller": "app/calls.go::app.InterfaceCallerOuter",
+      "target_name": "InterfaceCaller",
+      "target": "app/calls.go::app.InterfaceCaller",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "path": "app/calls.go",
+      "line": 31,
+      "start_byte": 542,
+      "end_byte": 550,
+      "start_line": 31,
+      "end_line": 31,
+      "start_column": 16,
+      "end_column": 24,
+      "caller": "app/calls.go::app.Direct",
+      "target_name": "Target",
+      "target": "app/calls.go::app.Target",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "path": "app/calls.go",
+      "line": 32,
+      "start_byte": 573,
+      "end_byte": 581,
+      "start_line": 32,
+      "end_line": 32,
+      "start_column": 20,
+      "end_column": 28,
+      "caller": "app/calls.go::app.Transitive",
+      "target_name": "Direct",
+      "target": "app/calls.go::app.Direct",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "path": "app/calls.go",
+      "line": 33,
+      "start_byte": 598,
+      "end_byte": 610,
+      "start_line": 33,
+      "end_line": 33,
+      "start_column": 14,
+      "end_column": 26,
+      "caller": "app/calls.go::app.Deep",
+      "target_name": "Transitive",
+      "target": "app/calls.go::app.Transitive",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "path": "app/calls.go",
+      "line": 35,
+      "start_byte": 639,
+      "end_byte": 643,
+      "start_line": 35,
+      "end_line": 35,
+      "start_column": 25,
+      "end_column": 29,
+      "caller": "app/calls.go::app.invoke",
+      "target_name": "fn",
+      "target": null,
+      "possible_targets": [],
+      "resolution": "function-value"
+    }
+  ],
+  "blast_radius": [
+    {
+      "target": "app/calls.go::app.Target",
+      "depth": 3,
+      "definite_by_depth": [
+        ["app/calls.go::app.Direct"],
+        ["app/calls.go::app.Transitive"],
+        ["app/calls.go::app.Deep"]
+      ]
+    },
+    {
+      "target": "app/calls.go::app.Alpha.Run",
+      "depth": 1,
+      "definite_by_depth": [["app/calls.go::app.AlphaCaller"]]
+    },
+    {
+      "target": "app/calls.go::app.Beta.Run",
+      "depth": 1,
+      "definite_by_depth": [["app/calls.go::app.BetaCaller"]]
+    },
+    {
+      "target": "dep/dep.go::dep.Flush",
+      "depth": 1,
+      "definite_by_depth": [["app/calls.go::app.CallerExternalFlush"]]
+    },
+    {
+      "target": "app/calls.go::app.Flush",
+      "depth": 1,
+      "definite_by_depth": [["app/calls.go::app.CallerLocalFlush"]]
+    },
+    {
+      "target": "app/calls.go::app.Worker.Execute",
+      "depth": 2,
+      "definite_by_depth": [],
+      "possible_by_depth": [
+        ["app/calls.go::app.InterfaceCaller"],
+        ["app/calls.go::app.InterfaceCallerOuter"]
+      ]
+    }
+  ]
+}

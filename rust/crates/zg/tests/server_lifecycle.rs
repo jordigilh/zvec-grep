@@ -931,7 +931,7 @@ fn default_connections_reuse_either_toolset_and_explicit_conflicts_fail()
                 .as_array()
                 .ok_or("tool list")?
                 .len(),
-            if profile == "agent" { 5 } else { 10 }
+            if profile == "agent" { 10 } else { 15 }
         );
         bridge.close()?;
         let current: serde_json::Value =
@@ -1160,7 +1160,7 @@ fn concurrent_stdio_bootstraps_share_one_resident_daemon() -> Result<(), Box<dyn
     let tools = list["result"]["tools"]
         .as_array()
         .ok_or("tools/list did not return an array")?;
-    assert_eq!(tools.len(), 10);
+    assert_eq!(tools.len(), 15);
 
     for bridge in bridges {
         bridge.close()?;

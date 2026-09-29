@@ -1,0 +1,9 @@
+{
+  "name": "@zvec/python-callfacts-tool",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Pinned Pyright runtime for the optional zvec-grep Python call-facts producer",
+  "dependencies": {
+    "pyright": "1.1.414"
+  }
+}

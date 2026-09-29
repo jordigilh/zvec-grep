@@ -258,6 +258,36 @@ fn execute_graph_query(
         zg_cli::GraphQueryAction::ShortestPath { source, target } => {
             serde_json::to_value(index.shortest_path(&source, &target)?)?
         }
+        zg_cli::GraphQueryAction::Node { query } => serde_json::to_value(index.node(&query)?)?,
+        zg_cli::GraphQueryAction::Neighbors {
+            query,
+            relations,
+            include_possible,
+        } => {
+            let relations = parse_graph_relations(&relations)?;
+            serde_json::to_value(index.neighbors(
+                &query,
+                relations.as_deref(),
+                include_possible,
+            )?)?
+        }
+        zg_cli::GraphQueryAction::RelationPath {
+            source,
+            target,
+            relations,
+            include_possible,
+        } => {
+            let relations = parse_graph_relations(&relations)?;
+            serde_json::to_value(index.relation_path(
+                &source,
+                &target,
+                relations.as_deref(),
+                include_possible,
+            )?)?
+        }
+        zg_cli::GraphQueryAction::Explain { query } => {
+            serde_json::to_value(index.explain(&query)?)?
+        }
         zg_cli::GraphQueryAction::Cluster { function } => {
             serde_json::to_value(index.cluster(&function)?)?
         }
@@ -265,6 +295,27 @@ fn execute_graph_query(
     };
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
+}
+
+fn parse_graph_relations(
+    values: &[String],
+) -> Result<Option<Vec<zg_engine::codegraph::CodeGraphRelationKind>>, Box<dyn Error>> {
+    if values.is_empty() {
+        return Ok(None);
+    }
+    let mut relations = Vec::with_capacity(values.len());
+    for value in values {
+        let Some(relation) = zg_engine::codegraph::CodeGraphRelationKind::parse(value) else {
+            return Err(format!(
+                "unknown graph relation `{value}`; expected one of defines, imports, calls, inherits, implements, overrides, mixes_in, references, tests, depends_on"
+            )
+            .into());
+        };
+        if !relations.contains(&relation) {
+            relations.push(relation);
+        }
+    }
+    Ok(Some(relations))
 }
 
 async fn execute_install_plan(args: &zg_cli::InstallArgs) -> Result<(), Box<dyn Error>> {

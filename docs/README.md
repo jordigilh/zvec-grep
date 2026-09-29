@@ -21,6 +21,7 @@ and implementation details, see the [Rust README](../rust/README.md).
 | Understand the tools exposed to an agent | [MCP guide](./03-mcp.md) |
 | Understand indexing, updates, and search routes | [Retrieval pipeline](./04-pipeline.md) |
 | See how the components and trust boundaries fit together | [Architecture](./05-architecture.md) |
+| Review four-language code-graph parity design | [Codegraph parity design](./four-language-codegraph-parity-design-20260928.md) |
 | Choose between Auto, Server, and Direct execution | [Server and execution modes](./06-server.md) |
 | Choose and configure an Embedding model | [Embedding models](./07-embedding.md) |
 | See what is stable now and what comes next | [Roadmap](./08-roadmap.md) |

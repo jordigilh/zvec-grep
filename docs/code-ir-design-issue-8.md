@@ -37,7 +37,7 @@ those tests demonstrate existing sidecar behavior, not the proposed IR.
 
 One immutable `Snapshot` contains the following *typed records*, serialized
 with a separate `schema: "zvec-grep.code-ir", schema_version: 1`. The schema
-version is independent of the search-index and `codegraph-v1` versions.
+version is independent of the search-index and `codegraph-v2` versions.
 
 ```text
 Snapshot {

@@ -57,18 +57,28 @@ use zg_engine::{
 };
 
 pub const AGENT_TOOL_NAME: &str = "zvec_grep_search";
-pub const AGENT_TOOL_NAMES: [&str; 5] = [
+pub const AGENT_TOOL_NAMES: [&str; 10] = [
     "zvec_grep_callgraph_blast_radius",
     "zvec_grep_callgraph_cluster",
     "zvec_grep_callgraph_communities",
     "zvec_grep_callgraph_shortest_path",
+    "zvec_grep_codegraph_capabilities",
+    "zvec_grep_codegraph_explain",
+    "zvec_grep_codegraph_neighbors",
+    "zvec_grep_codegraph_node",
+    "zvec_grep_codegraph_relation_path",
     AGENT_TOOL_NAME,
 ];
-pub const FULL_TOOL_NAMES: [&str; 10] = [
+pub const FULL_TOOL_NAMES: [&str; 15] = [
     "zvec_grep_callgraph_blast_radius",
     "zvec_grep_callgraph_cluster",
     "zvec_grep_callgraph_communities",
     "zvec_grep_callgraph_shortest_path",
+    "zvec_grep_codegraph_capabilities",
+    "zvec_grep_codegraph_explain",
+    "zvec_grep_codegraph_neighbors",
+    "zvec_grep_codegraph_node",
+    "zvec_grep_codegraph_relation_path",
     "zvec_grep_index",
     "zvec_grep_index_drop",
     "zvec_grep_index_status",
@@ -598,7 +608,7 @@ impl ZvecGrepMcpServer {
 
     #[tool(
         name = "zvec_grep_callgraph_blast_radius",
-        description = "Find direct and transitive callers of a function in the selected live checkout. Refreshes a root-scoped Go, Rust, TypeScript/TSX, and Python callgraph from current source contents before querying, including uncommitted changes.",
+        description = "Find direct and transitive callers of a function in the selected live checkout. Returns resolved callers separately from possible callers reached through ambiguous candidates. An explicitly generated Go go/types sidecar is used only when source and recorded module/workspace context inputs match; the result includes its generation-context fingerprint. Facts are scoped to the recorded Go environment, so regenerate after changing Go toolchain, target, flags, workspace, or dependency configuration. Otherwise uses the syntax-derived graph. Refreshes from current source contents before querying, including uncommitted changes.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CallGraphBlastRadius>(),
         annotations(
             title = "Find code callers",
@@ -723,6 +733,166 @@ impl ZvecGrepMcpServer {
             .map_err(|message| ErrorData::internal_error(message, None))?;
         let result = index
             .clustering()
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_capabilities",
+        description = "Report the languages present in a live checkout and the root-specific status of each codegraph relation. This is the capability surface for project-aware relation support; codegraph tools remain statically discoverable rather than being hidden by language.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphCapabilities>(),
+        annotations(
+            title = "Inspect codegraph capabilities",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_capabilities(
+        &self,
+        Parameters(input): Parameters<RootInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        Ok(structured_result(index.capabilities()))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_node",
+        description = "Inspect any source file, package, declaration, or other codegraph node and its directly attached relations. Refreshes the selected live checkout from current source contents before querying, including uncommitted changes.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphNodeResult>(),
+        annotations(
+            title = "Inspect a codegraph node",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_node(
+        &self,
+        Parameters(input): Parameters<CodeGraphNodeInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("query", &input.query, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .node(input.query.trim())
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_neighbors",
+        description = "List incoming and outgoing neighbors for any codegraph node, optionally restricted to relation kinds. Possible ambiguous targets are excluded unless includePossible is true.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphNeighbors>(),
+        annotations(
+            title = "List codegraph neighbors",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_neighbors(
+        &self,
+        Parameters(input): Parameters<CodeGraphNeighborsInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("query", &input.query, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let relations = parse_codegraph_relations(input.relations.as_deref())
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .neighbors(
+                input.query.trim(),
+                relations.as_deref(),
+                input.include_possible.unwrap_or(false),
+            )
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_relation_path",
+        description = "Find a shortest directed path between any two codegraph nodes over all relations or selected relation kinds. Possible ambiguous targets are excluded unless includePossible is true.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphRelationPath>(),
+        annotations(
+            title = "Find a codegraph relation path",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_relation_path(
+        &self,
+        Parameters(input): Parameters<CodeGraphRelationPathInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("source", &input.source, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("target", &input.target, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let relations = parse_codegraph_relations(input.relations.as_deref())
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .relation_path(
+                input.source.trim(),
+                input.target.trim(),
+                relations.as_deref(),
+                input.include_possible.unwrap_or(false),
+            )
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_explain",
+        description = "Explain a codegraph node with attached relations, relation counts, manifest identity, and applied semantic context fingerprints.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphExplanation>(),
+        annotations(
+            title = "Explain a codegraph node",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_explain(
+        &self,
+        Parameters(input): Parameters<CodeGraphNodeInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("query", &input.query, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .explain(input.query.trim())
             .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
         Ok(structured_result(result))
     }
@@ -972,6 +1142,52 @@ pub struct CallGraphClusterInput {
     /// Function or method name, optionally path-qualified.
     #[schemars(length(min = 1, max = 4000))]
     pub function: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodeGraphNodeInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Node name, path-qualified name, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub query: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodeGraphNeighborsInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Node name, path-qualified name, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub query: String,
+    /// Optional relation allow-list. Omit to traverse every serialized relation.
+    #[schemars(length(max = 10))]
+    pub relations: Option<Vec<String>>,
+    /// Include ambiguous candidate targets as possible neighbors.
+    pub include_possible: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodeGraphRelationPathInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Source node name, path-qualified name, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub source: String,
+    /// Target node name, path-qualified name, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub target: String,
+    /// Optional relation allow-list. Omit to traverse every serialized relation.
+    #[schemars(length(max = 10))]
+    pub relations: Option<Vec<String>>,
+    /// Include ambiguous candidate targets as possible path steps.
+    pub include_possible: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -1854,6 +2070,31 @@ fn validate_text(name: &str, value: &str, min: usize, max: usize) -> Result<(), 
     Ok(())
 }
 
+fn parse_codegraph_relations(
+    values: Option<&[String]>,
+) -> Result<Option<Vec<zg_engine::codegraph::CodeGraphRelationKind>>, String> {
+    let Some(values) = values else {
+        return Ok(None);
+    };
+    if values.len() > 10 {
+        return Err("relations accepts at most 10 values".to_owned());
+    }
+    let mut relations = Vec::with_capacity(values.len());
+    for value in values {
+        validate_text("relation", value, 1, 64)?;
+        let Some(relation) = zg_engine::codegraph::CodeGraphRelationKind::parse(value.trim())
+        else {
+            return Err(format!(
+                "unknown graph relation `{value}`; expected one of defines, imports, calls, inherits, implements, overrides, mixes_in, references, tests, depends_on"
+            ));
+        };
+        if !relations.contains(&relation) {
+            relations.push(relation);
+        }
+    }
+    Ok(Some(relations))
+}
+
 fn parse_optional_time(value: Option<TimeInput>, name: &str) -> Result<Option<u64>, String> {
     value.map(|value| parse_time(value, name)).transpose()
 }
@@ -2240,12 +2481,12 @@ fn truncate_line(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, sync::Arc};
+    use std::{collections::BTreeMap, fs, path::PathBuf, sync::Arc};
 
     use rmcp::ServerHandler;
     use rmcp::model::ContentBlock;
     use tempfile::tempdir;
-    use zg_engine::{EngineError, ZvecGrep};
+    use zg_engine::{EngineError, ZvecGrep, codegraph::GoCallFactsContext};
 
     use super::{
         AGENT_TOOL_NAME, AGENT_TOOL_NAMES, FULL_TOOL_NAMES, FreshnessInput, IndexInput,
@@ -2571,7 +2812,7 @@ mod tests {
     }
 
     #[test]
-    fn full_server_exposes_all_ten_tools() {
+    fn full_server_exposes_all_tools() {
         let server =
             ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
         let names = server
@@ -2649,6 +2890,214 @@ mod tests {
                 .callers_by_depth
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn codegraph_capabilities_are_root_scoped_and_report_reserved_relations() {
+        let workspace = tempdir().expect("workspace");
+        fs::write(
+            workspace.path().join("main.go"),
+            "package main\n\nfunc main() {}\n",
+        )
+        .expect("Go source");
+        fs::write(workspace.path().join("lib.rs"), "pub fn helper() {}\n").expect("Rust source");
+        let server =
+            ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
+
+        let result = server
+            .zvec_grep_codegraph_capabilities(super::Parameters(super::RootInput {
+                root: workspace.path().display().to_string(),
+            }))
+            .await
+            .expect("capabilities tool call");
+        let structured = result.structured_content.expect("structured capabilities");
+        assert_eq!(
+            structured["project_languages"],
+            serde_json::json!(["go", "rust"])
+        );
+        assert_eq!(
+            structured["relation_capabilities"]
+                .as_array()
+                .expect("relation capabilities")
+                .iter()
+                .find(|capability| capability["relation"] == "implements")
+                .expect("implements capability")["status"],
+            "supported"
+        );
+        assert_eq!(
+            structured["relation_capabilities"]
+                .as_array()
+                .expect("relation capabilities")
+                .iter()
+                .find(|capability| capability["relation"] == "overrides")
+                .expect("overrides capability")["status"],
+            "reserved"
+        );
+    }
+
+    #[tokio::test]
+    async fn blast_radius_tool_consumes_source_pinned_go_callfacts() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../zg-codegraph/tests/fixtures/go-blast-radius");
+        let workspace = tempdir().expect("Go fixture workspace");
+        let context_sha256 = write_mcp_fixture_callfacts(&fixture, workspace.path());
+
+        let server =
+            ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
+        let result = server
+            .zvec_grep_callgraph_blast_radius(super::Parameters(super::CallGraphBlastRadiusInput {
+                root: workspace.path().display().to_string(),
+                function: "app.Target".to_owned(),
+                depth: Some(3),
+            }))
+            .await
+            .expect("blast-radius tool call");
+        let structured = result.structured_content.expect("structured tool result");
+        assert_eq!(
+            structured["callers_by_depth"],
+            serde_json::json!([
+                ["app/calls.go::Direct"],
+                ["app/calls.go::Transitive"],
+                ["app/calls.go::Deep"]
+            ])
+        );
+        assert_eq!(structured["go_callfacts_context_sha256"], context_sha256);
+
+        let possible = server
+            .zvec_grep_callgraph_blast_radius(super::Parameters(super::CallGraphBlastRadiusInput {
+                root: workspace.path().display().to_string(),
+                function: "app.Worker.Execute".to_owned(),
+                depth: Some(2),
+            }))
+            .await
+            .expect("interface blast-radius tool call")
+            .structured_content
+            .expect("structured interface result");
+        assert_eq!(possible["callers_by_depth"], serde_json::json!([]));
+        assert_eq!(
+            possible["possible_callers_by_depth"],
+            serde_json::json!([
+                ["app/calls.go::InterfaceCaller"],
+                ["app/calls.go::InterfaceCallerOuter"]
+            ])
+        );
+
+        fs::remove_file(workspace.path().join(".zvec-grep/go-callfacts-v2.json"))
+            .expect("remove opt-in sidecar");
+        let fallback = server
+            .zvec_grep_callgraph_blast_radius(super::Parameters(super::CallGraphBlastRadiusInput {
+                root: workspace.path().display().to_string(),
+                function: "app.Worker.Execute".to_owned(),
+                depth: Some(1),
+            }))
+            .await
+            .expect("syntax fallback tool call")
+            .structured_content
+            .expect("structured fallback result");
+        assert_eq!(
+            fallback["callers_by_depth"],
+            serde_json::json!([["app/calls.go::InterfaceCaller"]])
+        );
+        assert_eq!(fallback["possible_callers_by_depth"], serde_json::json!([]));
+    }
+
+    fn write_mcp_fixture_callfacts(fixture: &std::path::Path, root: &std::path::Path) -> String {
+        for relative in ["go.mod", "app/calls.go", "dep/dep.go"] {
+            let source = fixture.join(relative);
+            let target = root.join(relative);
+            fs::create_dir_all(target.parent().expect("fixture parent"))
+                .expect("fixture directory");
+            fs::copy(source, target).expect("copy Go fixture source");
+        }
+
+        let truth: serde_json::Value =
+            serde_json::from_slice(&fs::read(fixture.join("truth.json")).expect("fixture truth"))
+                .expect("decode fixture truth");
+        let files = truth["source_sha256"]
+            .as_object()
+            .expect("source digests")
+            .iter()
+            .filter(|(path, _)| {
+                std::path::Path::new(path)
+                    .extension()
+                    .is_some_and(|extension| extension == "go")
+            })
+            .map(|(path, digest)| serde_json::json!({"path": path, "sha256": digest}))
+            .collect::<Vec<_>>();
+        let context_files = truth["source_sha256"]
+            .as_object()
+            .expect("source digests")
+            .iter()
+            .filter(|(path, _)| {
+                matches!(
+                    std::path::Path::new(path)
+                        .file_name()
+                        .and_then(|name| name.to_str()),
+                    Some("go.mod" | "go.sum" | "go.work" | "go.work.sum")
+                )
+            })
+            .map(|(path, digest)| zg_engine::codegraph::GoCallFactsFile {
+                path: path.clone(),
+                sha256: digest.as_str().expect("context digest").to_owned(),
+            })
+            .collect();
+        let context = GoCallFactsContext {
+            go_version: "go1.26.0".to_owned(),
+            go_mod: "go.mod".to_owned(),
+            go_work: String::new(),
+            settings: fixture_context_settings(),
+            context_files,
+        };
+        let context_sha256 = context.fingerprint();
+        let sidecar = serde_json::json!({
+            "schema": "zvec-grep.go-callfacts",
+            "version": 2,
+            "context": context,
+            "context_sha256": context_sha256.clone(),
+            "files": files,
+            "calls": truth["calls"],
+        });
+        let sidecar_path = root.join(".zvec-grep/go-callfacts-v2.json");
+        fs::create_dir_all(sidecar_path.parent().expect("sidecar parent"))
+            .expect("sidecar directory");
+        fs::write(
+            sidecar_path,
+            serde_json::to_vec_pretty(&sidecar).expect("serialize sidecar"),
+        )
+        .expect("write Go facts");
+        context_sha256
+    }
+
+    fn fixture_context_settings() -> BTreeMap<String, String> {
+        [
+            "GO111MODULE",
+            "GO386",
+            "GOAMD64",
+            "GOARCH",
+            "GOARM",
+            "GOARM64",
+            "CGO_ENABLED",
+            "GOEXPERIMENT",
+            "GOFLAGS",
+            "GOMIPS",
+            "GOMIPS64",
+            "GOOS",
+            "GOPPC64",
+            "GORISCV64",
+            "GOTOOLCHAIN",
+            "GOWASM",
+        ]
+        .into_iter()
+        .map(|name| {
+            let value = match name {
+                "GOOS" => "darwin",
+                "GOARCH" => "arm64",
+                "CGO_ENABLED" => "1",
+                _ => "",
+            };
+            (name.to_owned(), value.to_owned())
+        })
+        .collect()
     }
 
     #[test]

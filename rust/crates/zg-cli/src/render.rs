@@ -487,7 +487,7 @@ Examples:
   zg --auth status
   zg --server on
   zg --graph
-  zg --graph-query .zvec-grep/codegraph-v1.json blast-radius Reconcile
+  zg --graph-query .zvec-grep/codegraph-v2.json blast-radius Reconcile
   zg --config model set local/potion-code-16m-v2 --device metal
   zg --install
 
@@ -640,8 +640,14 @@ const GRAPH_HELP: &str = r"Usage:
 
 Builds a deterministic structural sidecar for Go, Rust, TypeScript/TSX, and
 Python. The default artifact is
-<root>/.zvec-grep/codegraph-v1.json and includes definitions, imports, and
-lexical call edges. Unresolved calls are retained with their target name.
+<root>/.zvec-grep/codegraph-v2.json and includes definitions, imports, and
+lexical call edges. An optional, source- and context-matched Go call-facts
+sidecar at <root>/.zvec-grep/go-callfacts-v2.json replaces covered Go call
+edges with go/types-resolved edges; stale or unsupported facts fall back to
+syntax-derived edges. Facts are scoped to their recorded generation context;
+regenerate after changing the Go toolchain, target, build flags, workspace, or
+dependency inputs. Generate them explicitly with tools/go-callfacts. Unresolved
+calls are retained with their target name.
 
 With --base, only supported --changed source files are reparsed. --deleted removes a file;
 represent a rename with both --deleted <old-path> and --changed <new-path>.
@@ -650,12 +656,19 @@ Call edges are re-resolved against the updated definitions.";
 const GRAPH_QUERY_HELP: &str = r"Usage:
   zg --graph-query <artifact> blast-radius <function> [--depth <n>]
   zg --graph-query <artifact> shortest-path <source> <target>
+  zg --graph-query <artifact> node <query>
+  zg --graph-query <artifact> neighbors <query> [--relation <kind>]... [--include-possible]
+  zg --graph-query <artifact> relation-path <source> <target> [--relation <kind>]... [--include-possible]
+  zg --graph-query <artifact> explain <query>
   zg --graph-query <artifact> cluster <function>
   zg --graph-query <artifact> communities
 
-Queries a codegraph-v1 JSON artifact. Function names may be bare, path-qualified
-as <path>::<name>, or an exact sidecar node ID. Ambiguous or missing names
-return an error with candidate details.";
+Queries a codegraph-v2 JSON artifact. Node names may be bare, path-qualified as
+<path>::<name>, or an exact sidecar node ID. Ambiguous or missing names return
+an error with candidate details. Relation filters accept defines, imports, calls,
+inherits, implements, overrides, mixes_in, references, tests, or depends_on.
+Possible candidate edges are excluded unless --include-possible is supplied.
+Results include the manifest and language call-facts context fingerprints.";
 
 const CONFIG_HELP: &str = r"Usage:
   zg --config provider set <provider> --api-key <key>

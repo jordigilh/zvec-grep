@@ -1,0 +1,12 @@
+{
+  "schema": "zvec-grep.codegraph-relations-v1",
+  "language": "rust",
+  "source_files": ["tests.rs", "types.rs"],
+  "relations": [
+    {"kind": "inherits", "source": "Child", "target": "Parent"},
+    {"kind": "implements", "source": "Impl", "target": "Parent"},
+    {"kind": "references", "source": "Wrapper", "target": "Impl"},
+    {"kind": "tests", "source": "test_impl", "target": "helper"},
+    {"kind": "tests", "source": "attribute_test", "target": "helper"}
+  ]
+}

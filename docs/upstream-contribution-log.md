@@ -516,3 +516,283 @@ the seven-prompt replay is exploratory and has no adjudicated relevance labels.
 
 **Upstream disposition:** Local issue-linked work only; upstream submission
 scope and timing remain undecided.
+
+## 2026-09-28 — LCL-012: Separate Sense and Go blast-radius upstream proposals
+
+**Status:** Local design proposal; no issue or pull request opened against the
+upstream `origin` repository.
+
+The recommended upstream contribution is split into two independent proposals:
+
+1. Port the Sense-inspired qualified-name and identifier-part lexical projection
+   to Rust without changing embeddings, fusion, or default ranking. This is the
+   smaller retrieval-indexing contribution. Commits `87bf286` and `dfb0552`
+   implement the local projection; `540ac22` and `76941c9` record release and
+   rebuild verification. The current evidence proves lexical wiring and smoke
+   search, not a general retrieval-quality improvement.
+2. Add an opt-in, source/context-attested Go call-facts overlay for codegraph
+   blast radius. The local implementation separates definite static callers,
+   possible interface callers, and unresolved function-value calls, and falls
+   back to syntax edges when facts are stale or unavailable. The small
+   hand-authored fixture and the 8,688-line scale fixture match their stated
+   supported static truth; the scale benchmark measured Graphify 1.409s median,
+   zvec syntax 0.288s, and zvec type-aware end-to-end 0.683s, with static-edge
+   precision/recall of 0.985/0.995, 0.990/0.990, and 1.000/1.000 respectively.
+
+The issue-ready scope, evidence, non-goals, acceptance gates, and proposed PR
+split are in
+[`docs/upstream-contribution-proposals-20260928.md`](./upstream-contribution-proposals-20260928.md).
+The “100%” graph statement is deliberately limited to static-edge
+precision/recall on the frozen supported fixtures; it is not a repository-wide
+accuracy claim.
+
+**Local evidence commits:** `87bf286`, `dfb0552`, `f1b04cd`, `0125ccc`,
+`474f1b9`, `bb62f64`, `7aface0`, `ce0ad6b`, and `5a26804`.
+
+**Upstream disposition:** Hold for maintainer feedback. Do not open a combined
+PR; prepare separate issue/PR discussions for lexical retrieval and Go
+semantic call facts.
+
+## 2026-09-28 — LCL-013: Bounded Rust callfacts follow-up
+
+**Status:** Local language spike; no upstream issue or pull request opened.
+
+The Rust graph path now has an opt-in `zvec-grep.rust-callfacts` v1 sidecar
+produced by a pinned rustup `1.98.0` `rustc_driver`/HIR wrapper. The consumer
+validates the complete Rust source list and SHA-256 digests, Cargo/toolchain/
+config context files, context fingerprint, source locators, and call ranges
+before replacing syntax edges. It preserves syntax fallback when the sidecar is
+missing, stale, malformed, or internally inconsistent.
+
+The temporary-crate smoke check produced deterministic facts for two static
+calls, one function-value call, and one trait-dispatch call. The graph query
+reported the static caller in `callers_by_depth`, the trait caller in
+`possible_callers_by_depth`, and the function-value call as unresolved. The
+Rust graph integration suite covers static replacement, possible dispatch,
+source/context freshness, malformed-sidecar fallback, and Rust context source
+stamps. `cargo test -p zg-codegraph`, strict codegraph Clippy, Rust formatting,
+producer compilation, and a producer/CLI consumer smoke run passed.
+
+This is not a completeness or repository-wide accuracy claim. Compiler-private
+API coupling, dynamic dispatch, function pointers, macros, closures, async
+lowering, unsupported generics, external crates, and cross-target behavior
+remain explicit limitations. The language-neutral envelope is documented in
+[`docs/codegraph-callfacts-contract-20260928.md`](./codegraph-callfacts-contract-20260928.md);
+Go v2 remains unchanged. The same bounded consumer now also accepts independent
+TypeScript compiler-API and Python AST+Pyright v1 sidecars; they remain separate
+follow-up proposals with no default enablement or whole-language accuracy
+claim.
+
+## 2026-09-28 — LCL-014: Independent TypeScript and Python callfacts
+
+**Status:** Local language follow-ups; no upstream issue or pull request opened.
+
+The bounded consumer now accepts independent v1 sidecars from a TypeScript
+compiler-API producer and a Python AST plus pinned Pyright `1.1.414` producer.
+Both producers record complete source/configuration inputs, context fingerprints,
+and UTF-8 byte ranges; both publish atomically and keep function-value,
+possible, ambiguous, external, and unresolved calls non-definite. Focused
+producer fixtures pass deterministic repeated-output, Unicode range, and
+classification checks. Consumer integration covers static replacement, source
+and context freshness, malformed-sidecar fallback, and coexistence with the
+other language overlay.
+
+These are bounded opt-in spikes, not default runtime dependencies or
+whole-language precision/recall claims. They remain separate from the Go and
+Rust upstream proposals pending broader platform/toolchain coverage and
+maintainer decisions about TypeScript and Pyright dependencies.
+
+## 2026-09-28 — LCL-015: Synthetic multilanguage accuracy and timing benchmark
+
+**Status:** Local evidence only; no upstream issue or pull request opened.
+
+Added independent, source-hashed Rust, TypeScript, and Python Graphify holdout
+fixtures with definite, possible, and non-definite call truth. A five-repeat
+run compared Graphify `0.9.71`, zvec syntax-only graphs, each language's
+call-facts producer, and semantic zvec graphs. The semantic paths achieved
+fixture-scoped static precision/recall of Rust `1.00/1.00`, TypeScript
+`1.00/1.00`, and Python `1.00/0.50` in the initial run; Graphify measured Rust `0.75/1.00`,
+TypeScript `0.60/0.75`, and Python `1.00/0.50`.
+
+The first Rust end-to-end check caught that compiler `def_span` caller ranges
+covered only the signature, so the validated sidecar was correctly rejected
+when a call appeared in the body. The producer now uses HIR spans including
+the body; the benchmark asserts all three semantic context fingerprints are
+accepted by the graph consumer.
+
+The benchmark records median/min/max wall time and keeps Graphify outside the
+runtime path. Rust producer timing includes pinned `rustc_driver` wrapper
+compilation and Cargo check; TypeScript includes compiler-API startup; Python
+includes the pinned Pyright language-server session. Full scope, command,
+certainty metrics, and limitations are in
+[`docs/multilanguage-callfacts-benchmark-20260928.md`](./multilanguage-callfacts-benchmark-20260928.md).
+
+## 2026-09-28 — LCL-016: Python method-binding improvement
+
+The Python producer now asks Pyright for definitions/hover at the attribute
+token (`receiver.convert`) instead of the receiver token. It also uses the
+AST to attest direct `Protocol` method declarations as possible targets. The
+same frozen Python fixture consequently improved from static precision/recall
+`1.00/0.50` to `1.00/1.00`, possible-target recall `0/1` to `1/1`, and
+producer class accuracy `5/8` to `8/8`, with zero unsafe definite sites.
+
+The five-repeat timing run measured a 1,276 ms median Python producer and
+1,314 ms semantic end-to-end path; Graphify code-only extraction was 294 ms.
+This remains fixture-scoped evidence, not a whole-Python accuracy or
+performance claim.
+
+## 2026-09-28 — LCL-017: Unified four-language benchmark summary
+
+The benchmark documentation now presents Go alongside Rust, TypeScript, and
+Python. Go uses the 8,688-line/94-file scale fixture: Graphify measured
+`0.985/0.995` static precision/recall at a 1,216 ms median, while zvec's
+source-attested type-aware path measured `1.000/1.000` at 550 ms end-to-end
+(213 ms producer plus 337 ms graph construction). The other three languages
+remain the smaller independent holdouts and are labeled separately rather than
+being treated as directly size-equivalent performance results.
+
+## 2026-09-28 — LCL-018: Four-language code-graph parity issue and design
+
+The code-only parity scope is now explicitly limited to Go, Rust, TypeScript/TSX,
+and Python. Hindsight remains responsible for documents and other non-code
+objects; other programming languages are out of scope. The implemented
+source/context-attested callfacts design and the remaining Graphify code-graph
+parity gaps are recorded in
+[`docs/four-language-codegraph-parity-design-20260928.md`](./four-language-codegraph-parity-design-20260928.md)
+and local issue ZGI-007 in
+[`docs/local-integration-issues.md`](./local-integration-issues.md).
+
+The next scope is broader code relationships and generic graph queries rather
+than additional language producers: inheritance/implementation/override/mixin
+and source-anchored reference/test edges, node/neighbor/affected/explanation
+surfaces, multi-file truth fixtures for all four languages, and one consistent
+published source/context snapshot. The design also records deliberate ways to
+surpass Graphify through certainty classes, provenance, compiler-backed binding,
+and stale-context rejection. Fork PR
+[#24](https://github.com/jordigilh/zvec-grep/pull/24) now carries the committed
+semantic callfacts and evidence slices; no upstream PR has been opened.
+
+## 2026-09-28 — LCL-019: Branch provenance for four-language Graphify parity
+
+The parity work originated in checkout `spike/rust-zg-sense-baseline`, whose
+original scope is the Rust Sense-inspired lexical baseline documented in
+[`docs/rust-zg-sense-baseline-plan.md`](./rust-zg-sense-baseline-plan.md). The
+Graphify/codegraph work was subsequently layered onto that branch. Its original
+codegraph identity is captured by ZGI-002/ZGI-003, fork issue #3, and the
+earlier LCL entries; the explicit branch handoff is now recorded as ZGI-008 in
+[`docs/local-integration-issues.md`](./local-integration-issues.md).
+
+The source branch was therefore a provenance/evidence branch, not the intended
+review branch for the four-language code-only parity effort. No reset or
+destructive branch rewrite was authorized or required.
+
+The original Sense portion is already represented by fork PR
+[#22](https://github.com/jordigilh/zvec-grep/pull/22), whose remote head remains
+`76941c9`. Do not push the later Graphify parity commits to that PR's head
+branch; create a separate stacked parity branch and PR instead.
+
+## 2026-09-28 — LCL-020: Four-language parity review branch and PR
+
+The uncommitted Graphify parity work was preserved, then moved onto
+`spike/four-language-codegraph-graphify-parity` after fork PR #22 merged at
+`f4a52d5`. The branch is based on the updated
+`integration/zvec-live-code-intelligence` tip and contains the eight prior
+codegraph commits plus two logical parity commits:
+
+- `e3f0cca feat(codegraph): add four-language semantic callfacts`;
+- `2d3bed6 docs(codegraph): capture four-language Graphify parity`.
+
+Fork PR [#24](https://github.com/jordigilh/zvec-grep/pull/24) is open as a draft.
+It records the current implementation and fixture-scoped evidence. The next
+implementation slices remain in ZGI-007: richer relations, generic graph
+queries, multi-file truth fixtures, and consistent snapshot publication.
+
+## 2026-09-28 — LCL-021: Generic relation queries and structural truth fixtures
+
+Commit `c246f58 feat(codegraph): add generic relation queries` implements the
+first ZGI-007 follow-up on the dedicated parity branch. The v1 artifact remains
+backward-readable while edges gain optional resolution labels and the relation
+vocabulary is versioned as `zvec-grep.codegraph.relations` v1. Structural
+`inherits`, `implements`, `references`, and `tests` edges are emitted only from
+source-attested syntax and resolved with explicit unresolved/ambiguous states.
+
+The generic `zg-codegraph` API now exposes node, neighbor, relation-filtered
+path, and explanation queries with manifest and language-context provenance.
+Equivalent CLI graph-query actions and root-scoped MCP tools are documented and
+tested. Independent multi-file truth fixtures for Go, Rust, TypeScript, and
+Python live under `rust/crates/zg-codegraph/tests/fixtures/`.
+
+Verification for this slice: `cargo test -p zg-codegraph` (27 tests plus all
+existing integration suites), strict Clippy for `zg-codegraph`, `zg-cli`, and
+`zg-transport-mcp`, `cargo test -p zg-cli` (52), `cargo test -p
+zg-transport-mcp` (34), and `cargo check -p zg` passed. The native macOS Rust
+build used the command-scoped SDK C++ include flags documented above.
+
+**Upstream disposition:** Included in draft fork PR
+[#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
+opened. Reserved `overrides`, `mixes_in`, and `depends_on` relations remain
+non-inferred pending defensible language/compiler evidence.
+
+## 2026-09-29 — LCL-022: Relation-generation compatibility guard (superseded)
+
+The then-current v1 artifact serialized an optional relation-extraction
+generation (`CODEGRAPH_RELATION_GENERATION = 1`). This migration-safe read
+policy was superseded below because the artifact was local development output,
+not an upstream compatibility contract.
+
+Verification: `cargo test -p zg-codegraph` (28 tests plus all integration
+suites), strict Clippy for `zg-codegraph`, `cargo test -p zg-cli -p
+zg-transport-mcp` (53 and 34 tests), and `cargo check -p zg` passed with the
+documented macOS SDK C++ include flag.
+
+**Upstream disposition:** Included in draft fork PR
+[#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
+opened.
+
+## 2026-09-29 — LCL-023: Require codegraph snapshot regeneration
+
+Because `codegraph-v1.json` was introduced only in the fork and has not been
+released upstream, the artifact is now version 2 and is written as
+`codegraph-v2.json`. Its relation-generation marker is required rather than
+backward-defaulted. Refresh reads only the v2 path; callers using an older local
+snapshot must regenerate it instead of relying on a compatibility read.
+
+The CLI, MCP refresh path, tests, benchmarks, container helper, and codegraph
+documentation all use the v2 artifact name.
+
+**Upstream disposition:** Included in draft fork PR
+[#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
+opened.
+
+## 2026-09-29 — LCL-024: Root-scoped relation capabilities
+
+MCP tool discovery remains static because the server cannot know a project’s
+languages from the tool-list request. Added
+`zvec_grep_codegraph_capabilities`, which refreshes the selected root and
+reports its project languages plus `supported`, `unsupported`, or `reserved`
+status for every versioned relation. The same capability metadata is included
+in generic codegraph query results. `implements` is evidence-backed for Rust
+and TypeScript/TSX; Go does not infer implicit interface implementation, and
+`overrides`, `mixes_in`, and `depends_on` remain reserved.
+
+Added root-scoped MCP coverage and updated the parity, CLI, and MCP guides.
+
+**Upstream disposition:** Included in draft fork PR
+[#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
+opened.
+
+## 2026-09-29 — LCL-025: Explicit package-manifest dependency edges
+
+`depends_on` is now supported from explicit package manifests rather than
+remaining reserved. The producer recognizes Go `go.mod`, Rust `Cargo.toml`,
+Python `pyproject.toml`, and TypeScript/TSX `package.json`, emits canonical
+package nodes and `resolution: "manifest"` edges, and never infers a dependency
+from imports, names, or directory layout. Manifest digests participate in graph
+freshness, so refresh rebuilds dependency edges when configuration changes.
+
+The relation-generation marker advanced to `2`; existing local snapshots are
+rebuilt. Focused coverage exercises all four ecosystems and manifest refresh.
+
+**Upstream disposition:** Included in draft fork PR
+[#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
+opened.

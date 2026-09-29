@@ -1,5 +1,5 @@
 use std::{
-    fs::OpenOptions,
+    fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -175,25 +175,16 @@ impl InstanceLock {
                 ready: false,
                 mcp_toolset: config.mcp_toolset.unwrap_or_default().to_string(),
             };
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(mut file) => {
-                    set_private_file(&file)?;
-                    serde_json::to_writer(&mut file, &record)?;
-                    file.write_all(b"\n")?;
-                    file.sync_all()?;
-                    return Ok(Self { path, record });
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if let Some(existing) = read_instance_record_path(&path).await?
-                        && existing.hostname == hostname()
-                        && process_is_alive(existing.pid)
-                    {
-                        return Err(DaemonError::AlreadyRunning { pid: existing.pid });
-                    }
-                    remove_file_if_exists(&path).await?;
-                }
-                Err(error) => return Err(error.into()),
+            if try_create_instance_record(&path, &record)? {
+                return Ok(Self { path, record });
             }
+            if let Some(existing) = read_instance_record_path(&path).await?
+                && existing.hostname == hostname()
+                && process_is_alive(existing.pid)
+            {
+                return Err(DaemonError::AlreadyRunning { pid: existing.pid });
+            }
+            remove_file_if_exists(&path).await?;
         }
         Err(DaemonError::InvalidRecord(path))
     }
@@ -207,9 +198,7 @@ impl InstanceLock {
                 pid: self.record.pid,
             });
         }
-        let bytes = serde_json::to_vec(&self.record)?;
-        tokio::fs::write(&self.path, [bytes.as_slice(), b"\n"].concat()).await?;
-        set_private_path(&self.path)?;
+        write_instance_record(&self.path, &self.record)?;
         Ok(())
     }
 
@@ -219,6 +208,105 @@ impl InstanceLock {
             remove_file_if_exists(&self.path).await?;
         }
         Ok(())
+    }
+}
+
+fn try_create_instance_record(
+    path: &Path,
+    record: &DaemonInstanceRecord,
+) -> Result<bool, DaemonError> {
+    // Publish a fully-written record with an atomic hard-link operation. A
+    // status reader must never observe the empty/partial contents produced by
+    // a direct create_new + write sequence.
+    let candidate = path.with_file_name(format!(".instance-{}.claim", record.instance_token));
+    let write_result = (|| -> Result<(), DaemonError> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)?;
+        set_private_file(&file)?;
+        serde_json::to_writer(&mut file, record)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        Ok(())
+    })();
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&candidate);
+        return Err(error);
+    }
+    let linked = match fs::hard_link(&candidate, path) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+        Err(error) => {
+            let _ = fs::remove_file(&candidate);
+            return Err(error.into());
+        }
+    };
+    let _ = fs::remove_file(candidate);
+    Ok(linked)
+}
+
+fn write_instance_record(path: &Path, record: &DaemonInstanceRecord) -> Result<(), DaemonError> {
+    let candidate = path.with_file_name(format!(".instance-{}.update", Uuid::new_v4()));
+    let result = (|| -> Result<(), DaemonError> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)?;
+        set_private_file(&file)?;
+        serde_json::to_writer(&mut file, record)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        replace_file(&candidate, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&candidate);
+    }
+    result
+}
+
+#[cfg(not(windows))]
+fn replace_file(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn replace_file(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    match fs::rename(source, destination) {
+        Ok(()) => return Ok(()),
+        Err(error)
+            if !destination.is_file()
+                || !matches!(
+                    error.kind(),
+                    std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
+                ) =>
+        {
+            return Err(error);
+        }
+        Err(_) => {}
+    }
+
+    // Windows does not atomically replace every existing regular file with
+    // rename. Keep the previous record until the complete replacement is
+    // installed, restoring it if publication fails.
+    let displaced = destination.with_file_name(format!(".instance-{}.replaced", Uuid::new_v4()));
+    fs::rename(destination, &displaced)?;
+    match fs::rename(source, destination) {
+        Ok(()) => {
+            fs::remove_file(displaced)?;
+            Ok(())
+        }
+        Err(install_error) => {
+            if !destination.exists() {
+                if let Err(restore_error) = fs::rename(&displaced, destination) {
+                    return Err(std::io::Error::other(format!(
+                        "record replacement failed ({install_error}); restoring the previous record also failed ({restore_error})"
+                    )));
+                }
+            }
+            Err(install_error)
+        }
     }
 }
 
@@ -656,15 +744,6 @@ fn set_private_file(file: &std::fs::File) -> Result<(), std::io::Error> {
     {
         use std::os::unix::fs::PermissionsExt;
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
-}
-
-fn set_private_path(path: &Path) -> Result<(), std::io::Error> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
 }

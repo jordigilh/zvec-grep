@@ -1,0 +1,10 @@
+{
+  "schema": "zvec-grep.codegraph-relations-v1",
+  "language": "python",
+  "source_files": ["tests.py", "types.py"],
+  "relations": [
+    {"kind": "inherits", "source": "Child", "target": "Base"},
+    {"kind": "references", "source": "typed_helper", "target": "Base"},
+    {"kind": "tests", "source": "test_child", "target": "helper"}
+  ]
+}
