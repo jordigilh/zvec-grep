@@ -39,7 +39,7 @@ dependency.
 
 `zg-codegraph` recursively scans the selected checkout for Go, Rust,
 TypeScript/TSX, and Python source. It persists a versioned
-`.zvec-grep/codegraph-v1.json` artifact containing:
+`.zvec-grep/codegraph-v2.json` artifact containing:
 
 - source files and SHA-256 digests;
 - stable file- and symbol-scoped IDs;
@@ -51,8 +51,12 @@ TypeScript/TSX, and Python source. It persists a versioned
 The relation vocabulary is versioned independently as
 `zvec-grep.codegraph.relations` v1 and currently admits `defines`, `imports`,
 `calls`, `inherits`, `implements`, `overrides`, `mixes_in`, `references`,
-`tests`, and `depends_on`. Existing v1 artifacts remain readable; unknown future
-relation strings are preserved by the edge envelope rather than discarded.
+`tests`, and `depends_on`. Older local v1 snapshots are not a compatibility
+contract; unknown future relation strings are preserved by the edge envelope
+rather than discarded. The v2 artifact requires a relation-extraction
+generation marker. The earlier local
+v1 snapshot is not a compatibility contract; users must regenerate the graph
+when moving to v2.
 
 The graph is separate from the semantic search index and is refreshed against
 the live root, including uncommitted changes.
@@ -65,11 +69,22 @@ intentionally treated as name-based evidence, not type certainty.
 
 The current graph contains language-specific declaration kinds such as
 functions, methods, classes, interfaces, types, aliases, enums, constants, and
-variables where the parser exposes them. The current structural extractor emits
-the supported subset of the versioned relation vocabulary: `defines`, `imports`,
-`calls`, `inherits`, `implements`, `references`, and `tests`. `overrides`,
-`mixes_in`, and `depends_on` remain reserved for evidence-specific producers
-rather than being guessed from names.
+variables where the parser exposes them. The current structural extractor
+emits the supported subset of the versioned relation vocabulary. Its
+evidence-backed language capability matrix is:
+
+| Relation | Structural producer languages | Current status |
+| --- | --- | --- |
+| `defines`, `imports`, `calls`, `inherits`, `references`, `tests` | Go, Rust, TypeScript/TSX, Python | Supported |
+| `implements` | Rust, TypeScript/TSX | Supported only for projects containing one of these languages |
+| `overrides`, `mixes_in`, `depends_on` | None | Reserved; no guessed edges |
+
+Go intentionally reports `implements` as unsupported rather than treating
+implicit interface satisfaction as a structural edge. `overrides` is reserved
+for all four languages until a producer supplies source/compiler-attested
+evidence. The root-scoped MCP capability result and generic query metadata
+report `supported`, `unsupported`, or `reserved` for each relation; they do not
+hide the generic query tools based on project language.
 
 Independent multi-file truth fixtures for the supported subset live under
 `rust/crates/zg-codegraph/tests/fixtures/codegraph-relations-20260928/{go,rust,typescript,python}`.
@@ -110,6 +125,7 @@ separate directed graphs and provides:
 - shortest directed call paths; and
 - deterministic Leiden communities;
 - generic node inspection and explanation with manifest/context provenance;
+- root-scoped language and relation capabilities;
 - incoming/outgoing neighbor queries with relation filters; and
 - relation-filtered shortest paths across every serialized edge kind.
 

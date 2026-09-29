@@ -20,16 +20,23 @@ mod graph_queries;
 
 pub use graph_queries::{
     CallGraphAssignment, CallGraphBlastRadius, CallGraphCluster, CallGraphClustering,
-    CallGraphIndex, CallGraphPath, CodeGraphDirection, CodeGraphExplanation, CodeGraphNeighbor,
-    CodeGraphNeighbors, CodeGraphNodeResult, CodeGraphQueryMetadata, CodeGraphRelationKind,
-    CodeGraphRelationPath,
+    CallGraphIndex, CallGraphPath, CodeGraphCapabilities, CodeGraphDirection, CodeGraphExplanation,
+    CodeGraphNeighbor, CodeGraphNeighbors, CodeGraphNodeResult, CodeGraphQueryMetadata,
+    CodeGraphRelationCapability, CodeGraphRelationKind, CodeGraphRelationPath,
+    CodeGraphRelationSupport,
 };
 
 pub const CODEGRAPH_SCHEMA: &str = "zvec-grep.codegraph";
-pub const CODEGRAPH_VERSION: u32 = 1;
-pub const CODEGRAPH_FILE: &str = "codegraph-v1.json";
+pub const CODEGRAPH_VERSION: u32 = 2;
+pub const CODEGRAPH_FILE: &str = "codegraph-v2.json";
 pub const CODEGRAPH_RELATION_SCHEMA: &str = "zvec-grep.codegraph.relations";
 pub const CODEGRAPH_RELATION_VERSION: u32 = 1;
+/// Generation of the relation extractor serialized into codegraph artifacts.
+///
+/// This is intentionally separate from the artifact schema version so future
+/// relation-extractor changes can require regeneration without changing the
+/// relation vocabulary itself.
+pub const CODEGRAPH_RELATION_GENERATION: u32 = 1;
 pub const GO_CALLFACTS_SCHEMA: &str = "zvec-grep.go-callfacts";
 pub const GO_CALLFACTS_VERSION: u32 = 2;
 pub const GO_CALLFACTS_FILE: &str = "go-callfacts-v2.json";
@@ -96,6 +103,8 @@ pub struct CodeGraphArtifact {
     pub schema: String,
     pub version: u32,
     pub manifest_key: String,
+    /// Relation-extraction generation that produced this snapshot.
+    pub relation_generation: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub go_callfacts_context_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -427,8 +436,8 @@ pub struct CodeGraphEdge {
     pub resolved: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ambiguous_candidates: Vec<String>,
-    /// Producer or syntax certainty label. Older v1 artifacts omit this field
-    /// and remain readable through the legacy `resolved` and candidate fields.
+    /// Producer or syntax certainty label. It is optional for edge kinds that
+    /// do not carry a certainty classification.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution: Option<String>,
     pub range: Option<CodeGraphRange>,
@@ -616,6 +625,9 @@ pub fn update_codegraph(
         });
     }
     let root = resolve_root(root)?;
+    if !has_current_relation_generation(base) {
+        return build_codegraph(&root);
+    }
     let mut changed_paths = BTreeSet::new();
     let mut upsert_paths = BTreeSet::new();
     for change in changes {
@@ -751,6 +763,7 @@ fn merge_codegraph_delta(
         schema: CODEGRAPH_SCHEMA.to_owned(),
         version: CODEGRAPH_VERSION,
         manifest_key: manifest_key(&files),
+        relation_generation: CODEGRAPH_RELATION_GENERATION,
         go_callfacts_context_sha256: None,
         rust_callfacts_context_sha256: None,
         typescript_callfacts_context_sha256: None,
@@ -759,6 +772,10 @@ fn merge_codegraph_delta(
         nodes,
         edges,
     }
+}
+
+fn has_current_relation_generation(artifact: &CodeGraphArtifact) -> bool {
+    artifact.relation_generation == CODEGRAPH_RELATION_GENERATION
 }
 
 fn resolve_root(root: &Path) -> CodeGraphResult<PathBuf> {
@@ -824,6 +841,7 @@ fn build_artifact(parsed: &[ParsedFile]) -> CodeGraphArtifact {
         schema: CODEGRAPH_SCHEMA.to_owned(),
         version: CODEGRAPH_VERSION,
         manifest_key,
+        relation_generation: CODEGRAPH_RELATION_GENERATION,
         go_callfacts_context_sha256: None,
         rust_callfacts_context_sha256: None,
         typescript_callfacts_context_sha256: None,
@@ -3428,7 +3446,9 @@ pub fn refresh_codegraph(root: &Path) -> CodeGraphResult<(PathBuf, CodeGraphArti
         Ok(bytes) => serde_json::from_slice::<CodeGraphArtifact>(&bytes)
             .ok()
             .filter(|artifact| {
-                artifact.schema == CODEGRAPH_SCHEMA && artifact.version == CODEGRAPH_VERSION
+                artifact.schema == CODEGRAPH_SCHEMA
+                    && artifact.version == CODEGRAPH_VERSION
+                    && has_current_relation_generation(artifact)
             }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => {
@@ -4914,8 +4934,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        CodeGraphChange, build_codegraph, build_go_codegraph, update_go_codegraph,
-        write_go_codegraph,
+        CODEGRAPH_RELATION_GENERATION, CodeGraphChange, build_codegraph, build_go_codegraph,
+        refresh_codegraph, update_codegraph, update_go_codegraph, write_go_codegraph,
     };
 
     #[test]
@@ -4987,7 +5007,7 @@ mod tests {
         .expect("Go source");
 
         let artifact = build_go_codegraph(directory.path()).expect("graph");
-        assert_eq!(artifact.version, 1);
+        assert_eq!(artifact.version, 2);
         assert_eq!(artifact.files.len(), 1);
         assert!(
             artifact
@@ -5475,7 +5495,7 @@ mod tests {
                 .path()
                 .canonicalize()
                 .expect("canonical workspace")
-                .join(".zvec-grep/codegraph-v1.json")
+                .join(".zvec-grep/codegraph-v2.json")
         );
         assert_ne!(base.manifest_key, refreshed.manifest_key);
         assert!(
@@ -5507,6 +5527,42 @@ mod tests {
                 .1,
             refreshed
         );
+    }
+
+    #[test]
+    fn refresh_and_incremental_update_rebuild_stale_relation_generations() {
+        let directory = tempdir().expect("workspace");
+        fs::write(
+            directory.path().join("types.ts"),
+            "class Base {}\nclass Child extends Base {}\n",
+        )
+        .expect("TypeScript source");
+
+        let (_, fresh) = refresh_codegraph(directory.path()).expect("initial refresh");
+        assert_eq!(fresh.relation_generation, CODEGRAPH_RELATION_GENERATION);
+        assert!(fresh.edges.iter().any(|edge| edge.kind == "inherits"));
+
+        for marker in [0, CODEGRAPH_RELATION_GENERATION + 1] {
+            let mut stale = fresh.clone();
+            stale.relation_generation = marker;
+            stale.edges.retain(|edge| edge.kind != "inherits");
+            let artifact_path = directory.path().join(".zvec-grep/codegraph-v2.json");
+            fs::write(
+                &artifact_path,
+                serde_json::to_vec(&stale).expect("stale artifact JSON"),
+            )
+            .expect("write stale artifact");
+
+            let (_, refreshed) = refresh_codegraph(directory.path()).expect("refresh stale");
+            let expected = build_codegraph(directory.path()).expect("full graph");
+            assert_eq!(refreshed, expected);
+            assert_eq!(refreshed.relation_generation, CODEGRAPH_RELATION_GENERATION);
+            assert!(refreshed.edges.iter().any(|edge| edge.kind == "inherits"));
+
+            let updated =
+                update_codegraph(&stale, directory.path(), &[]).expect("incremental update stale");
+            assert_eq!(updated, expected);
+        }
     }
 
     #[test]
@@ -5670,7 +5726,7 @@ mod tests {
         let directory = tempdir().expect("workspace");
         fs::write(directory.path().join("main.go"), "package main\n").expect("Go source");
         let (path, artifact) = write_go_codegraph(directory.path(), None).expect("write graph");
-        assert_eq!(path, directory.path().join(".zvec-grep/codegraph-v1.json"));
+        assert_eq!(path, directory.path().join(".zvec-grep/codegraph-v2.json"));
         assert!(Path::new(&path).is_file());
         assert!(!artifact.manifest_key.is_empty());
         assert!(!fs::read(&path).expect("encoded artifact").contains(&b'\n'));

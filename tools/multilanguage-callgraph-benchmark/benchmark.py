@@ -517,7 +517,7 @@ def benchmark_fixture(
         syntax_root = repeat_root / "zvec-syntax"
         syntax_files, syntax_loc = copy_inputs(fixture, syntax_root, truth)
         syntax_elapsed = timed([str(zg), "--graph", str(syntax_root)], repo)
-        syntax_graph = json.loads((syntax_root / ".zvec-grep/codegraph-v1.json").read_text())
+        syntax_graph = json.loads((syntax_root / ".zvec-grep/codegraph-v2.json").read_text())
         syntax_predictions_data = zvec_predictions(syntax_graph, syntax_root, truth)
         rows.append(
             graph_row(
@@ -550,7 +550,7 @@ def benchmark_fixture(
         )
         semantic_graph_elapsed = timed([str(zg), "--graph", str(semantic_root)], repo)
         semantic_graph = json.loads(
-            (semantic_root / ".zvec-grep/codegraph-v1.json").read_text()
+            (semantic_root / ".zvec-grep/codegraph-v2.json").read_text()
         )
         assert_overlay_consumed(semantic_graph, language)
         semantic_predictions_data = zvec_predictions(semantic_graph, semantic_root, truth)

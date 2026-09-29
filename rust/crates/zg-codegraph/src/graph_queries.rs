@@ -86,6 +86,47 @@ impl CodeGraphRelationKind {
             _ => None,
         }
     }
+
+    #[must_use]
+    pub const fn supported_languages(self) -> &'static [&'static str] {
+        match self {
+            Self::Defines
+            | Self::Imports
+            | Self::Calls
+            | Self::Inherits
+            | Self::References
+            | Self::Tests => &["go", "rust", "typescript", "tsx", "python"],
+            Self::Implements => &["rust", "typescript", "tsx"],
+            Self::Overrides | Self::MixesIn | Self::DependsOn => &[],
+        }
+    }
+
+    #[must_use]
+    pub fn capability_for_project(
+        self,
+        project_languages: &[String],
+    ) -> CodeGraphRelationCapability {
+        let supported_languages = self.supported_languages();
+        let status = if supported_languages.is_empty() {
+            CodeGraphRelationSupport::Reserved
+        } else if project_languages.iter().any(|language| {
+            supported_languages
+                .iter()
+                .any(|supported| *supported == language)
+        }) {
+            CodeGraphRelationSupport::Supported
+        } else {
+            CodeGraphRelationSupport::Unsupported
+        };
+        CodeGraphRelationCapability {
+            relation: self.as_str().to_owned(),
+            status,
+            supported_languages: supported_languages
+                .iter()
+                .map(|language| (*language).to_owned())
+                .collect(),
+        }
+    }
 }
 
 /// Direction used when inspecting generic codegraph neighbors.
@@ -96,9 +137,28 @@ pub enum CodeGraphDirection {
     Outgoing,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeGraphRelationSupport {
+    Supported,
+    Unsupported,
+    Reserved,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-pub struct CodeGraphQueryMetadata {
+pub struct CodeGraphRelationCapability {
+    pub relation: String,
+    pub status: CodeGraphRelationSupport,
+    pub supported_languages: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CodeGraphCapabilities {
+    pub artifact_version: u32,
+    pub relation_generation: u32,
     pub manifest_key: String,
+    pub project_languages: Vec<String>,
+    pub relation_capabilities: Vec<CodeGraphRelationCapability>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub go_callfacts_context_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,6 +168,8 @@ pub struct CodeGraphQueryMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub python_callfacts_context_sha256: Option<String>,
 }
+
+pub type CodeGraphQueryMetadata = CodeGraphCapabilities;
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct CodeGraphNodeResult {
@@ -326,7 +388,11 @@ pub struct CallGraphIndex {
     by_display_name: HashMap<String, Vec<NodeIndex>>,
     by_qualified_name: HashMap<String, Vec<NodeIndex>>,
     by_name: HashMap<String, Vec<NodeIndex>>,
+    artifact_version: u32,
+    relation_generation: u32,
     manifest_key: String,
+    project_languages: Vec<String>,
+    relation_capabilities: Vec<CodeGraphRelationCapability>,
     go_callfacts_context_sha256: Option<String>,
     rust_callfacts_context_sha256: Option<String>,
     typescript_callfacts_context_sha256: Option<String>,
@@ -347,6 +413,7 @@ pub struct CallGraphIndex {
 impl CallGraphIndex {
     /// Builds an in-memory call graph from a serialized codegraph artifact.
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn new(artifact: &CodeGraphArtifact) -> Self {
         let AllNodeIndex {
             nodes: all_nodes,
@@ -423,6 +490,8 @@ impl CallGraphIndex {
             possible_graph.add_edge(NodeIndex::new(source), NodeIndex::new(target), ());
         }
 
+        let (project_languages, relation_capabilities) = codegraph_capabilities(artifact);
+
         Self {
             nodes,
             display_names,
@@ -432,7 +501,11 @@ impl CallGraphIndex {
             by_display_name,
             by_qualified_name,
             by_name,
+            artifact_version: artifact.version,
+            relation_generation: artifact.relation_generation,
             manifest_key: artifact.manifest_key.clone(),
+            project_languages,
+            relation_capabilities,
             go_callfacts_context_sha256: artifact.go_callfacts_context_sha256.clone(),
             rust_callfacts_context_sha256: artifact.rust_callfacts_context_sha256.clone(),
             typescript_callfacts_context_sha256: artifact
@@ -451,6 +524,14 @@ impl CallGraphIndex {
             ambiguous_calls,
             clusters: OnceLock::new(),
         }
+    }
+
+    /// Returns the artifact and language-specific relation capabilities used by
+    /// this index. MCP callers should use this root-scoped result instead of
+    /// relying on server-wide tool discovery to infer project support.
+    #[must_use]
+    pub fn capabilities(&self) -> CodeGraphCapabilities {
+        self.query_metadata()
     }
 
     /// Finds callers of a function by depth, like `CocoIndex`'s blast-radius query.
@@ -942,7 +1023,11 @@ impl CallGraphIndex {
 
     fn query_metadata(&self) -> CodeGraphQueryMetadata {
         CodeGraphQueryMetadata {
+            artifact_version: self.artifact_version,
+            relation_generation: self.relation_generation,
             manifest_key: self.manifest_key.clone(),
+            project_languages: self.project_languages.clone(),
+            relation_capabilities: self.relation_capabilities.clone(),
             go_callfacts_context_sha256: self.go_callfacts_context_sha256.clone(),
             rust_callfacts_context_sha256: self.rust_callfacts_context_sha256.clone(),
             typescript_callfacts_context_sha256: self.typescript_callfacts_context_sha256.clone(),
@@ -1183,6 +1268,23 @@ fn collect_call_pairs(
     }
 }
 
+fn codegraph_capabilities(
+    artifact: &CodeGraphArtifact,
+) -> (Vec<String>, Vec<CodeGraphRelationCapability>) {
+    let project_languages = artifact
+        .files
+        .iter()
+        .map(|file| file.language.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let relation_capabilities = CodeGraphRelationKind::ALL
+        .into_iter()
+        .map(|relation| relation.capability_for_project(&project_languages))
+        .collect();
+    (project_languages, relation_capabilities)
+}
+
 fn display_name(node: &CodeGraphNode) -> String {
     node.path.as_ref().map_or_else(
         || node.name.clone(),
@@ -1197,7 +1299,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::CallGraphIndex;
-    use crate::{CodeGraphError, CodeGraphRelationKind, build_go_codegraph};
+    use crate::{
+        CodeGraphError, CodeGraphRelationKind, CodeGraphRelationSupport, build_go_codegraph,
+    };
 
     #[test]
     fn answers_blast_radius_and_shortest_path_queries() {
@@ -1384,6 +1488,27 @@ mod tests {
 
         let artifact = build_go_codegraph(directory.path()).expect("graph");
         let index = CallGraphIndex::new(&artifact);
+        let capabilities = index.capabilities();
+        assert_eq!(capabilities.project_languages, ["go"]);
+        assert_eq!(capabilities.artifact_version, artifact.version);
+        assert_eq!(
+            capabilities
+                .relation_capabilities
+                .iter()
+                .find(|capability| capability.relation == "implements")
+                .expect("implements capability")
+                .status,
+            CodeGraphRelationSupport::Unsupported
+        );
+        assert_eq!(
+            capabilities
+                .relation_capabilities
+                .iter()
+                .find(|capability| capability.relation == "overrides")
+                .expect("overrides capability")
+                .status,
+            CodeGraphRelationSupport::Reserved
+        );
         let calls = [CodeGraphRelationKind::Calls];
 
         let explanation = index.node("caller.go::caller").expect("caller node");

@@ -732,3 +732,51 @@ build used the command-scoped SDK C++ include flags documented above.
 [#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
 opened. Reserved `overrides`, `mixes_in`, and `depends_on` relations remain
 non-inferred pending defensible language/compiler evidence.
+
+## 2026-09-29 — LCL-022: Relation-generation compatibility guard (superseded)
+
+The then-current v1 artifact serialized an optional relation-extraction
+generation (`CODEGRAPH_RELATION_GENERATION = 1`). This migration-safe read
+policy was superseded below because the artifact was local development output,
+not an upstream compatibility contract.
+
+Verification: `cargo test -p zg-codegraph` (28 tests plus all integration
+suites), strict Clippy for `zg-codegraph`, `cargo test -p zg-cli -p
+zg-transport-mcp` (53 and 34 tests), and `cargo check -p zg` passed with the
+documented macOS SDK C++ include flag.
+
+**Upstream disposition:** Included in draft fork PR
+[#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
+opened.
+
+## 2026-09-29 — LCL-023: Require codegraph snapshot regeneration
+
+Because `codegraph-v1.json` was introduced only in the fork and has not been
+released upstream, the artifact is now version 2 and is written as
+`codegraph-v2.json`. Its relation-generation marker is required rather than
+backward-defaulted. Refresh reads only the v2 path; callers using an older local
+snapshot must regenerate it instead of relying on a compatibility read.
+
+The CLI, MCP refresh path, tests, benchmarks, container helper, and codegraph
+documentation all use the v2 artifact name.
+
+**Upstream disposition:** Included in draft fork PR
+[#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
+opened.
+
+## 2026-09-29 — LCL-024: Root-scoped relation capabilities
+
+MCP tool discovery remains static because the server cannot know a project’s
+languages from the tool-list request. Added
+`zvec_grep_codegraph_capabilities`, which refreshes the selected root and
+reports its project languages plus `supported`, `unsupported`, or `reserved`
+status for every versioned relation. The same capability metadata is included
+in generic codegraph query results. `implements` is evidence-backed for Rust
+and TypeScript/TSX; Go does not infer implicit interface implementation, and
+`overrides`, `mixes_in`, and `depends_on` remain reserved.
+
+Added root-scoped MCP coverage and updated the parity, CLI, and MCP guides.
+
+**Upstream disposition:** Included in draft fork PR
+[#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
+opened.

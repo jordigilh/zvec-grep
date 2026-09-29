@@ -387,7 +387,7 @@ def main() -> None:
         copy_source_fixture(fixture, syntax_input)
         elapsed, _ = timed([str(zg), "--graph", str(syntax_input)], repo, quiet=True)
         syntax_row = zvec_metrics(
-            syntax_input / ".zvec-grep/codegraph-v1.json",
+            syntax_input / ".zvec-grep/codegraph-v2.json",
             syntax_input,
             truth,
             tool="zvec",
@@ -416,7 +416,7 @@ def main() -> None:
         rows.append(facts_row)
         elapsed_graph, _ = timed([str(zg), "--graph", str(type_input)], repo, quiet=True)
         type_row = zvec_metrics(
-            type_input / ".zvec-grep/codegraph-v1.json",
+        type_input / ".zvec-grep/codegraph-v2.json",
             type_input,
             truth,
             tool="zvec",

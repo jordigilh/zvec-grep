@@ -27,7 +27,7 @@ fn cli_graph_query_uses_pinned_go_callfacts_and_falls_back_after_removal() {
         "graph build failed: {}",
         String::from_utf8_lossy(&graph_build.stderr)
     );
-    let artifact = workspace.path().join(".zvec-grep/codegraph-v1.json");
+    let artifact = workspace.path().join(".zvec-grep/codegraph-v2.json");
     let artifact_value: Value =
         serde_json::from_slice(&fs::read(&artifact).expect("graph artifact"))
             .expect("decode graph artifact");
