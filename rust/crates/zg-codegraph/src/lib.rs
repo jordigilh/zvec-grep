@@ -3926,20 +3926,25 @@ fn toml_container_balance(value: &str) -> Option<usize> {
     let mut quote = None;
     let mut escaped = false;
     let mut unicode_digits = 0;
+    let mut unicode_value = 0_u32;
     for character in value.chars() {
         if let Some(current_quote) = quote {
             if current_quote == '"' {
                 if unicode_digits > 0 {
-                    if !character.is_ascii_hexdigit() {
+                    let digit = character.to_digit(16)?;
+                    unicode_value = unicode_value.checked_mul(16)?.checked_add(digit)?;
+                    unicode_digits -= 1;
+                    if unicode_digits == 0 && char::from_u32(unicode_value).is_none() {
                         return None;
                     }
-                    unicode_digits -= 1;
                 } else if escaped {
                     if !matches!(character, 'b' | 't' | 'n' | 'f' | 'r' | '"' | '\\') {
                         if character == 'u' {
                             unicode_digits = 4;
+                            unicode_value = 0;
                         } else if character == 'U' {
                             unicode_digits = 8;
+                            unicode_value = 0;
                         } else {
                             return None;
                         }
@@ -5758,6 +5763,13 @@ mod tests {
             super::parse_package_manifest(
                 "rust",
                 b"[package]\nname = \"valid-name\"\n[dependencies]\nserde = \"\\u12G4\"\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"broken\\uD800\"\n[dependencies]\nserde = \"1\"\n",
             ),
             (None, Vec::new())
         );
