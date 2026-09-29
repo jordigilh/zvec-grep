@@ -58,18 +58,26 @@ use zg_engine::{
 };
 
 pub const AGENT_TOOL_NAME: &str = "zvec_grep_search";
-pub const AGENT_TOOL_NAMES: [&str; 5] = [
+pub const AGENT_TOOL_NAMES: [&str; 9] = [
     "zvec_grep_callgraph_blast_radius",
     "zvec_grep_callgraph_cluster",
     "zvec_grep_callgraph_communities",
     "zvec_grep_callgraph_shortest_path",
+    "zvec_grep_codegraph_explain",
+    "zvec_grep_codegraph_neighbors",
+    "zvec_grep_codegraph_node",
+    "zvec_grep_codegraph_relation_path",
     AGENT_TOOL_NAME,
 ];
-pub const FULL_TOOL_NAMES: [&str; 10] = [
+pub const FULL_TOOL_NAMES: [&str; 14] = [
     "zvec_grep_callgraph_blast_radius",
     "zvec_grep_callgraph_cluster",
     "zvec_grep_callgraph_communities",
     "zvec_grep_callgraph_shortest_path",
+    "zvec_grep_codegraph_explain",
+    "zvec_grep_codegraph_neighbors",
+    "zvec_grep_codegraph_node",
+    "zvec_grep_codegraph_relation_path",
     "zvec_grep_index",
     "zvec_grep_index_drop",
     "zvec_grep_index_status",
@@ -740,6 +748,141 @@ impl ZvecGrepMcpServer {
     }
 
     #[tool(
+        name = "zvec_grep_codegraph_node",
+        description = "Inspect any source file, package, declaration, or other codegraph node and its directly attached relations. Refreshes the selected live checkout from current source contents before querying, including uncommitted changes.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphNodeResult>(),
+        annotations(
+            title = "Inspect a codegraph node",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_node(
+        &self,
+        Parameters(input): Parameters<CodeGraphNodeInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("query", &input.query, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .node(input.query.trim())
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_neighbors",
+        description = "List incoming and outgoing neighbors for any codegraph node, optionally restricted to relation kinds. Possible ambiguous targets are excluded unless includePossible is true.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphNeighbors>(),
+        annotations(
+            title = "List codegraph neighbors",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_neighbors(
+        &self,
+        Parameters(input): Parameters<CodeGraphNeighborsInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("query", &input.query, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let relations = parse_codegraph_relations(input.relations.as_deref())
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .neighbors(
+                input.query.trim(),
+                relations.as_deref(),
+                input.include_possible.unwrap_or(false),
+            )
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_relation_path",
+        description = "Find a shortest directed path between any two codegraph nodes over all relations or selected relation kinds. Possible ambiguous targets are excluded unless includePossible is true.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphRelationPath>(),
+        annotations(
+            title = "Find a codegraph relation path",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_relation_path(
+        &self,
+        Parameters(input): Parameters<CodeGraphRelationPathInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("source", &input.source, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("target", &input.target, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let relations = parse_codegraph_relations(input.relations.as_deref())
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .relation_path(
+                input.source.trim(),
+                input.target.trim(),
+                relations.as_deref(),
+                input.include_possible.unwrap_or(false),
+            )
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_explain",
+        description = "Explain a codegraph node with attached relations, relation counts, manifest identity, and applied semantic context fingerprints.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphExplanation>(),
+        annotations(
+            title = "Explain a codegraph node",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_explain(
+        &self,
+        Parameters(input): Parameters<CodeGraphNodeInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("query", &input.query, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .explain(input.query.trim())
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
         name = "zvec_grep_server_status",
         description = "Read daemon version, queue, runtime and model-pool summary without exposing repository paths.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<ServerStatusOutput>(),
@@ -1056,6 +1199,52 @@ pub struct CallGraphClusterInput {
     /// Function or method name, optionally path-qualified.
     #[schemars(length(min = 1, max = 4000))]
     pub function: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodeGraphNodeInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Node name, path-qualified name, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub query: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodeGraphNeighborsInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Node name, path-qualified name, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub query: String,
+    /// Optional relation allow-list. Omit to traverse every serialized relation.
+    #[schemars(length(max = 10))]
+    pub relations: Option<Vec<String>>,
+    /// Include ambiguous candidate targets as possible neighbors.
+    pub include_possible: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodeGraphRelationPathInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Source node name, path-qualified name, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub source: String,
+    /// Target node name, path-qualified name, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub target: String,
+    /// Optional relation allow-list. Omit to traverse every serialized relation.
+    #[schemars(length(max = 10))]
+    pub relations: Option<Vec<String>>,
+    /// Include ambiguous candidate targets as possible path steps.
+    pub include_possible: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -2165,6 +2354,31 @@ fn validate_text(name: &str, value: &str, min: usize, max: usize) -> Result<(), 
     Ok(())
 }
 
+fn parse_codegraph_relations(
+    values: Option<&[String]>,
+) -> Result<Option<Vec<zg_engine::codegraph::CodeGraphRelationKind>>, String> {
+    let Some(values) = values else {
+        return Ok(None);
+    };
+    if values.len() > 10 {
+        return Err("relations accepts at most 10 values".to_owned());
+    }
+    let mut relations = Vec::with_capacity(values.len());
+    for value in values {
+        validate_text("relation", value, 1, 64)?;
+        let Some(relation) = zg_engine::codegraph::CodeGraphRelationKind::parse(value.trim())
+        else {
+            return Err(format!(
+                "unknown graph relation `{value}`; expected one of defines, imports, calls, inherits, implements, overrides, mixes_in, references, tests, depends_on"
+            ));
+        };
+        if !relations.contains(&relation) {
+            relations.push(relation);
+        }
+    }
+    Ok(Some(relations))
+}
+
 fn parse_optional_time(value: Option<TimeInput>, name: &str) -> Result<Option<u64>, String> {
     value.map(|value| parse_time(value, name)).transpose()
 }
@@ -2964,7 +3178,7 @@ mod tests {
     }
 
     #[test]
-    fn full_server_exposes_all_ten_tools() {
+    fn full_server_exposes_all_tools() {
         let server =
             ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
         let names = server

@@ -1,7 +1,7 @@
 //! Query operations over a persisted codegraph snapshot.
 
 use std::{
-    collections::{BTreeSet, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     sync::OnceLock,
 };
 
@@ -15,7 +15,150 @@ use petgraph::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{CodeGraphArtifact, CodeGraphError, CodeGraphNode, CodeGraphResult};
+use crate::{CodeGraphArtifact, CodeGraphEdge, CodeGraphError, CodeGraphNode, CodeGraphResult};
+
+/// Versioned relation vocabulary shared by structural and semantic codegraph
+/// producers. Unknown serialized relation strings remain readable through the
+/// existing `CodeGraphEdge::kind` field; this enum is used by relation-aware
+/// query callers that want an explicit allow-list.
+#[derive(
+    Clone, Copy, Debug, Deserialize, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeGraphRelationKind {
+    Defines,
+    Imports,
+    Calls,
+    Inherits,
+    Implements,
+    Overrides,
+    MixesIn,
+    References,
+    Tests,
+    DependsOn,
+}
+
+impl CodeGraphRelationKind {
+    pub const VERSION: u32 = 1;
+
+    pub const ALL: [Self; 10] = [
+        Self::Defines,
+        Self::Imports,
+        Self::Calls,
+        Self::Inherits,
+        Self::Implements,
+        Self::Overrides,
+        Self::MixesIn,
+        Self::References,
+        Self::Tests,
+        Self::DependsOn,
+    ];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Defines => "defines",
+            Self::Imports => "imports",
+            Self::Calls => "calls",
+            Self::Inherits => "inherits",
+            Self::Implements => "implements",
+            Self::Overrides => "overrides",
+            Self::MixesIn => "mixes_in",
+            Self::References => "references",
+            Self::Tests => "tests",
+            Self::DependsOn => "depends_on",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "defines" => Some(Self::Defines),
+            "imports" => Some(Self::Imports),
+            "calls" => Some(Self::Calls),
+            "inherits" => Some(Self::Inherits),
+            "implements" => Some(Self::Implements),
+            "overrides" => Some(Self::Overrides),
+            "mixes_in" | "mixes-in" => Some(Self::MixesIn),
+            "references" => Some(Self::References),
+            "tests" => Some(Self::Tests),
+            "depends_on" | "depends-on" => Some(Self::DependsOn),
+            _ => None,
+        }
+    }
+}
+
+/// Direction used when inspecting generic codegraph neighbors.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeGraphDirection {
+    Incoming,
+    Outgoing,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CodeGraphQueryMetadata {
+    pub manifest_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typescript_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_callfacts_context_sha256: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CodeGraphNodeResult {
+    pub query: String,
+    pub node: CodeGraphNode,
+    pub incoming: Vec<CodeGraphEdge>,
+    pub outgoing: Vec<CodeGraphEdge>,
+    pub metadata: CodeGraphQueryMetadata,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CodeGraphNeighbor {
+    pub node: CodeGraphNode,
+    pub relation: CodeGraphEdge,
+    pub direction: CodeGraphDirection,
+    /// True when the neighbor is reached through an ambiguous/possible
+    /// candidate rather than a definite edge target.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub possible: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CodeGraphNeighbors {
+    pub query: String,
+    pub node: CodeGraphNode,
+    pub relation_filter: Vec<String>,
+    pub neighbors: Vec<CodeGraphNeighbor>,
+    pub metadata: CodeGraphQueryMetadata,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CodeGraphRelationPath {
+    pub source: String,
+    pub target: String,
+    pub relation_filter: Vec<String>,
+    pub path: Option<Vec<String>>,
+    pub relations: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub possible: bool,
+    pub metadata: CodeGraphQueryMetadata,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CodeGraphExplanation {
+    pub query: String,
+    pub node: CodeGraphNode,
+    pub incoming: Vec<CodeGraphEdge>,
+    pub outgoing: Vec<CodeGraphEdge>,
+    pub relation_counts: BTreeMap<String, usize>,
+    pub metadata: CodeGraphQueryMetadata,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct CallGraphBlastRadius {
@@ -112,6 +255,63 @@ struct CallPairSummary {
     ambiguous_calls: usize,
 }
 
+struct AllNodeIndex {
+    nodes: Vec<CodeGraphNode>,
+    display_names: Vec<String>,
+    by_id: HashMap<String, usize>,
+    by_display_name: HashMap<String, Vec<usize>>,
+    by_qualified_name: HashMap<String, Vec<usize>>,
+    by_name: HashMap<String, Vec<usize>>,
+}
+
+impl AllNodeIndex {
+    fn new(source_nodes: &[CodeGraphNode]) -> Self {
+        let mut nodes = source_nodes.to_vec();
+        nodes.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut display_counts = HashMap::new();
+        for node in &nodes {
+            *display_counts.entry(display_name(node)).or_insert(0_usize) += 1;
+        }
+        let mut display_names = Vec::with_capacity(nodes.len());
+        let mut by_id = HashMap::new();
+        let mut by_display_name = HashMap::new();
+        let mut by_qualified_name = HashMap::new();
+        let mut by_name = HashMap::new();
+        for (position, node) in nodes.iter().enumerate() {
+            let base_display = display_name(node);
+            let display = if display_counts
+                .get(&base_display)
+                .copied()
+                .unwrap_or_default()
+                > 1
+            {
+                node.qualified_name.as_ref().map_or_else(
+                    || format!("{base_display} [{}]", node.id),
+                    |qualified_name| format!("{base_display} [{qualified_name}]"),
+                )
+            } else {
+                base_display.clone()
+            };
+            display_names.push(display.clone());
+            by_id.insert(node.id.clone(), position);
+            insert_position_index(&mut by_display_name, base_display, position);
+            insert_position_index(&mut by_display_name, display, position);
+            if let Some(qualified_name) = &node.qualified_name {
+                insert_position_index(&mut by_qualified_name, qualified_name.clone(), position);
+            }
+            insert_position_index(&mut by_name, node.name.clone(), position);
+        }
+        Self {
+            nodes,
+            display_names,
+            by_id,
+            by_display_name,
+            by_qualified_name,
+            by_name,
+        }
+    }
+}
+
 /// Reusable graph algorithms over the resolved function/method call edges.
 ///
 /// Leiden runs lazily and is cached for this index instance. Construct one
@@ -131,6 +331,13 @@ pub struct CallGraphIndex {
     rust_callfacts_context_sha256: Option<String>,
     typescript_callfacts_context_sha256: Option<String>,
     python_callfacts_context_sha256: Option<String>,
+    all_nodes: Vec<CodeGraphNode>,
+    all_display_names: Vec<String>,
+    all_by_id: HashMap<String, usize>,
+    all_by_display_name: HashMap<String, Vec<usize>>,
+    all_by_qualified_name: HashMap<String, Vec<usize>>,
+    all_by_name: HashMap<String, Vec<usize>>,
+    all_edges: Vec<CodeGraphEdge>,
     total_calls: usize,
     unresolved_calls: usize,
     ambiguous_calls: usize,
@@ -141,6 +348,15 @@ impl CallGraphIndex {
     /// Builds an in-memory call graph from a serialized codegraph artifact.
     #[must_use]
     pub fn new(artifact: &CodeGraphArtifact) -> Self {
+        let AllNodeIndex {
+            nodes: all_nodes,
+            display_names: all_display_names,
+            by_id: all_by_id,
+            by_display_name: all_by_display_name,
+            by_qualified_name: all_by_qualified_name,
+            by_name: all_by_name,
+        } = AllNodeIndex::new(&artifact.nodes);
+
         let mut definitions = artifact
             .nodes
             .iter()
@@ -223,6 +439,13 @@ impl CallGraphIndex {
                 .typescript_callfacts_context_sha256
                 .clone(),
             python_callfacts_context_sha256: artifact.python_callfacts_context_sha256.clone(),
+            all_nodes,
+            all_display_names,
+            all_by_id,
+            all_by_display_name,
+            all_by_qualified_name,
+            all_by_name,
+            all_edges: artifact.edges.clone(),
             total_calls,
             unresolved_calls,
             ambiguous_calls,
@@ -441,6 +664,217 @@ impl CallGraphIndex {
         })
     }
 
+    /// Returns one node and all directly attached relations, regardless of
+    /// whether the node is a function. This is the generic inspection surface
+    /// behind relation-aware codegraph queries.
+    ///
+    /// # Errors
+    ///
+    /// Returns a node-not-found or node-ambiguous error when `query` does not
+    /// identify exactly one node in the snapshot.
+    pub fn node(&self, query: &str) -> CodeGraphResult<CodeGraphNodeResult> {
+        let position = self.resolve_all_node(query)?;
+        let node_id = self.all_nodes[position].id.as_str();
+        let mut incoming = self
+            .all_edges
+            .iter()
+            .filter(|edge| {
+                edge.target.as_deref() == Some(node_id)
+                    || (edge.target.is_none()
+                        && edge
+                            .ambiguous_candidates
+                            .iter()
+                            .any(|candidate| candidate == node_id))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut outgoing = self
+            .all_edges
+            .iter()
+            .filter(|edge| edge.source == node_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        sort_edges(&mut incoming);
+        sort_edges(&mut outgoing);
+        Ok(CodeGraphNodeResult {
+            query: query.to_owned(),
+            node: self.all_nodes[position].clone(),
+            incoming,
+            outgoing,
+            metadata: self.query_metadata(),
+        })
+    }
+
+    /// Returns a provenance-bearing explanation for any codegraph node.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same node resolution errors as [`Self::node`].
+    pub fn explain(&self, query: &str) -> CodeGraphResult<CodeGraphExplanation> {
+        let result = self.node(query)?;
+        let mut relation_counts = BTreeMap::new();
+        for edge in result.incoming.iter().chain(result.outgoing.iter()) {
+            *relation_counts.entry(edge.kind.clone()).or_insert(0) += 1;
+        }
+        Ok(CodeGraphExplanation {
+            query: result.query,
+            node: result.node,
+            incoming: result.incoming,
+            outgoing: result.outgoing,
+            relation_counts,
+            metadata: result.metadata,
+        })
+    }
+
+    /// Returns incoming and outgoing neighbors for a generic code node.
+    ///
+    /// When `include_possible` is true, ambiguous candidate targets are
+    /// projected as possible neighbors without changing the serialized edge's
+    /// definite target fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns a node-not-found or node-ambiguous error when `query` does not
+    /// identify exactly one node in the snapshot.
+    pub fn neighbors(
+        &self,
+        query: &str,
+        relation_filter: Option<&[CodeGraphRelationKind]>,
+        include_possible: bool,
+    ) -> CodeGraphResult<CodeGraphNeighbors> {
+        let position = self.resolve_all_node(query)?;
+        let mut neighbors = Vec::new();
+        for direction in [CodeGraphDirection::Incoming, CodeGraphDirection::Outgoing] {
+            for (neighbor, edge, possible) in
+                self.traversable_edges(position, direction, relation_filter, include_possible)
+            {
+                neighbors.push(CodeGraphNeighbor {
+                    node: self.all_nodes[neighbor].clone(),
+                    relation: edge,
+                    direction,
+                    possible,
+                });
+            }
+        }
+        neighbors.sort_by(|left, right| {
+            (
+                direction_name(left.direction),
+                self.all_display_names
+                    .get(self.all_by_id[left.node.id.as_str()])
+                    .map(String::as_str)
+                    .unwrap_or_default(),
+                left.relation.kind.as_str(),
+                left.possible,
+            )
+                .cmp(&(
+                    direction_name(right.direction),
+                    self.all_display_names
+                        .get(self.all_by_id[right.node.id.as_str()])
+                        .map(String::as_str)
+                        .unwrap_or_default(),
+                    right.relation.kind.as_str(),
+                    right.possible,
+                ))
+        });
+        Ok(CodeGraphNeighbors {
+            query: query.to_owned(),
+            node: self.all_nodes[position].clone(),
+            relation_filter: relation_filter_names(relation_filter),
+            neighbors,
+            metadata: self.query_metadata(),
+        })
+    }
+
+    /// Finds a shortest directed path over all selected relation kinds.
+    ///
+    /// The default relation set is every known and unknown serialized edge
+    /// kind. Set `include_possible` to include ambiguous candidate targets.
+    ///
+    /// # Errors
+    ///
+    /// Returns a node-not-found or node-ambiguous error when either endpoint
+    /// does not identify exactly one node in the snapshot.
+    ///
+    /// # Panics
+    ///
+    /// This method relies on the internal breadth-first-search invariant that
+    /// every reachable endpoint has a recorded parent.
+    pub fn relation_path(
+        &self,
+        source: &str,
+        target: &str,
+        relation_filter: Option<&[CodeGraphRelationKind]>,
+        include_possible: bool,
+    ) -> CodeGraphResult<CodeGraphRelationPath> {
+        let source_position = self.resolve_all_node(source)?;
+        let target_position = self.resolve_all_node(target)?;
+        let mut parent: HashMap<usize, (usize, CodeGraphEdge, bool)> = HashMap::new();
+        let mut queue = VecDeque::from([source_position]);
+        while let Some(position) = queue.pop_front() {
+            if position == target_position {
+                break;
+            }
+            for (neighbor, edge, possible) in self.traversable_edges(
+                position,
+                CodeGraphDirection::Outgoing,
+                relation_filter,
+                include_possible,
+            ) {
+                if parent.contains_key(&neighbor) || neighbor == source_position {
+                    continue;
+                }
+                parent.insert(neighbor, (position, edge, possible));
+                queue.push_back(neighbor);
+            }
+        }
+
+        let (path, relations, possible) = if source_position == target_position {
+            (
+                Some(vec![self.all_display_names[source_position].clone()]),
+                Vec::new(),
+                false,
+            )
+        } else if parent.contains_key(&target_position) {
+            let mut positions = vec![target_position];
+            let mut reversed_relations = Vec::new();
+            let mut any_possible = false;
+            let mut current = target_position;
+            while current != source_position {
+                let (previous, edge, edge_possible) = parent
+                    .remove(&current)
+                    .expect("path parent exists for reachable node");
+                any_possible |= edge_possible;
+                reversed_relations.push(edge.kind);
+                positions.push(previous);
+                current = previous;
+            }
+            positions.reverse();
+            reversed_relations.reverse();
+            (
+                Some(
+                    positions
+                        .into_iter()
+                        .map(|position| self.all_display_names[position].clone())
+                        .collect(),
+                ),
+                reversed_relations,
+                any_possible,
+            )
+        } else {
+            (None, Vec::new(), false)
+        };
+
+        Ok(CodeGraphRelationPath {
+            source: self.all_display_names[source_position].clone(),
+            target: self.all_display_names[target_position].clone(),
+            relation_filter: relation_filter_names(relation_filter),
+            path,
+            relations,
+            possible,
+            metadata: self.query_metadata(),
+        })
+    }
+
     fn resolve_node(&self, query: &str) -> CodeGraphResult<NodeIndex> {
         if let Some(index) = self.by_id.get(query) {
             return Ok(*index);
@@ -470,6 +904,113 @@ impl CallGraphIndex {
             query: query.to_owned(),
             candidates,
         })
+    }
+
+    fn resolve_all_node(&self, query: &str) -> CodeGraphResult<usize> {
+        if let Some(position) = self.all_by_id.get(query) {
+            return Ok(*position);
+        }
+        let candidates = self
+            .all_by_display_name
+            .get(query)
+            .or_else(|| self.all_by_qualified_name.get(query))
+            .or_else(|| self.all_by_name.get(query));
+        let Some(candidates) = candidates else {
+            return Err(CodeGraphError::GraphNodeNotFound {
+                query: query.to_owned(),
+            });
+        };
+        if let [position] = candidates.as_slice() {
+            return Ok(*position);
+        }
+        let mut candidates = candidates
+            .iter()
+            .map(|position| {
+                format!(
+                    "{} [{}]",
+                    display_name(&self.all_nodes[*position]),
+                    self.all_nodes[*position].id
+                )
+            })
+            .collect::<Vec<_>>();
+        candidates.sort();
+        Err(CodeGraphError::GraphNodeAmbiguous {
+            query: query.to_owned(),
+            candidates,
+        })
+    }
+
+    fn query_metadata(&self) -> CodeGraphQueryMetadata {
+        CodeGraphQueryMetadata {
+            manifest_key: self.manifest_key.clone(),
+            go_callfacts_context_sha256: self.go_callfacts_context_sha256.clone(),
+            rust_callfacts_context_sha256: self.rust_callfacts_context_sha256.clone(),
+            typescript_callfacts_context_sha256: self.typescript_callfacts_context_sha256.clone(),
+            python_callfacts_context_sha256: self.python_callfacts_context_sha256.clone(),
+        }
+    }
+
+    fn traversable_edges(
+        &self,
+        position: usize,
+        direction: CodeGraphDirection,
+        relation_filter: Option<&[CodeGraphRelationKind]>,
+        include_possible: bool,
+    ) -> Vec<(usize, CodeGraphEdge, bool)> {
+        let node_id = self.all_nodes[position].id.as_str();
+        let mut result = Vec::new();
+        for edge in &self.all_edges {
+            if !edge_matches_filter(edge, relation_filter) {
+                continue;
+            }
+            match direction {
+                CodeGraphDirection::Outgoing if edge.source == node_id => {
+                    if let Some(target) =
+                        edge.target.as_deref().and_then(|id| self.all_by_id.get(id))
+                    {
+                        result.push((*target, edge.clone(), false));
+                    } else if include_possible && edge.target.is_none() {
+                        for candidate in &edge.ambiguous_candidates {
+                            if let Some(target) = self.all_by_id.get(candidate) {
+                                result.push((*target, edge.clone(), true));
+                            }
+                        }
+                    }
+                }
+                CodeGraphDirection::Incoming => {
+                    if edge.target.as_deref() == Some(node_id) {
+                        if let Some(source) = self.all_by_id.get(edge.source.as_str()) {
+                            result.push((*source, edge.clone(), false));
+                        }
+                    } else if include_possible
+                        && edge.target.is_none()
+                        && edge
+                            .ambiguous_candidates
+                            .iter()
+                            .any(|candidate| candidate == node_id)
+                        && let Some(source) = self.all_by_id.get(edge.source.as_str())
+                    {
+                        result.push((*source, edge.clone(), true));
+                    }
+                }
+                CodeGraphDirection::Outgoing => {}
+            }
+        }
+        result.sort_by(|left, right| {
+            (
+                self.all_display_names[left.0].as_str(),
+                left.1.kind.as_str(),
+                left.2,
+                left.1.range.as_ref().map_or(0, |range| range.start_byte),
+            )
+                .cmp(&(
+                    self.all_display_names[right.0].as_str(),
+                    right.1.kind.as_str(),
+                    right.2,
+                    right.1.range.as_ref().map_or(0, |range| range.start_byte),
+                ))
+        });
+        result
     }
 
     fn display_for_index(&self, index: NodeIndex) -> String {
@@ -544,6 +1085,63 @@ fn insert_index(index: &mut HashMap<String, Vec<NodeIndex>>, key: String, node_i
     }
 }
 
+fn insert_position_index(index: &mut HashMap<String, Vec<usize>>, key: String, position: usize) {
+    let positions = index.entry(key).or_default();
+    if !positions.contains(&position) {
+        positions.push(position);
+    }
+}
+
+fn edge_matches_filter(
+    edge: &CodeGraphEdge,
+    relation_filter: Option<&[CodeGraphRelationKind]>,
+) -> bool {
+    relation_filter.is_none_or(|kinds| {
+        CodeGraphRelationKind::parse(&edge.kind).is_some_and(|kind| kinds.contains(&kind))
+    })
+}
+
+fn relation_filter_names(relation_filter: Option<&[CodeGraphRelationKind]>) -> Vec<String> {
+    relation_filter.map_or_else(Vec::new, |kinds| {
+        kinds.iter().map(|kind| kind.as_str().to_owned()).collect()
+    })
+}
+
+fn direction_name(direction: CodeGraphDirection) -> &'static str {
+    match direction {
+        CodeGraphDirection::Incoming => "incoming",
+        CodeGraphDirection::Outgoing => "outgoing",
+    }
+}
+
+fn sort_edges(edges: &mut [CodeGraphEdge]) {
+    edges.sort_by(|left, right| {
+        (
+            left.source.as_str(),
+            left.kind.as_str(),
+            left.target.as_deref().unwrap_or_default(),
+            left.target_name.as_deref().unwrap_or_default(),
+            left.resolution.as_deref().unwrap_or_default(),
+            left.range.as_ref().map_or(0, |range| range.start_byte),
+            left.range.as_ref().map_or(0, |range| range.end_byte),
+        )
+            .cmp(&(
+                right.source.as_str(),
+                right.kind.as_str(),
+                right.target.as_deref().unwrap_or_default(),
+                right.target_name.as_deref().unwrap_or_default(),
+                right.resolution.as_deref().unwrap_or_default(),
+                right.range.as_ref().map_or(0, |range| range.start_byte),
+                right.range.as_ref().map_or(0, |range| range.end_byte),
+            ))
+    });
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 fn collect_call_pairs(
     artifact: &CodeGraphArtifact,
     by_id: &HashMap<String, NodeIndex>,
@@ -599,7 +1197,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::CallGraphIndex;
-    use crate::{CodeGraphError, build_go_codegraph};
+    use crate::{CodeGraphError, CodeGraphRelationKind, build_go_codegraph};
 
     #[test]
     fn answers_blast_radius_and_shortest_path_queries() {
@@ -763,5 +1361,79 @@ mod tests {
             index.blast_radius("main.go::Value", 1),
             Err(CodeGraphError::GraphNodeAmbiguous { .. })
         ));
+    }
+
+    #[test]
+    fn generic_queries_cover_nodes_relations_and_possible_targets() {
+        let directory = tempdir().expect("workspace");
+        fs::write(
+            directory.path().join("first.go"),
+            "package demo\n\ntype Base struct{}\ntype Child struct { Base }\nfunc target() {}\n",
+        )
+        .expect("first source");
+        fs::write(
+            directory.path().join("second.go"),
+            "package demo\n\nfunc target() {}\n",
+        )
+        .expect("second source");
+        fs::write(
+            directory.path().join("caller.go"),
+            "package demo\n\nfunc caller() { target() }\n",
+        )
+        .expect("caller source");
+
+        let artifact = build_go_codegraph(directory.path()).expect("graph");
+        let index = CallGraphIndex::new(&artifact);
+        let calls = [CodeGraphRelationKind::Calls];
+
+        let explanation = index.node("caller.go::caller").expect("caller node");
+        assert_eq!(explanation.node.kind, "function");
+        assert_eq!(explanation.outgoing.len(), 1);
+        assert_eq!(explanation.outgoing[0].kind, "calls");
+
+        let neighbors = index
+            .neighbors("caller.go::caller", Some(&calls), true)
+            .expect("possible call neighbors");
+        assert_eq!(neighbors.neighbors.len(), 2);
+        assert!(neighbors.neighbors.iter().all(|neighbor| neighbor.possible));
+
+        let target_ids = artifact
+            .nodes
+            .iter()
+            .filter(|node| node.kind == "function" && node.name == "target")
+            .map(|node| node.id.clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(target_ids.len(), 2);
+        let target = target_ids.first().expect("target node");
+        let path = index
+            .relation_path("caller.go::caller", target, Some(&calls), true)
+            .expect("possible relation path");
+        assert!(path.path.is_some());
+        assert!(path.possible);
+        assert_eq!(path.relations, ["calls"]);
+
+        let inheritance = [CodeGraphRelationKind::Inherits];
+        let inheritance_path = index
+            .relation_path(
+                "first.go::Child",
+                "first.go::Base",
+                Some(&inheritance),
+                false,
+            )
+            .expect("structural relation path");
+        assert!(inheritance_path.path.is_some());
+        assert!(!inheritance_path.possible);
+        assert_eq!(inheritance_path.relations, ["inherits"]);
+
+        let definition_filter = [CodeGraphRelationKind::Defines];
+        let file_neighbors = index
+            .neighbors("caller.go", Some(&definition_filter), false)
+            .expect("file definitions");
+        assert_eq!(file_neighbors.neighbors.len(), 1);
+        assert_eq!(file_neighbors.neighbors[0].node.name, "caller");
+
+        let explanation = index.explain("caller.go::caller").expect("explanation");
+        assert_eq!(explanation.relation_counts["calls"], 1);
+        assert_eq!(explanation.metadata.manifest_key, artifact.manifest_key);
     }
 }

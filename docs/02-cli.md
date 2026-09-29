@@ -107,6 +107,25 @@ zg --rg -i -C 2 -g "*.ts" "dark mode" src
 See [Retrieval pipeline](./04-pipeline.md#3-query-through-one-search-layer) for
 route selection and freshness behavior.
 
+## `zg --graph` and `zg --graph-query`
+
+Build a versioned codegraph snapshot for Go, Rust, TypeScript/TSX, and Python:
+
+```bash
+zg --graph [root]
+zg --graph-query .zvec-grep/codegraph-v1.json node src/main.rs::run
+zg --graph-query .zvec-grep/codegraph-v1.json neighbors src/main.rs::run --relation calls
+zg --graph-query .zvec-grep/codegraph-v1.json relation-path source target --relation calls --include-possible
+zg --graph-query .zvec-grep/codegraph-v1.json explain src/main.rs::run
+```
+
+Generic graph queries accept bare or path-qualified names and exact node IDs.
+Relation filters are `defines`, `imports`, `calls`, `inherits`, `implements`,
+`overrides`, `mixes_in`, `references`, `tests`, and `depends_on`. Possible
+ambiguous targets are excluded unless `--include-possible` is supplied. Query
+results include the graph manifest and applied language call-facts context
+fingerprints.
+
 ## `zg --index`
 
 ```text

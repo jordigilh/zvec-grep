@@ -1,0 +1,11 @@
+{
+  "schema": "zvec-grep.codegraph-relations-v1",
+  "language": "typescript",
+  "source_files": ["tests.ts", "types.ts"],
+  "relations": [
+    {"kind": "inherits", "source": "Child", "target": "Base"},
+    {"kind": "implements", "source": "Child", "target": "Contract"},
+    {"kind": "references", "source": "Child", "target": "Base"},
+    {"kind": "tests", "source": "testChild", "target": "helper"}
+  ]
+}

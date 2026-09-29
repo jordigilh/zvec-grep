@@ -1,0 +1,10 @@
+{
+  "schema": "zvec-grep.codegraph-relations-v1",
+  "language": "go",
+  "source_files": ["tests.go", "types.go"],
+  "relations": [
+    {"kind": "inherits", "source": "Child", "target": "Base"},
+    {"kind": "references", "source": "Child", "target": "Base"},
+    {"kind": "tests", "source": "TestChild", "target": "helper"}
+  ]
+}

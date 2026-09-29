@@ -41,12 +41,21 @@ incidental, or comparative workspace mentions do not establish relevance.
 | `zvec_grep_callgraph_shortest_path` | Checking whether one function can call another and how | No |
 | `zvec_grep_callgraph_cluster` | Inspecting the callgraph community around a function | No |
 | `zvec_grep_callgraph_communities` | Listing all callgraph communities | No |
+| `zvec_grep_codegraph_node` | Inspecting any file, package, or declaration node and its relations | No |
+| `zvec_grep_codegraph_neighbors` | Listing incoming/outgoing neighbors with optional relation filters | No |
+| `zvec_grep_codegraph_relation_path` | Finding paths across selected codegraph relations | No |
+| `zvec_grep_codegraph_explain` | Explaining a node with relation counts and snapshot provenance | No |
 
 Agents use native grep or rg when locating an exact word, quotation, name, date,
 key, filename, path, source fragment, or regex is sufficient. For mixed tasks,
 start with `zvec_grep_search`, then use native grep or rg for focused follow-up.
 For an exact callers, shortest-call-path, or callgraph-community question, use
 the corresponding `zvec_grep_callgraph_*` tool with the intended worktree root.
+For source-file, package, declaration, neighbor, relation-path, or provenance
+questions, use the corresponding `zvec_grep_codegraph_*` tool. Relation filters
+are `defines`, `imports`, `calls`, `inherits`, `implements`, `overrides`,
+`mixes_in`, `references`, `tests`, and `depends_on`; possible ambiguous targets
+are excluded unless `includePossible` is requested.
 When semantic discovery is selected because no sufficient exact anchor is
 available and the user asks whether conceptually related material exists
 locally, agents make at most one focused search probe and stop when its results
@@ -210,6 +219,10 @@ The `full` toolset exposes ten tools:
 | `zvec_grep_callgraph_shortest_path` | Root-scoped call path between two functions |
 | `zvec_grep_callgraph_cluster` | Callgraph community for a function |
 | `zvec_grep_callgraph_communities` | All callgraph communities |
+| `zvec_grep_codegraph_node` | Any codegraph node and attached relations |
+| `zvec_grep_codegraph_neighbors` | Relation-filtered incoming/outgoing neighbors |
+| `zvec_grep_codegraph_relation_path` | Relation-filtered shortest path |
+| `zvec_grep_codegraph_explain` | Node explanation and snapshot provenance |
 | `zvec_grep_rg` | No-index exhaustive search |
 | `zvec_grep_index` | Create, update, rebuild, or explicitly drop an index |
 | `zvec_grep_index_drop` | Explicitly delete an index |
