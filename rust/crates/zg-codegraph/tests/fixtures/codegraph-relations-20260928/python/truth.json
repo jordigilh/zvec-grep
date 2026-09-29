@@ -1,10 +1,84 @@
 {
   "schema": "zvec-grep.codegraph-relations-v2",
   "language": "python",
-  "source_files": ["tests.py", "types.py"],
+  "source_files": [
+    "first.py",
+    "helper.py",
+    "imports.py",
+    "second.py",
+    "tests.py",
+    "types.py"
+  ],
+  "context_files": [],
+  "source_sha256": {
+    "first.py": "6ad74d477d178268879ad19729639246bfc93c528df9d0f5e7f3ac513d524489",
+    "helper.py": "62159d6502675d515cf8c7b39afb5d30fc5b4b99333c0e61f7096d1ae608ddb9",
+    "imports.py": "7f1ff96fee653c631ecb3f7ce13055048466f68ab200cefdadb6a848767659dd",
+    "second.py": "6ad74d477d178268879ad19729639246bfc93c528df9d0f5e7f3ac513d524489",
+    "tests.py": "3f262494b6bc069ae38069f54875cb7bebbbf2f802bb98a542868e5cf55496bc",
+    "types.py": "5eadd135dbe5e81bbe169db2d0f6404eee6f6a034fac7ea4550b31c478417d53"
+  },
   "relations": [
     {"kind": "inherits", "source": "Child", "target": "Base"},
     {"kind": "references", "source": "typed_helper", "target": "Base"},
-    {"kind": "tests", "source": "test_child", "target": "helper"}
+    {"kind": "tests", "source": "test_child", "target": "helper"},
+    {"kind": "imports_from", "source": "imports.py", "target": ".helper"},
+    {"kind": "references", "source": "imported_user", "target": "Helper"},
+    {"kind": "calls", "source": "imported_user", "target": "make"}
+  ],
+  "absent_relations": [
+    {"kind": "re_exports", "source": "imports.py", "target": ".helper"}
+  ],
+  "call_qrels": [
+    {
+      "caller": "ambiguous_call",
+      "target_name": "load",
+      "resolution": "ambiguous",
+      "candidate_nodes": ["first.py::load", "second.py::load"]
+    },
+    {
+      "caller": "negative_call",
+      "target_name": "missing",
+      "resolution": "unresolved",
+      "candidate_nodes": []
+    }
+  ],
+  "topology_qrels": {
+    "neighbors": [
+      {
+        "query": "imports.py",
+        "relations": ["imports_from"],
+        "outgoing": [
+          {
+            "node": "helper.py::helper.py",
+            "kind": "imports_from",
+            "target_name": ".helper"
+          }
+        ],
+        "incoming": []
+      }
+    ],
+    "paths": [
+      {
+        "source": "imports.py",
+        "target": "helper.py",
+        "relations": ["imports_from"],
+        "path": ["imports.py::imports.py", "helper.py::helper.py"],
+        "edge_kinds": ["imports_from"],
+        "possible": false
+      }
+    ]
+  },
+  "affected_qrels": [
+    {
+      "query": "helper.py",
+      "depth": 1,
+      "relations": ["imports_from"],
+      "include_possible": false,
+      "definite": [[
+        {"node": "imports.py::imports.py", "kind": "imports_from"}
+      ]],
+      "possible": [[]]
+    }
   ]
 }

@@ -8,3 +8,7 @@ def typed_helper(value: Base) -> Base:
 
 def test_child():
     helper()
+
+
+def negative_call():
+    missing()

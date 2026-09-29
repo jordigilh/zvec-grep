@@ -2863,16 +2863,22 @@ fn range_label(range: &ContentRange) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, fs, path::PathBuf, sync::Arc};
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        fs,
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
 
     use rmcp::ServerHandler;
     use rmcp::model::ContentBlock;
+    use serde_json::Value;
     use tempfile::tempdir;
     use zg_engine::{EngineError, ZvecGrep, codegraph::GoCallFactsContext};
 
     use super::{
-        AGENT_TOOL_NAME, AGENT_TOOL_NAMES, FULL_TOOL_NAMES, FreshnessInput, IndexInput,
-        IndexToolRequest,
+        AGENT_TOOL_NAME, AGENT_TOOL_NAMES, CodeGraphAffectedInput, CodeGraphNeighborsInput,
+        CodeGraphRelationPathInput, FULL_TOOL_NAMES, FreshnessInput, IndexInput, IndexToolRequest,
         QueryListInput, RgInput, SearchInput, ServerStatusProvider, ServerStatusSnapshot,
         ZvecGrepMcpServer, error_result,
     };
@@ -3391,6 +3397,205 @@ mod tests {
                 .expect("overrides capability")["status"],
             "reserved"
         );
+    }
+
+    #[tokio::test]
+    async fn codegraph_relation_qrels_are_stable_through_mcp_tools() {
+        let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../zg-codegraph/tests/fixtures/codegraph-relations-20260928");
+        for language in ["go", "rust", "typescript", "python"] {
+            let fixture = fixture_root.join(language);
+            let truth = read_relation_fixture_truth(&fixture);
+            let workspace = copy_relation_fixture(&fixture, &truth);
+            let root = workspace.path().display().to_string();
+            let server =
+                ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
+
+            for qrel in truth["topology_qrels"]["neighbors"]
+                .as_array()
+                .expect("neighbor qrels")
+            {
+                let result = server
+                    .zvec_grep_codegraph_neighbors(super::Parameters(CodeGraphNeighborsInput {
+                        root: root.clone(),
+                        query: qrel["query"].as_str().expect("neighbor query").to_owned(),
+                        relations: Some(relation_names(&qrel["relations"])),
+                        include_possible: Some(false),
+                    }))
+                    .await
+                    .expect("MCP neighbors tool call")
+                    .structured_content
+                    .expect("MCP neighbors structured output");
+                assert_mcp_neighbors(&result, qrel);
+            }
+
+            for qrel in truth["topology_qrels"]["paths"]
+                .as_array()
+                .expect("path qrels")
+            {
+                let result = server
+                    .zvec_grep_codegraph_relation_path(super::Parameters(
+                        CodeGraphRelationPathInput {
+                            root: root.clone(),
+                            source: qrel["source"].as_str().expect("path source").to_owned(),
+                            target: qrel["target"].as_str().expect("path target").to_owned(),
+                            relations: Some(relation_names(&qrel["relations"])),
+                            include_possible: Some(false),
+                        },
+                    ))
+                    .await
+                    .expect("MCP relation path tool call")
+                    .structured_content
+                    .expect("MCP relation path structured output");
+                assert_eq!(result["path"], qrel["path"]);
+                assert_eq!(result["relations"], qrel["edge_kinds"]);
+                assert_eq!(
+                    result["possible"].as_bool().unwrap_or(false),
+                    qrel["possible"]
+                );
+            }
+
+            for qrel in truth["affected_qrels"].as_array().expect("affected qrels") {
+                let result = server
+                    .zvec_grep_codegraph_affected(super::Parameters(CodeGraphAffectedInput {
+                        root: root.clone(),
+                        query: qrel["query"].as_str().expect("affected query").to_owned(),
+                        depth: Some(
+                            usize::try_from(qrel["depth"].as_u64().expect("affected depth"))
+                                .expect("affected depth fits usize"),
+                        ),
+                        relations: Some(relation_names(&qrel["relations"])),
+                        include_possible: Some(qrel["include_possible"].as_bool().unwrap_or(false)),
+                    }))
+                    .await
+                    .expect("MCP affected tool call")
+                    .structured_content
+                    .expect("MCP affected structured output");
+                assert_mcp_affected(&result, qrel);
+            }
+        }
+    }
+
+    fn read_relation_fixture_truth(fixture: &Path) -> Value {
+        serde_json::from_slice(
+            &fs::read(fixture.join("truth.json")).expect("relation fixture truth"),
+        )
+        .expect("valid relation fixture truth")
+    }
+
+    fn copy_relation_fixture(fixture: &Path, truth: &Value) -> tempfile::TempDir {
+        let workspace = tempdir().expect("relation fixture workspace");
+        for relative in truth["source_sha256"]
+            .as_object()
+            .expect("source hashes")
+            .keys()
+        {
+            let source = fixture.join(relative);
+            let target = workspace.path().join(relative);
+            fs::create_dir_all(target.parent().expect("fixture target parent"))
+                .expect("fixture target directory");
+            fs::copy(source, target).expect("copy relation fixture input");
+        }
+        workspace
+    }
+
+    fn relation_names(value: &Value) -> Vec<String> {
+        value
+            .as_array()
+            .expect("relation list")
+            .iter()
+            .map(|relation| relation.as_str().expect("relation name").to_owned())
+            .collect()
+    }
+
+    fn assert_mcp_neighbors(actual: &Value, qrel: &Value) {
+        assert_eq!(actual["relation_filter"], qrel["relations"]);
+        for direction in ["outgoing", "incoming"] {
+            let actual_edges = actual["neighbors"]
+                .as_array()
+                .expect("neighbors")
+                .iter()
+                .filter(|neighbor| neighbor["direction"] == direction)
+                .map(|neighbor| {
+                    (
+                        mcp_node_label(&neighbor["node"]),
+                        neighbor["relation"]["kind"]
+                            .as_str()
+                            .expect("relation kind")
+                            .to_owned(),
+                        neighbor["relation"]["target_name"]
+                            .as_str()
+                            .map(str::to_owned),
+                    )
+                })
+                .collect::<BTreeSet<_>>();
+            let expected_edges = qrel[direction]
+                .as_array()
+                .expect("expected neighbors")
+                .iter()
+                .map(|neighbor| {
+                    (
+                        neighbor["node"].as_str().expect("expected node").to_owned(),
+                        neighbor["kind"]
+                            .as_str()
+                            .expect("expected relation kind")
+                            .to_owned(),
+                        neighbor["target_name"].as_str().map(str::to_owned),
+                    )
+                })
+                .collect::<BTreeSet<_>>();
+            assert_eq!(actual_edges, expected_edges);
+        }
+    }
+
+    fn assert_mcp_affected(actual: &Value, qrel: &Value) {
+        assert_eq!(actual["relation_filter"], qrel["relations"]);
+        assert_mcp_affected_levels(&actual["affected_by_depth"], &qrel["definite"]);
+        assert_mcp_affected_levels(&actual["possible_affected_by_depth"], &qrel["possible"]);
+    }
+
+    fn assert_mcp_affected_levels(actual: &Value, expected: &Value) {
+        let actual_levels = actual.as_array().expect("affected levels");
+        let expected_levels = expected.as_array().expect("expected affected levels");
+        assert_eq!(actual_levels.len(), expected_levels.len());
+        for (actual_level, expected_level) in actual_levels.iter().zip(expected_levels) {
+            let actual_nodes = actual_level
+                .as_array()
+                .expect("affected level")
+                .iter()
+                .map(|neighbor| {
+                    (
+                        mcp_node_label(&neighbor["node"]),
+                        neighbor["relation"]["kind"]
+                            .as_str()
+                            .expect("relation kind")
+                            .to_owned(),
+                    )
+                })
+                .collect::<BTreeSet<_>>();
+            let expected_nodes = expected_level
+                .as_array()
+                .expect("expected affected level")
+                .iter()
+                .map(|neighbor| {
+                    (
+                        neighbor["node"].as_str().expect("expected node").to_owned(),
+                        neighbor["kind"]
+                            .as_str()
+                            .expect("expected relation kind")
+                            .to_owned(),
+                    )
+                })
+                .collect::<BTreeSet<_>>();
+            assert_eq!(actual_nodes, expected_nodes);
+        }
+    }
+
+    fn mcp_node_label(node: &Value) -> String {
+        node["path"].as_str().map_or_else(
+            || node["name"].as_str().expect("node name").to_owned(),
+            |path| format!("{path}::{}", node["name"].as_str().expect("node name")),
+        )
     }
 
     #[tokio::test]

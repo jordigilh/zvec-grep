@@ -1,11 +1,114 @@
 {
   "schema": "zvec-grep.codegraph-relations-v2",
   "language": "typescript",
-  "source_files": ["tests.ts", "types.ts"],
+  "source_files": [
+    "component.tsx",
+    "first.ts",
+    "helper.ts",
+    "imports.ts",
+    "second.ts",
+    "tests.ts",
+    "types.ts"
+  ],
+  "context_files": [],
+  "source_sha256": {
+    "component.tsx": "653fbeb8133e49dfa86ae6a783b5f55a4be721a392d3c95224b8e4cc6099ab22",
+    "first.ts": "c6d1562c0fb9c052893a933aa0e3704a2b2bc191d61fba165881bc1ec1a31e56",
+    "helper.ts": "a377fa4f90eca9dc6841c2fc50a847146c5662b9d2e207b2c3d71d9d56e1d487",
+    "imports.ts": "4d31993000515b829ed4e907baef3955699621ce809a5ecdc4e680862c282e9f",
+    "second.ts": "c6d1562c0fb9c052893a933aa0e3704a2b2bc191d61fba165881bc1ec1a31e56",
+    "tests.ts": "4591894151d4d8d547a63d934942fb3bfa32b395b5f1e61a1ed465c796afda0e",
+    "types.ts": "ca795bea803f714532e19620825303cbad9f12259580a2c4f2a12096bfe1127d"
+  },
   "relations": [
     {"kind": "inherits", "source": "Child", "target": "Base"},
     {"kind": "implements", "source": "Child", "target": "Contract"},
     {"kind": "references", "source": "Child", "target": "Base"},
-    {"kind": "tests", "source": "testChild", "target": "helper"}
+    {"kind": "tests", "source": "testChild", "target": "helper"},
+    {"kind": "imports_from", "source": "imports.ts", "target": "./helper"},
+    {"kind": "re_exports", "source": "imports.ts", "target": "./helper"},
+    {"kind": "imports_from", "source": "component.tsx", "target": "./helper"},
+    {"kind": "calls", "source": "importedUser", "target": "make"}
+  ],
+  "absent_relations": [
+    {"kind": "re_exports", "source": "component.tsx", "target": "./helper"}
+  ],
+  "call_qrels": [
+    {
+      "caller": "ambiguousCall",
+      "target_name": "load",
+      "resolution": "ambiguous",
+      "candidate_nodes": ["first.ts::load", "second.ts::load"]
+    },
+    {
+      "caller": "negativeCall",
+      "target_name": "missing",
+      "resolution": "unresolved",
+      "candidate_nodes": []
+    }
+  ],
+  "topology_qrels": {
+    "neighbors": [
+      {
+        "query": "imports.ts",
+        "relations": ["imports_from", "re_exports"],
+        "outgoing": [
+          {
+            "node": "helper.ts::helper.ts",
+            "kind": "imports_from",
+            "target_name": "./helper"
+          },
+          {
+            "node": "helper.ts::helper.ts",
+            "kind": "re_exports",
+            "target_name": "./helper"
+          }
+        ],
+        "incoming": []
+      },
+      {
+        "query": "component.tsx",
+        "relations": ["imports_from"],
+        "outgoing": [
+          {
+            "node": "helper.ts::helper.ts",
+            "kind": "imports_from",
+            "target_name": "./helper"
+          }
+        ],
+        "incoming": []
+      }
+    ],
+    "paths": [
+      {
+        "source": "imports.ts",
+        "target": "helper.ts",
+        "relations": ["imports_from"],
+        "path": ["imports.ts::imports.ts", "helper.ts::helper.ts"],
+        "edge_kinds": ["imports_from"],
+        "possible": false
+      },
+      {
+        "source": "imports.ts",
+        "target": "helper.ts",
+        "relations": ["re_exports"],
+        "path": ["imports.ts::imports.ts", "helper.ts::helper.ts"],
+        "edge_kinds": ["re_exports"],
+        "possible": false
+      }
+    ]
+  },
+  "affected_qrels": [
+    {
+      "query": "helper.ts",
+      "depth": 1,
+      "relations": ["imports_from", "re_exports"],
+      "include_possible": false,
+      "definite": [[
+        {"node": "component.tsx::component.tsx", "kind": "imports_from"},
+        {"node": "imports.ts::imports.ts", "kind": "imports_from"}
+      ]],
+      "possible": [[]]
+    }
   ]
 }
