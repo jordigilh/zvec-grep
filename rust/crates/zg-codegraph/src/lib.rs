@@ -3771,6 +3771,9 @@ fn parse_go_manifest(text: &str) -> (Option<String>, Vec<String>) {
             }
         }
     }
+    if in_require_block {
+        return (None, Vec::new());
+    }
     (name, dependencies)
 }
 
@@ -3809,11 +3812,12 @@ fn parse_pyproject_manifest(text: &str) -> (Option<String>, Vec<String>) {
     for (section, key, value) in assignments {
         match (section.as_str(), key.as_str()) {
             ("project", "name") => name = toml_string_value(&value),
-            ("project", "dependencies") => dependencies.extend(
-                toml_array_strings(&value)
-                    .into_iter()
-                    .map(|spec| pep508_name(&spec)),
-            ),
+            ("project", "dependencies") => {
+                let Some(specifications) = toml_array_strings(&value) else {
+                    return (None, Vec::new());
+                };
+                dependencies.extend(specifications.into_iter().map(|spec| pep508_name(&spec)));
+            }
             ("tool.poetry", "name") if name.is_none() => {
                 name = toml_string_value(&value);
             }
@@ -4020,29 +4024,54 @@ fn toml_string_value(value: &str) -> Option<String> {
     Some(value[1..end].to_owned())
 }
 
-fn toml_array_strings(value: &str) -> Vec<String> {
-    let mut strings = Vec::new();
+fn toml_array_strings(value: &str) -> Option<Vec<String>> {
+    let value = value.trim();
+    if value.len() < 2 || !value.starts_with('[') || !value.ends_with(']') {
+        return None;
+    }
+    let mut parts = Vec::new();
     let mut current = String::new();
     let mut quote = None;
     let mut escaped = false;
-    for character in value.chars() {
+    for character in value[1..value.len() - 1].chars() {
         if let Some(current_quote) = quote {
+            current.push(character);
             if escaped {
-                current.push(character);
                 escaped = false;
             } else if current_quote == '"' && character == '\\' {
                 escaped = true;
             } else if character == current_quote {
-                strings.push(std::mem::take(&mut current));
                 quote = None;
-            } else {
-                current.push(character);
             }
         } else if character == '"' || character == '\'' {
             quote = Some(character);
+            current.push(character);
+        } else if character == ',' {
+            parts.push(std::mem::take(&mut current));
+        } else {
+            current.push(character);
         }
     }
-    strings
+    if quote.is_some() || escaped {
+        return None;
+    }
+    parts.push(current);
+    if parts.len() == 1 && parts[0].trim().is_empty() {
+        return Some(Vec::new());
+    }
+
+    let mut strings = Vec::with_capacity(parts.len());
+    for (index, part) in parts.iter().enumerate() {
+        let part = part.trim();
+        if part.is_empty() {
+            if index + 1 == parts.len() {
+                continue;
+            }
+            return None;
+        }
+        strings.push(toml_string_value(part)?);
+    }
+    Some(strings)
 }
 
 fn pep508_name(spec: &str) -> String {
@@ -5687,6 +5716,17 @@ mod tests {
     }
 
     #[test]
+    fn malformed_go_manifest_does_not_emit_dependency_facts() {
+        assert_eq!(
+            super::parse_package_manifest(
+                "go",
+                b"module example.com/app\n\nrequire (\nexample.com/dep v1.2.3\n",
+            ),
+            (None, Vec::new())
+        );
+    }
+
+    #[test]
     fn incremental_source_refresh_preserves_manifest_package_nodes_without_dependencies() {
         let directory = tempdir().expect("workspace");
         let source = directory.path().join("main.go");
@@ -5749,6 +5789,20 @@ mod tests {
             super::parse_package_manifest(
                 "python",
                 b"[project]\nname = \"broken\n\ndependencies = [\"requests\"]\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "python",
+                b"[project]\nname = \"valid-name\"\ndependencies = [\"requests\", invalid]\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "python",
+                b"[project]\nname = \"valid-name\"\ndependencies = [\"requests\" \"pydantic\"]\n",
             ),
             (None, Vec::new())
         );
