@@ -41,6 +41,7 @@ incidental, or comparative workspace mentions do not establish relevance.
 | `zvec_grep_callgraph_shortest_path` | Checking whether one function can call another and how | No |
 | `zvec_grep_callgraph_cluster` | Inspecting the callgraph community around a function | No |
 | `zvec_grep_callgraph_communities` | Listing all callgraph communities | No |
+| `zvec_grep_codegraph_capabilities` | Reporting root-specific languages and relation support | No |
 | `zvec_grep_codegraph_node` | Inspecting any file, package, or declaration node and its relations | No |
 | `zvec_grep_codegraph_neighbors` | Listing incoming/outgoing neighbors with optional relation filters | No |
 | `zvec_grep_codegraph_relation_path` | Finding paths across selected codegraph relations | No |
@@ -52,10 +53,14 @@ start with `zvec_grep_search`, then use native grep or rg for focused follow-up.
 For an exact callers, shortest-call-path, or callgraph-community question, use
 the corresponding `zvec_grep_callgraph_*` tool with the intended worktree root.
 For source-file, package, declaration, neighbor, relation-path, or provenance
-questions, use the corresponding `zvec_grep_codegraph_*` tool. Relation filters
-are `defines`, `imports`, `calls`, `inherits`, `implements`, `overrides`,
-`mixes_in`, `references`, `tests`, and `depends_on`; possible ambiguous targets
-are excluded unless `includePossible` is requested.
+questions, use the corresponding `zvec_grep_codegraph_*` tool. Call
+`zvec_grep_codegraph_capabilities` first when relation support is material to the
+answer. Relation filters are `defines`, `imports`, `calls`, `inherits`,
+`implements`, `overrides`, `mixes_in`, `references`, `tests`, and `depends_on`;
+possible ambiguous targets are excluded unless `includePossible` is requested.
+The capabilities result reports `supported`, `unsupported`, or `reserved` for
+each relation at the selected root. MCP discovery remains static; tools are not
+hidden based on the languages found in one project.
 When semantic discovery is selected because no sufficient exact anchor is
 available and the user asks whether conceptually related material exists
 locally, agents make at most one focused search probe and stop when its results
@@ -210,7 +215,7 @@ zg --server off
 zg --server on --mcp-toolset full
 ```
 
-The `full` toolset exposes ten tools:
+The `full` toolset exposes fifteen tools:
 
 | Tool | Purpose |
 | --- | --- |
@@ -219,6 +224,7 @@ The `full` toolset exposes ten tools:
 | `zvec_grep_callgraph_shortest_path` | Root-scoped call path between two functions |
 | `zvec_grep_callgraph_cluster` | Callgraph community for a function |
 | `zvec_grep_callgraph_communities` | All callgraph communities |
+| `zvec_grep_codegraph_capabilities` | Root-specific languages and relation support |
 | `zvec_grep_codegraph_node` | Any codegraph node and attached relations |
 | `zvec_grep_codegraph_neighbors` | Relation-filtered incoming/outgoing neighbors |
 | `zvec_grep_codegraph_relation_path` | Relation-filtered shortest path |

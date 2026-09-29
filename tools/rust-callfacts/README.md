@@ -68,7 +68,7 @@ ignored without making graph queries fail.
 
 For a quick producer/consumer smoke check, first build the CLI and then run the
 producer against a small Cargo crate. Querying the resulting
-`.zvec-grep/codegraph-v1.json` reports `static` calls in
+`.zvec-grep/codegraph-v2.json` reports `static` calls in
 `callers_by_depth`, while trait-dispatch candidates remain in
 `possible_callers_by_depth`.
 

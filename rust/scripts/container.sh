@@ -42,8 +42,8 @@ case "${command}" in
                         exit 2
                     fi
                     base_path="$(cd -- "$(dirname -- "${base_path}")" && pwd)/$(basename -- "${base_path}")"
-                    extra_mounts+=(--mount "type=bind,src=${base_path},dst=/base/codegraph-v1.json,readonly")
-                    graph_args+=(--base /base/codegraph-v1.json)
+                    extra_mounts+=(--mount "type=bind,src=${base_path},dst=/base/codegraph-v2.json,readonly")
+                    graph_args+=(--base /base/codegraph-v2.json)
                     shift 2
                     ;;
                 --changed|--deleted)
@@ -62,7 +62,7 @@ case "${command}" in
             --mount "type=bind,src=${source_root},dst=/workspace,readonly" \
             --mount "type=bind,src=${artifact_dir},dst=/artifact" \
             "${extra_mounts[@]}" \
-            "${image}" graph /workspace --output /artifact/codegraph-v1.json "${graph_args[@]}"
+            "${image}" graph /workspace --output /artifact/codegraph-v2.json "${graph_args[@]}"
         ;;
     run)
         source_root="${2:?source root is required}"

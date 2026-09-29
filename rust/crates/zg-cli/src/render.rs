@@ -487,7 +487,7 @@ Examples:
   zg --auth status
   zg --server on
   zg --graph
-  zg --graph-query .zvec-grep/codegraph-v1.json blast-radius Reconcile
+  zg --graph-query .zvec-grep/codegraph-v2.json blast-radius Reconcile
   zg --config model set local/potion-code-16m-v2 --device metal
   zg --install
 
@@ -640,7 +640,7 @@ const GRAPH_HELP: &str = r"Usage:
 
 Builds a deterministic structural sidecar for Go, Rust, TypeScript/TSX, and
 Python. The default artifact is
-<root>/.zvec-grep/codegraph-v1.json and includes definitions, imports, and
+<root>/.zvec-grep/codegraph-v2.json and includes definitions, imports, and
 lexical call edges. An optional, source- and context-matched Go call-facts
 sidecar at <root>/.zvec-grep/go-callfacts-v2.json replaces covered Go call
 edges with go/types-resolved edges; stale or unsupported facts fall back to
@@ -663,7 +663,7 @@ const GRAPH_QUERY_HELP: &str = r"Usage:
   zg --graph-query <artifact> cluster <function>
   zg --graph-query <artifact> communities
 
-Queries a codegraph-v1 JSON artifact. Node names may be bare, path-qualified as
+Queries a codegraph-v2 JSON artifact. Node names may be bare, path-qualified as
 <path>::<name>, or an exact sidecar node ID. Ambiguous or missing names return
 an error with candidate details. Relation filters accept defines, imports, calls,
 inherits, implements, overrides, mixes_in, references, tests, or depends_on.

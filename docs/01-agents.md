@@ -253,6 +253,7 @@ lexical lookup to the agent's native tools:
 | Workspace-grounded wording or location is unknown, or the answer requires semantic, fuzzy, relationship, chronology, causality, comparison, or cross-file synthesis | `zvec_grep_search` |
 | Exact callers, a shortest call path, or the callgraph community for a known function are requested | The corresponding `zvec_grep_callgraph_*` tool |
 | A source file, package, declaration, generic neighbor, relation path, or graph provenance is requested | The corresponding `zvec_grep_codegraph_*` tool |
+| Relation support depends on the selected project languages | `zvec_grep_codegraph_capabilities`, then the corresponding codegraph tool |
 | Exact anchors are known but the answer requires broader context or synthesis | `zvec_grep_search`, then native grep or rg |
 | The answer is unrelated open-world knowledge, a current external fact, or web content that does not depend on local evidence | The appropriate external source, not zvec-grep |
 
@@ -266,6 +267,9 @@ to syntax-derived edges, which may rely on name matching. Each sidecar carries
 a generation-context fingerprint and applies only to its recorded
 toolchain/build configuration; regenerate it after changing the relevant
 compiler, target, build flags, workspace, or dependency inputs.
+Codegraph tools remain statically discoverable; project-specific relation
+availability is reported by `zvec_grep_codegraph_capabilities` and in generic
+query metadata rather than by hiding tools.
 Managed rg remains available through `zg --rg`
 and through the optional `full` MCP toolset. See the [Pipeline guide](./04-pipeline.md)
 for the distinction and the [MCP guide](./03-mcp.md) for tool inputs.

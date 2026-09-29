@@ -58,22 +58,24 @@ use zg_engine::{
 };
 
 pub const AGENT_TOOL_NAME: &str = "zvec_grep_search";
-pub const AGENT_TOOL_NAMES: [&str; 9] = [
+pub const AGENT_TOOL_NAMES: [&str; 10] = [
     "zvec_grep_callgraph_blast_radius",
     "zvec_grep_callgraph_cluster",
     "zvec_grep_callgraph_communities",
     "zvec_grep_callgraph_shortest_path",
+    "zvec_grep_codegraph_capabilities",
     "zvec_grep_codegraph_explain",
     "zvec_grep_codegraph_neighbors",
     "zvec_grep_codegraph_node",
     "zvec_grep_codegraph_relation_path",
     AGENT_TOOL_NAME,
 ];
-pub const FULL_TOOL_NAMES: [&str; 14] = [
+pub const FULL_TOOL_NAMES: [&str; 15] = [
     "zvec_grep_callgraph_blast_radius",
     "zvec_grep_callgraph_cluster",
     "zvec_grep_callgraph_communities",
     "zvec_grep_callgraph_shortest_path",
+    "zvec_grep_codegraph_capabilities",
     "zvec_grep_codegraph_explain",
     "zvec_grep_codegraph_neighbors",
     "zvec_grep_codegraph_node",
@@ -745,6 +747,31 @@ impl ZvecGrepMcpServer {
             .clustering()
             .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
         Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_capabilities",
+        description = "Report the languages present in a live checkout and the root-specific status of each codegraph relation. This is the capability surface for project-aware relation support; codegraph tools remain statically discoverable rather than being hidden by language.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphCapabilities>(),
+        annotations(
+            title = "Inspect codegraph capabilities",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_capabilities(
+        &self,
+        Parameters(input): Parameters<RootInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        Ok(structured_result(index.capabilities()))
     }
 
     #[tool(
@@ -3255,6 +3282,49 @@ mod tests {
                 .expect("second workspace remains isolated")
                 .callers_by_depth
                 .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn codegraph_capabilities_are_root_scoped_and_report_reserved_relations() {
+        let workspace = tempdir().expect("workspace");
+        fs::write(
+            workspace.path().join("main.go"),
+            "package main\n\nfunc main() {}\n",
+        )
+        .expect("Go source");
+        fs::write(workspace.path().join("lib.rs"), "pub fn helper() {}\n").expect("Rust source");
+        let server =
+            ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
+
+        let result = server
+            .zvec_grep_codegraph_capabilities(super::Parameters(super::RootInput {
+                root: workspace.path().display().to_string(),
+            }))
+            .await
+            .expect("capabilities tool call");
+        let structured = result.structured_content.expect("structured capabilities");
+        assert_eq!(
+            structured["project_languages"],
+            serde_json::json!(["go", "rust"])
+        );
+        assert_eq!(
+            structured["relation_capabilities"]
+                .as_array()
+                .expect("relation capabilities")
+                .iter()
+                .find(|capability| capability["relation"] == "implements")
+                .expect("implements capability")["status"],
+            "supported"
+        );
+        assert_eq!(
+            structured["relation_capabilities"]
+                .as_array()
+                .expect("relation capabilities")
+                .iter()
+                .find(|capability| capability["relation"] == "overrides")
+                .expect("overrides capability")["status"],
+            "reserved"
         );
     }
 
