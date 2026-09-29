@@ -506,7 +506,9 @@ impl<'source> LanguageCollector<'source> {
             self.imports.insert(import);
         }
         if let Some(call) = language_call_site(node, self.source, self.language) {
-            if let Some(source_id) = test_owner_id(&self.scopes, self.language, self.path) {
+            if let Some(source_id) =
+                test_owner_id(node, &self.scopes, self.language, self.path, self.source)
+            {
                 self.relations.push(StructuralRelation {
                     kind: "tests".to_owned(),
                     source: source_id,
@@ -4473,16 +4475,18 @@ fn language_scope(
 }
 
 fn test_owner_id(
+    node: Node<'_>,
     scopes: &[(String, bool)],
-    _language: SourceLanguage,
+    language: SourceLanguage,
     path: &str,
+    source: &[u8],
 ) -> Option<String> {
     let owner = scopes
         .iter()
         .enumerate()
         .rev()
         .find(|(_, (_, class_like))| !*class_like)?;
-    if !is_test_name(&owner.1.0) {
+    if !is_test_name(&owner.1.0) && !rust_test_attribute(node, language, source) {
         return None;
     }
     let owner_index = owner.0;
@@ -4500,6 +4504,22 @@ fn test_owner_id(
         "function"
     };
     Some(symbol_node_id(kind, path, &qualified_name))
+}
+
+fn rust_test_attribute(node: Node<'_>, language: SourceLanguage, source: &[u8]) -> bool {
+    if language != SourceLanguage::Rust {
+        return false;
+    }
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        if parent.kind() == "function_item" {
+            return std::str::from_utf8(&source[..parent.start_byte()])
+                .ok()
+                .is_some_and(|prefix| prefix.trim_end().ends_with("#[test]"));
+        }
+        current = parent;
+    }
+    false
 }
 
 fn is_test_name(name: &str) -> bool {
