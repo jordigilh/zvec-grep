@@ -61,6 +61,8 @@ possible ambiguous targets are excluded unless `includePossible` is requested.
 The capabilities result reports `supported`, `unsupported`, or `reserved` for
 each relation at the selected root. MCP discovery remains static; tools are not
 hidden based on the languages found in one project.
+`depends_on` is supported only when an explicit package manifest declares the
+dependency; it is not inferred from source import names.
 When semantic discovery is selected because no sufficient exact anchor is
 available and the user asks whether conceptually related material exists
 locally, agents make at most one focused search probe and stop when its results

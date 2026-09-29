@@ -36,7 +36,7 @@ pub const CODEGRAPH_RELATION_VERSION: u32 = 1;
 /// This is intentionally separate from the artifact schema version so future
 /// relation-extractor changes can require regeneration without changing the
 /// relation vocabulary itself.
-pub const CODEGRAPH_RELATION_GENERATION: u32 = 1;
+pub const CODEGRAPH_RELATION_GENERATION: u32 = 2;
 pub const GO_CALLFACTS_SCHEMA: &str = "zvec-grep.go-callfacts";
 pub const GO_CALLFACTS_VERSION: u32 = 2;
 pub const GO_CALLFACTS_FILE: &str = "go-callfacts-v2.json";
@@ -463,6 +463,15 @@ struct ParsedFile {
     relations: Vec<StructuralRelation>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PackageManifest {
+    path: String,
+    sha256: String,
+    ecosystem: String,
+    name: Option<String>,
+    dependencies: Vec<String>,
+}
+
 #[derive(Clone, Debug)]
 struct Definition {
     node: CodeGraphNode,
@@ -578,7 +587,8 @@ pub fn build_codegraph(root: &Path) -> CodeGraphResult<CodeGraphArtifact> {
         .iter()
         .map(|path| parse_file(&root, path))
         .collect::<CodeGraphResult<Vec<_>>>()?;
-    let mut artifact = build_artifact(&parsed);
+    let package_manifests = collect_package_manifests(&root)?;
+    let mut artifact = build_artifact(&parsed, &package_manifests);
     apply_semantic_callfacts(&root, &mut artifact)?;
     Ok(artifact)
 }
@@ -599,7 +609,13 @@ pub fn build_go_codegraph(root: &Path) -> CodeGraphResult<CodeGraphArtifact> {
         .iter()
         .map(|path| parse_file(&root, path))
         .collect::<CodeGraphResult<Vec<_>>>()?;
-    let mut artifact = build_artifact(&parsed);
+    let package_manifests = collect_package_manifests(&root)?;
+    let package_manifests = package_manifests
+        .iter()
+        .filter(|manifest| manifest.ecosystem == "go")
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut artifact = build_artifact(&parsed, &package_manifests);
     apply_semantic_callfacts(&root, &mut artifact)?;
     Ok(artifact)
 }
@@ -655,7 +671,10 @@ pub fn update_codegraph(
         }
         parsed.push(parse_file(&root, &canonical)?);
     }
-    let changed_artifact = build_artifact(&parsed);
+    // The changed artifact contains only source-derived nodes. Manifest-derived
+    // package nodes and edges are retained from the base graph; refresh performs
+    // a full rebuild when a manifest input changes.
+    let changed_artifact = build_artifact(&parsed, &[]);
     let mut artifact = merge_codegraph_delta(base, &changed_paths, changed_artifact);
     apply_semantic_callfacts(&root, &mut artifact)?;
     Ok(artifact)
@@ -740,12 +759,17 @@ fn merge_codegraph_delta(
     resolve_call_edges(&mut edges, &nodes);
     resolve_relation_edges(&mut edges, &nodes);
 
-    let imported_packages = edges
+    let referenced_packages = edges
         .iter()
-        .filter(|edge| edge.kind == "imports")
-        .filter_map(|edge| edge.target.as_deref())
+        .filter(|edge| matches!(edge.kind.as_str(), "imports" | "depends_on"))
+        .flat_map(|edge| [Some(edge.source.as_str()), edge.target.as_deref()])
+        .flatten()
         .collect::<BTreeSet<_>>();
-    nodes.retain(|node| node.kind != "package" || imported_packages.contains(node.id.as_str()));
+    nodes.retain(|node| {
+        node.kind != "package"
+            || node.path.is_some()
+            || referenced_packages.contains(node.id.as_str())
+    });
     let valid_node_ids = nodes
         .iter()
         .map(|node| node.id.as_str())
@@ -823,13 +847,16 @@ fn normalize_change_path(path: &Path) -> CodeGraphResult<String> {
     Ok(normalized)
 }
 
-fn build_artifact(parsed: &[ParsedFile]) -> CodeGraphArtifact {
+fn build_artifact(
+    parsed: &[ParsedFile],
+    package_manifests: &[PackageManifest],
+) -> CodeGraphArtifact {
     let files = parsed
         .iter()
         .map(|file| file.file.clone())
         .collect::<Vec<_>>();
-    let manifest_key = manifest_key(&files);
-    let (mut nodes, mut edges) = structural_graph(parsed);
+    let manifest_key = package_manifest_key(&files, package_manifests);
+    let (mut nodes, mut edges) = structural_graph(parsed, package_manifests);
     append_call_edges(parsed, &mut edges);
 
     nodes.sort_by(|left, right| left.id.cmp(&right.id));
@@ -852,7 +879,10 @@ fn build_artifact(parsed: &[ParsedFile]) -> CodeGraphArtifact {
     }
 }
 
-fn structural_graph(parsed: &[ParsedFile]) -> (Vec<CodeGraphNode>, Vec<CodeGraphEdge>) {
+fn structural_graph(
+    parsed: &[ParsedFile],
+    package_manifests: &[PackageManifest],
+) -> (Vec<CodeGraphNode>, Vec<CodeGraphEdge>) {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     let mut package_nodes = BTreeMap::new();
@@ -882,17 +912,7 @@ fn structural_graph(parsed: &[ParsedFile]) -> (Vec<CodeGraphNode>, Vec<CodeGraph
         }
         for import in &file.imports {
             let package_id = package_node_id(import);
-            package_nodes
-                .entry(import.clone())
-                .or_insert_with(|| CodeGraphNode {
-                    id: package_id.clone(),
-                    kind: "package".to_owned(),
-                    path: None,
-                    name: import.clone(),
-                    qualified_name: Some(import.clone()),
-                    range: None,
-                    signature: None,
-                });
+            ensure_package_node(&mut package_nodes, import, None);
             edges.push(CodeGraphEdge {
                 kind: "imports".to_owned(),
                 source: file.file_node_id.clone(),
@@ -917,8 +937,59 @@ fn structural_graph(parsed: &[ParsedFile]) -> (Vec<CodeGraphNode>, Vec<CodeGraph
             });
         }
     }
+
+    let mut seen_dependency_edges = BTreeSet::new();
+    for manifest in package_manifests {
+        let Some(name) = manifest.name.as_deref() else {
+            continue;
+        };
+        let package_id = package_node_id(name);
+        ensure_package_node(&mut package_nodes, name, Some(manifest.path.as_str()));
+        for dependency in &manifest.dependencies {
+            if dependency.is_empty()
+                || dependency == name
+                || !seen_dependency_edges.insert((name.to_owned(), dependency.clone()))
+            {
+                continue;
+            }
+            let dependency_id = package_node_id(dependency);
+            ensure_package_node(&mut package_nodes, dependency, None);
+            edges.push(CodeGraphEdge {
+                kind: "depends_on".to_owned(),
+                source: package_id.clone(),
+                target: Some(dependency_id),
+                target_name: Some(dependency.clone()),
+                resolved: true,
+                ambiguous_candidates: Vec::new(),
+                resolution: Some("manifest".to_owned()),
+                range: None,
+            });
+        }
+    }
     nodes.extend(package_nodes.into_values());
     (nodes, edges)
+}
+
+fn ensure_package_node(
+    package_nodes: &mut BTreeMap<String, CodeGraphNode>,
+    name: &str,
+    path: Option<&str>,
+) {
+    let id = package_node_id(name);
+    let node = package_nodes
+        .entry(name.to_owned())
+        .or_insert_with(|| CodeGraphNode {
+            id,
+            kind: "package".to_owned(),
+            path: None,
+            name: name.to_owned(),
+            qualified_name: Some(name.to_owned()),
+            range: None,
+            signature: None,
+        });
+    if node.path.is_none() {
+        node.path = path.map(str::to_owned);
+    }
 }
 
 fn append_call_edges(parsed: &[ParsedFile], edges: &mut Vec<CodeGraphEdge>) {
@@ -1085,13 +1156,7 @@ fn resolve_relation_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) 
     for edge in edges.iter_mut().filter(|edge| {
         matches!(
             edge.kind.as_str(),
-            "inherits"
-                | "implements"
-                | "overrides"
-                | "mixes_in"
-                | "references"
-                | "tests"
-                | "depends_on"
+            "inherits" | "implements" | "overrides" | "mixes_in" | "references" | "tests"
         )
     }) {
         let Some(target_name) = edge.target_name.as_deref() else {
@@ -1183,6 +1248,7 @@ fn apply_semantic_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> Co
     // Start from parser-derived names so replacing/removing a prior overlay
     // cannot leave semantic edges behind.
     restore_syntax_call_edges(artifact);
+    artifact.manifest_key = package_manifest_key_for_root(root, &artifact.files)?;
     if let Err(error) = try_apply_go_callfacts(root, artifact) {
         // Semantic facts are an optional enhancement. Invalid, unsupported, or
         // internally inconsistent facts must not prevent the syntax graph from
@@ -3239,7 +3305,6 @@ fn python_callfacts_error(path: &Path, reason: String) -> CodeGraphError {
 
 fn restore_syntax_call_edges(artifact: &mut CodeGraphArtifact) {
     resolve_call_edges(&mut artifact.edges, &artifact.nodes);
-    artifact.manifest_key = manifest_key(&artifact.files);
     artifact.go_callfacts_context_sha256 = None;
     artifact.rust_callfacts_context_sha256 = None;
     artifact.typescript_callfacts_context_sha256 = None;
@@ -3247,13 +3312,13 @@ fn restore_syntax_call_edges(artifact: &mut CodeGraphArtifact) {
 }
 
 fn manifest_key_with_callfacts(
-    files: &[CodeGraphFile],
+    base_manifest: String,
     go_digest: Option<&str>,
     rust_digest: Option<&str>,
     typescript_digest: Option<&str>,
     python_digest: Option<&str>,
 ) -> String {
-    let mut manifest = manifest_key(files).into_bytes();
+    let mut manifest = base_manifest.into_bytes();
     if let Some(digest) = go_digest {
         manifest.extend_from_slice(b"\0go-callfacts\0");
         manifest.extend_from_slice(digest.as_bytes());
@@ -3309,14 +3374,22 @@ fn update_callfacts_manifest(root: &Path, artifact: &mut CodeGraphArtifact) -> C
     } else {
         None
     };
+    let base_manifest = package_manifest_key_for_root(root, &artifact.files)?;
     artifact.manifest_key = manifest_key_with_callfacts(
-        &artifact.files,
+        base_manifest,
         go_digest.as_deref(),
         rust_digest.as_deref(),
         typescript_digest.as_deref(),
         python_digest.as_deref(),
     );
     Ok(())
+}
+
+fn package_manifest_key_for_root(root: &Path, files: &[CodeGraphFile]) -> CodeGraphResult<String> {
+    Ok(package_manifest_key(
+        files,
+        &collect_package_manifests(root)?,
+    ))
 }
 
 fn read_callfacts_digest(root: &Path, filename: &str, language: &str) -> CodeGraphResult<String> {
@@ -3464,6 +3537,7 @@ pub fn refresh_codegraph(root: &Path) -> CodeGraphResult<(PathBuf, CodeGraphArti
         let bytes = fs::read(&path).map_err(|error| io_failure("hash source", &path, error))?;
         current.insert(relative_path(&root, &path), sha256_hex(&bytes));
     }
+    let package_manifests = collect_package_manifests(&root)?;
     let current_go_callfacts_digest = current_callfacts_digest(&root, GO_CALLFACTS_FILE, "Go")?;
     let current_rust_callfacts_digest =
         current_callfacts_digest(&root, RUST_CALLFACTS_FILE, "Rust")?;
@@ -3490,26 +3564,25 @@ pub fn refresh_codegraph(root: &Path) -> CodeGraphResult<(PathBuf, CodeGraphArti
             )
             .collect::<Vec<_>>();
         let expected_manifest = manifest_key_with_callfacts(
-            &base.files,
+            package_manifest_key(&base.files, &package_manifests),
             current_go_callfacts_digest.as_deref(),
             current_rust_callfacts_digest.as_deref(),
             current_typescript_callfacts_digest.as_deref(),
             current_python_callfacts_digest.as_deref(),
         );
-        // When a call-facts sidecar exists, revalidate its source and context
-        // inputs even if the source-file manifest is unchanged. Context files
-        // such as Cargo.toml, go.mod, and rust-toolchain.toml are intentionally
-        // not graph files.
-        if changes.is_empty()
-            && current_go_callfacts_digest.is_none()
-            && current_rust_callfacts_digest.is_none()
-            && current_typescript_callfacts_digest.is_none()
-            && current_python_callfacts_digest.is_none()
-            && base.manifest_key == expected_manifest
-        {
+        // Package manifests and call-facts sidecars are not graph files, but
+        // both can change the graph. Their digests are part of the expected
+        // manifest so a context-only change cannot return a stale snapshot.
+        let has_callfacts = current_go_callfacts_digest.is_some()
+            || current_rust_callfacts_digest.is_some()
+            || current_typescript_callfacts_digest.is_some()
+            || current_python_callfacts_digest.is_some();
+        if changes.is_empty() && !has_callfacts && base.manifest_key == expected_manifest {
             return Ok((artifact_path, base));
         }
-        if changes.is_empty() {
+        if base.manifest_key != expected_manifest {
+            build_codegraph(&root)?
+        } else if changes.is_empty() {
             let mut refreshed = base;
             apply_semantic_callfacts(&root, &mut refreshed)?;
             refreshed
@@ -3562,6 +3635,361 @@ fn collect_code_files(root: &Path, output: &mut Vec<PathBuf>) -> CodeGraphResult
         }
     }
     Ok(())
+}
+
+const MAX_PACKAGE_MANIFEST_BYTES: usize = 2_000_000;
+
+fn collect_package_manifests(root: &Path) -> CodeGraphResult<Vec<PackageManifest>> {
+    let mut paths = Vec::new();
+    collect_package_manifest_paths(root, &mut paths)?;
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(&path)
+                .map_err(|error| io_failure("read package manifest", &path, error))?;
+            let ecosystem = package_manifest_ecosystem(&path)
+                .expect("package manifest path was filtered before parsing")
+                .to_owned();
+            let (name, dependencies) = if bytes.len() <= MAX_PACKAGE_MANIFEST_BYTES {
+                parse_package_manifest(&ecosystem, &bytes)
+            } else {
+                (None, Vec::new())
+            };
+            Ok(PackageManifest {
+                path: relative_path(root, &path),
+                sha256: sha256_hex(&bytes),
+                ecosystem,
+                name,
+                dependencies,
+            })
+        })
+        .collect()
+}
+
+fn collect_package_manifest_paths(root: &Path, output: &mut Vec<PathBuf>) -> CodeGraphResult<()> {
+    let entries =
+        fs::read_dir(root).map_err(|error| io_failure("scan package manifests", root, error))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| io_failure("read package manifest directory entry", root, error))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| io_failure("inspect package manifest path", &path, error))?;
+        if file_type.is_dir() {
+            if matches!(
+                entry.file_name().to_str(),
+                Some(
+                    ".git"
+                        | ".zvec-grep"
+                        | "node_modules"
+                        | "target"
+                        | "dist"
+                        | ".venv"
+                        | "venv"
+                        | "__pycache__"
+                )
+            ) {
+                continue;
+            }
+            collect_package_manifest_paths(&path, output)?;
+        } else if file_type.is_file() && package_manifest_ecosystem(&path).is_some() {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn package_manifest_ecosystem(path: &Path) -> Option<&'static str> {
+    match path.file_name()?.to_str()?.to_ascii_lowercase().as_str() {
+        "go.mod" => Some("go"),
+        "cargo.toml" => Some("rust"),
+        "pyproject.toml" => Some("python"),
+        "package.json" => Some("typescript"),
+        _ => None,
+    }
+}
+
+fn parse_package_manifest(ecosystem: &str, bytes: &[u8]) -> (Option<String>, Vec<String>) {
+    let text = String::from_utf8_lossy(bytes);
+    let (name, dependencies) = match ecosystem {
+        "go" => parse_go_manifest(&text),
+        "rust" => parse_cargo_manifest(&text),
+        "python" => parse_pyproject_manifest(&text),
+        "typescript" => parse_package_json_manifest(bytes),
+        _ => (None, Vec::new()),
+    };
+    let dependencies = dependencies
+        .into_iter()
+        .filter(|dependency| !dependency.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    (name.filter(|name| !name.is_empty()), dependencies)
+}
+
+fn parse_go_manifest(text: &str) -> (Option<String>, Vec<String>) {
+    let mut name = None;
+    let mut dependencies = Vec::new();
+    let mut in_require_block = false;
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        if name.is_none()
+            && let Some(module) = line.strip_prefix("module")
+            && module.chars().next().is_some_and(char::is_whitespace)
+            && let Some(module) = module.split_whitespace().next()
+        {
+            name = Some(module.to_owned());
+            continue;
+        }
+        if in_require_block {
+            if line == ")" {
+                in_require_block = false;
+            } else if let Some(dependency) = go_require_name(line) {
+                dependencies.push(dependency);
+            }
+            continue;
+        }
+        if let Some(requirement) = line.strip_prefix("require") {
+            let requirement = requirement.trim_start();
+            if requirement.starts_with('(') {
+                in_require_block = true;
+            } else if let Some(dependency) = go_require_name(requirement) {
+                dependencies.push(dependency);
+            }
+        }
+    }
+    (name, dependencies)
+}
+
+fn go_require_name(line: &str) -> Option<String> {
+    let mut fields = line.split_whitespace();
+    let dependency = fields.next()?;
+    let version = fields.next()?;
+    version.starts_with('v').then(|| dependency.to_owned())
+}
+
+fn parse_cargo_manifest(text: &str) -> (Option<String>, Vec<String>) {
+    let mut name = None;
+    let mut dependencies = Vec::new();
+    let Some(assignments) = toml_assignments(text) else {
+        return (None, Vec::new());
+    };
+    for (section, key, value) in assignments {
+        if section == "package" && key == "name" {
+            name = toml_string_value(&value);
+        }
+        let dependency_section = section == "dependencies"
+            || (section.starts_with("target.") && section.ends_with(".dependencies"));
+        if dependency_section {
+            dependencies.push(key);
+        }
+    }
+    (name, dependencies)
+}
+
+fn parse_pyproject_manifest(text: &str) -> (Option<String>, Vec<String>) {
+    let mut name = None;
+    let mut dependencies = Vec::new();
+    let Some(assignments) = toml_assignments(text) else {
+        return (None, Vec::new());
+    };
+    for (section, key, value) in assignments {
+        match (section.as_str(), key.as_str()) {
+            ("project", "name") => name = toml_string_value(&value),
+            ("project", "dependencies") => dependencies.extend(
+                toml_array_strings(&value)
+                    .into_iter()
+                    .map(|spec| pep508_name(&spec)),
+            ),
+            ("tool.poetry", "name") if name.is_none() => {
+                name = toml_string_value(&value);
+            }
+            ("tool.poetry.dependencies", "python") => {}
+            ("tool.poetry.dependencies", _) => dependencies.push(key),
+            _ => {}
+        }
+    }
+    (name, dependencies)
+}
+
+fn parse_package_json_manifest(bytes: &[u8]) -> (Option<String>, Vec<String>) {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return (None, Vec::new());
+    };
+    let Some(object) = value.as_object() else {
+        return (None, Vec::new());
+    };
+    let name = object
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    let dependencies = object
+        .get("dependencies")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flat_map(|dependencies| dependencies.keys().cloned())
+        .collect();
+    (name, dependencies)
+}
+
+fn toml_assignments(text: &str) -> Option<Vec<(String, String, String)>> {
+    let mut section = String::new();
+    let mut assignments = Vec::new();
+    let mut pending: Option<(String, String, String, i32)> = None;
+
+    for raw_line in text.lines() {
+        let line = strip_toml_comment(raw_line).trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some((pending_section, pending_key, pending_value, depth)) = pending.as_mut() {
+            pending_value.push(' ');
+            pending_value.push_str(line);
+            *depth += toml_bracket_balance(line);
+            if *depth <= 0 {
+                assignments.push((
+                    pending_section.clone(),
+                    pending_key.clone(),
+                    pending_value.clone(),
+                ));
+                pending = None;
+            }
+            continue;
+        }
+        if let Some(header) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
+            if header.starts_with('[') {
+                // Array-of-table headers such as [[bin]] are not dependency
+                // tables. Clear the previous section so following keys cannot
+                // be misclassified as dependencies.
+                section.clear();
+            } else {
+                header.trim().clone_into(&mut section);
+            }
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = toml_key(key);
+        let value = value.trim().to_owned();
+        let depth = toml_bracket_balance(&value);
+        if depth > 0 {
+            pending = Some((section.clone(), key, value, depth));
+        } else {
+            assignments.push((section.clone(), key, value));
+        }
+    }
+    if pending.is_some() {
+        return None;
+    }
+    Some(assignments)
+}
+
+fn strip_toml_comment(line: &str) -> &str {
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match (quote, character) {
+            (Some('"'), '\\') => escaped = true,
+            (Some(current), character) if current == character => quote = None,
+            (None, '"' | '\'') => quote = Some(character),
+            (None, '#') => return &line[..index],
+            _ => {}
+        }
+    }
+    line
+}
+
+fn toml_bracket_balance(value: &str) -> i32 {
+    value
+        .chars()
+        .map(|character| match character {
+            '[' => 1,
+            ']' => -1,
+            _ => 0,
+        })
+        .sum()
+}
+
+fn toml_key(value: &str) -> String {
+    let value = value.trim();
+    if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        value[1..value.len() - 1].to_owned()
+    } else {
+        value.to_owned()
+    }
+}
+
+fn toml_string_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.starts_with('{') || value.starts_with('[') {
+        return None;
+    }
+    if value.starts_with('"') {
+        let end = value.rfind('"')?;
+        let encoded = &value[..=end];
+        return serde_json::from_str(encoded)
+            .ok()
+            .or_else(|| Some(value[1..end].to_owned()));
+    }
+    if value.starts_with('\'') {
+        let end = value.rfind('\'')?;
+        return Some(value[1..end].to_owned());
+    }
+    value.split_whitespace().next().map(str::to_owned)
+}
+
+fn toml_array_strings(value: &str) -> Vec<String> {
+    let mut strings = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for character in value.chars() {
+        if let Some(current_quote) = quote {
+            if escaped {
+                current.push(character);
+                escaped = false;
+            } else if current_quote == '"' && character == '\\' {
+                escaped = true;
+            } else if character == current_quote {
+                strings.push(std::mem::take(&mut current));
+                quote = None;
+            } else {
+                current.push(character);
+            }
+        } else if character == '"' || character == '\'' {
+            quote = Some(character);
+        }
+    }
+    strings
+}
+
+fn pep508_name(spec: &str) -> String {
+    let end = spec
+        .char_indices()
+        .find(|(_, character)| {
+            matches!(
+                character,
+                ' ' | '\t' | '<' | '>' | '=' | '!' | '~' | ';' | '[' | '('
+            )
+        })
+        .map_or(spec.len(), |(index, _)| index);
+    spec[..end].to_owned()
 }
 
 fn collect_go_context_files(root: &Path) -> CodeGraphResult<Vec<GoCallFactsFile>> {
@@ -4868,6 +5296,24 @@ fn manifest_key(files: &[CodeGraphFile]) -> String {
     sha256_hex(&input)
 }
 
+fn package_manifest_key(files: &[CodeGraphFile], manifests: &[PackageManifest]) -> String {
+    let base = manifest_key(files);
+    if manifests.is_empty() {
+        return base;
+    }
+    let mut input = base.into_bytes();
+    for manifest in manifests {
+        input.extend_from_slice(b"\0package-manifest\0");
+        input.extend_from_slice(manifest.ecosystem.as_bytes());
+        input.push(0);
+        input.extend_from_slice(manifest.path.as_bytes());
+        input.push(0);
+        input.extend_from_slice(manifest.sha256.as_bytes());
+        input.push(0);
+    }
+    sha256_hex(&input)
+}
+
 fn file_node_id(path: &str) -> String {
     format!("file:{}", sha256_hex(path.as_bytes()))
 }
@@ -5029,6 +5475,203 @@ mod tests {
                 && edge.target_name.as_deref() == Some("fmt.Println")
                 && !edge.resolved
         }));
+    }
+
+    #[test]
+    fn emits_manifest_backed_dependency_edges_for_all_supported_ecosystems() {
+        let directory = tempdir().expect("workspace");
+        fs::write(
+            directory.path().join("main.go"),
+            "package main\n\nfunc main() {}\n",
+        )
+        .expect("Go source");
+        fs::write(
+            directory.path().join("go.mod"),
+            "module example.com/app\n\nrequire example.com/dep v1.2.3\n",
+        )
+        .expect("go.mod");
+
+        fs::create_dir_all(directory.path().join("rust/src")).expect("Rust source directory");
+        fs::write(
+            directory.path().join("rust/src/lib.rs"),
+            "pub fn run() {}\n",
+        )
+        .expect("Rust source");
+        fs::write(
+            directory.path().join("rust/Cargo.toml"),
+            concat!(
+                "[package]\nname = \"example-rs\"\nversion = \"0.1.0\"\n\n",
+                "[dependencies]\nserde = \"1\"\n\n",
+                "[target.'cfg(unix)'.dependencies]\ntokio = \"1\"\n",
+                "\n[[bin]]\nname = \"example-rs-bin\"\npath = \"src/bin.rs\"\n",
+            ),
+        )
+        .expect("Cargo.toml");
+
+        fs::create_dir_all(directory.path().join("python")).expect("Python source directory");
+        fs::write(
+            directory.path().join("python/app.py"),
+            "def run():\n    pass\n",
+        )
+        .expect("Python source");
+        fs::write(
+            directory.path().join("python/pyproject.toml"),
+            concat!(
+                "[project]\nname = \"example-python\"\nversion = \"0.1.0\"\n",
+                "dependencies = [\"requests>=2\", \"pydantic[dotenv]==2\"]\n",
+            ),
+        )
+        .expect("pyproject.toml");
+
+        fs::create_dir_all(directory.path().join("web")).expect("TypeScript source directory");
+        fs::write(
+            directory.path().join("web/index.ts"),
+            "export function run() {}\n",
+        )
+        .expect("TypeScript source");
+        fs::write(
+            directory.path().join("web/package.json"),
+            concat!(
+                "{\n",
+                "  \"name\": \"example-web\",\n",
+                "  \"dependencies\": {\"react\": \"^19\"}\n",
+                "}\n",
+            ),
+        )
+        .expect("package.json");
+
+        let artifact = build_codegraph(directory.path()).expect("manifest graph");
+        for (package, dependency, manifest_path) in [
+            ("example.com/app", "example.com/dep", "go.mod"),
+            ("example-rs", "serde", "rust/Cargo.toml"),
+            ("example-rs", "tokio", "rust/Cargo.toml"),
+            ("example-python", "requests", "python/pyproject.toml"),
+            ("example-python", "pydantic", "python/pyproject.toml"),
+            ("example-web", "react", "web/package.json"),
+        ] {
+            let source = node_id(&artifact, "package", package);
+            let target = node_id(&artifact, "package", dependency);
+            let edge = artifact
+                .edges
+                .iter()
+                .find(|edge| {
+                    edge.kind == "depends_on"
+                        && edge.source == source
+                        && edge.target.as_deref() == Some(target.as_str())
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing manifest dependency {package} -> {dependency}: {:#?}",
+                        artifact.edges
+                    )
+                });
+            assert!(edge.resolved);
+            assert_eq!(edge.resolution.as_deref(), Some("manifest"));
+            assert_eq!(edge.target_name.as_deref(), Some(dependency));
+            assert_eq!(
+                artifact
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == source)
+                    .and_then(|node| node.path.as_deref()),
+                Some(manifest_path)
+            );
+        }
+
+        assert!(artifact.edges.iter().all(|edge| {
+            edge.kind != "depends_on" || edge.resolution.as_deref() == Some("manifest")
+        }));
+        assert!(!artifact.edges.iter().any(|edge| {
+            edge.kind == "depends_on" && edge.target_name.as_deref() == Some("name")
+        }));
+    }
+
+    #[test]
+    fn refresh_rebuilds_manifest_dependency_edges_when_a_manifest_changes() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("main.go"), "package main\n").expect("Go source");
+        let manifest = directory.path().join("go.mod");
+        fs::write(
+            &manifest,
+            "module example.com/app\n\nrequire example.com/old v1.0.0\n",
+        )
+        .expect("initial go.mod");
+
+        let (_, initial) = refresh_codegraph(directory.path()).expect("initial refresh");
+        assert!(initial.edges.iter().any(|edge| {
+            edge.kind == "depends_on" && edge.target_name.as_deref() == Some("example.com/old")
+        }));
+
+        fs::write(
+            &manifest,
+            "module example.com/app\n\nrequire example.com/new v1.0.0\n",
+        )
+        .expect("updated go.mod");
+        let (_, refreshed) = refresh_codegraph(directory.path()).expect("manifest refresh");
+        assert!(!refreshed.edges.iter().any(|edge| {
+            edge.kind == "depends_on" && edge.target_name.as_deref() == Some("example.com/old")
+        }));
+        assert!(refreshed.edges.iter().any(|edge| {
+            edge.kind == "depends_on" && edge.target_name.as_deref() == Some("example.com/new")
+        }));
+        assert_eq!(
+            refreshed,
+            build_codegraph(directory.path()).expect("full manifest graph")
+        );
+    }
+
+    #[test]
+    fn incremental_source_refresh_preserves_manifest_package_nodes_without_dependencies() {
+        let directory = tempdir().expect("workspace");
+        let source = directory.path().join("main.go");
+        fs::write(&source, "package main\n\nfunc main() {}\n").expect("Go source");
+        fs::write(
+            directory.path().join("go.mod"),
+            "module example.com/app\n\ngo 1.26\n",
+        )
+        .expect("go.mod");
+
+        let base = build_codegraph(directory.path()).expect("base graph");
+        let package_id = node_id(&base, "package", "example.com/app");
+        fs::write(
+            &source,
+            "package main\n\nfunc main() { println(\"updated\") }\n",
+        )
+        .expect("updated Go source");
+        let updated = update_codegraph(
+            &base,
+            directory.path(),
+            &[CodeGraphChange::Upsert("main.go".into())],
+        )
+        .expect("incremental graph");
+
+        assert!(updated.nodes.iter().any(|node| {
+            node.id == package_id
+                && node.kind == "package"
+                && node.path.as_deref() == Some("go.mod")
+        }));
+        assert_eq!(
+            updated,
+            build_codegraph(directory.path()).expect("full graph")
+        );
+    }
+
+    #[test]
+    fn malformed_toml_manifest_does_not_emit_dependency_facts() {
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"broken\"\n[dependencies]\nserde = [\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "python",
+                b"[project]\nname = \"broken\"\ndependencies = [\n",
+            ),
+            (None, Vec::new())
+        );
     }
 
     #[test]

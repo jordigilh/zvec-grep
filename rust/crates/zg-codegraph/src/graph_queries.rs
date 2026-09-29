@@ -95,9 +95,10 @@ impl CodeGraphRelationKind {
             | Self::Calls
             | Self::Inherits
             | Self::References
-            | Self::Tests => &["go", "rust", "typescript", "tsx", "python"],
+            | Self::Tests
+            | Self::DependsOn => &["go", "rust", "typescript", "tsx", "python"],
             Self::Implements => &["rust", "typescript", "tsx"],
-            Self::Overrides | Self::MixesIn | Self::DependsOn => &[],
+            Self::Overrides | Self::MixesIn => &[],
         }
     }
 
@@ -1508,6 +1509,15 @@ mod tests {
                 .expect("overrides capability")
                 .status,
             CodeGraphRelationSupport::Reserved
+        );
+        assert_eq!(
+            capabilities
+                .relation_capabilities
+                .iter()
+                .find(|capability| capability.relation == "depends_on")
+                .expect("depends_on capability")
+                .status,
+            CodeGraphRelationSupport::Supported
         );
         let calls = [CodeGraphRelationKind::Calls];
 
