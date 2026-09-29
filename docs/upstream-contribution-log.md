@@ -823,3 +823,30 @@ Local verification: codegraph unit/integration tests (36), strict Clippy for
 command-scoped `xcrun` clang plus the CLT libc++ include path.
 
 **Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.
+
+## 2026-09-29 — LCL-027: Source-pinned relation qrels and local comparator
+
+The four checked-in relation fixtures now cover local imports, Rust and
+TypeScript/TSX re-exports, TypeScript/TSX parsing, ambiguous duplicate-name
+calls, unresolved negative calls, exact source SHA-256 inputs, topology qrels,
+and generic affected-query qrels. A deterministic `zg-codegraph` integration
+test validates the in-memory graph, persisted v2 artifact, source restoration,
+and full-build versus incremental-update parity for Go, Rust, TypeScript/TSX,
+and Python. The `zg` CLI integration test validates persisted graph-query JSON;
+the MCP transport test validates structured neighbors, relation-path, and
+affected results.
+
+Added the opt-in local runner under
+`tools/codegraph-relations-benchmark/`. It compares Graphify `0.9.71` only on
+the explicit `imports_from`, `re_exports`, `inherits`, and `implements`
+endpoint overlap, while reporting calls, references, tests, embedding,
+container edges, and Graphify granularity differences as unsupported or
+unscored. Graphify remains outside runtime, build, and CI dependencies.
+
+Focused verification passed for the new codegraph, CLI, and MCP qrel tests and
+the local comparator completed on all four fixtures. The comparator observed
+full scored overlap where Graphify supplied compatible endpoints; Rust
+module-item import and re-export granularity remains explicitly outside the
+measured overlap.
+
+**Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.

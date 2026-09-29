@@ -6417,7 +6417,7 @@ mod tests {
         artifact
             .nodes
             .iter()
-            .find(|node| node.name == name && !matches!(node.kind.as_str(), "file" | "package"))
+            .find(|node| node.name == name)
             .map_or_else(
                 || panic!("missing source node {name}"),
                 |node| node.id.clone(),
@@ -6565,7 +6565,9 @@ mod tests {
             let directory = tempdir().expect("workspace");
             fs::write(directory.path().join(filename), source).expect("source");
             let artifact = build_codegraph(directory.path()).expect("graph");
-            assert!(artifact.files.iter().all(|file| file.language == language));
+            assert!(artifact.files.iter().all(|file| {
+                file.language == language || (language == "typescript" && file.language == "tsx")
+            }));
             assert!(artifact.edges.iter().any(|edge| {
                 edge.kind == "imports_from"
                     && edge.resolved
@@ -6827,7 +6829,9 @@ mod tests {
             }
 
             let artifact = build_codegraph(&root).expect("fixture graph");
-            assert!(artifact.files.iter().all(|file| file.language == language));
+            assert!(artifact.files.iter().all(|file| {
+                file.language == language || (language == "typescript" && file.language == "tsx")
+            }));
             for expected in truth.relations {
                 let source = source_node_id(&artifact, &expected.source);
                 let edge = artifact

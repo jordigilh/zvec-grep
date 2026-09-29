@@ -141,6 +141,15 @@ objects; all other programming languages are out of scope.
   queries, CLI/MCP surfaces, and checked-in four-language multi-file fixtures
   for syntax-attested inheritance, implementation, embedding, references, and
   tests.
+- Those fixtures are now source-hash pinned and include local imports,
+  re-exports where the language supports them, absent relations, ambiguous and
+  unresolved calls, topology qrels, and affected-query qrels. Deterministic
+  tests cover the in-memory graph, persisted artifact, CLI JSON, MCP structured
+  JSON, and full-build versus incremental-refresh parity.
+- The optional Graphify comparison runner is local-only. It scores only the
+  explicit `imports_from`, `re_exports`, `inherits`, and `implements` endpoint
+  overlap and reports calls, references, tests, embedding, and granularity
+  mismatches separately.
 
 ### Parity gap to close
 
@@ -154,11 +163,14 @@ objects; all other programming languages are out of scope.
    output with edge provenance.
 4. Add independent multi-file fixtures for all four languages covering imports,
    re-exports/aliases, duplicate names, receiver methods, inheritance and
-   implementation relationships, and stale-context behavior.
+   implementation relationships, and stale-context behavior. **Implemented for
+   structural topology and query qrels; semantic overlay holdouts remain.**
 5. Define a consistent snapshot publication boundary for the structural graph
    and accepted semantic overlays.
 6. Validate incremental update, ignore/selection, cache, and current-source
-   behavior against the code-only comparator.
+   behavior against the code-only comparator. **Source-pinned full versus
+   incremental refresh parity is implemented; ignore/watch/cache comparator
+   coverage remains.**
 
 ### Opportunities to surpass Graphify
 

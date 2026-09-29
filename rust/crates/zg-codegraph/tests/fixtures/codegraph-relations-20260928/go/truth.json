@@ -1,10 +1,87 @@
 {
   "schema": "zvec-grep.codegraph-relations-v2",
   "language": "go",
-  "source_files": ["tests.go", "types.go"],
+  "source_files": [
+    "first/load.go",
+    "imports.go",
+    "internal/helper/helper.go",
+    "second/load.go",
+    "tests.go",
+    "types.go"
+  ],
+  "context_files": ["go.mod"],
+  "source_sha256": {
+    "first/load.go": "885534408d2400c0440c3045023d8edd64eb0416517eeab1983dd6ae810de1ba",
+    "go.mod": "60a43e5d6eb077cf0335acbb8bf8601d483774958e5cd36be0bd0542f579e019",
+    "imports.go": "772df7deec564b761f6d8eb3704f39ef0778009de64c13bab770333f19593cbe",
+    "internal/helper/helper.go": "a7302ddd6e4e80a596cd460f4d333f4e23fcef477925617d9ea3888d24e3bdb9",
+    "second/load.go": "1cddbb8f96a7ab230b35f0689fe0b5c2b642704f09f1c69ce005b6cd2dd83cb4",
+    "tests.go": "cf289f3d938d3a2d4513619307df1dae90a83a0d10cd3021bfb15a7bc377a54b",
+    "types.go": "0619b9a2ee607097065c818fea8ec84d3e0f2248cbb5c2cd0129a21fa0c31610"
+  },
   "relations": [
     {"kind": "embeds", "source": "Child", "target": "Base"},
     {"kind": "references", "source": "Child", "target": "Base"},
-    {"kind": "tests", "source": "TestChild", "target": "helper"}
+    {"kind": "tests", "source": "TestChild", "target": "helper"},
+    {"kind": "imports_from", "source": "imports.go", "target": "example.com/codegraph/internal/helper"},
+    {"kind": "calls", "source": "UsesHelper", "target": "helper.NewBase"}
+  ],
+  "absent_relations": [
+    {"kind": "re_exports", "source": "imports.go", "target": "example.com/codegraph/internal/helper"}
+  ],
+  "call_qrels": [
+    {
+      "caller": "AmbiguousCaller",
+      "target_name": "Load",
+      "resolution": "ambiguous",
+      "candidate_nodes": ["first/load.go::Load", "second/load.go::Load"]
+    },
+    {
+      "caller": "NegativeCaller",
+      "target_name": "Missing",
+      "resolution": "unresolved",
+      "candidate_nodes": []
+    }
+  ],
+  "topology_qrels": {
+    "neighbors": [
+      {
+        "query": "imports.go",
+        "relations": ["imports_from"],
+        "outgoing": [
+          {
+            "node": "internal/helper/helper.go::internal/helper/helper.go",
+            "kind": "imports_from",
+            "target_name": "example.com/codegraph/internal/helper"
+          }
+        ],
+        "incoming": []
+      }
+    ],
+    "paths": [
+      {
+        "source": "imports.go",
+        "target": "internal/helper/helper.go",
+        "relations": ["imports_from"],
+        "path": [
+          "imports.go::imports.go",
+          "internal/helper/helper.go::internal/helper/helper.go"
+        ],
+        "edge_kinds": ["imports_from"],
+        "possible": false
+      }
+    ]
+  },
+  "affected_qrels": [
+    {
+      "query": "internal/helper/helper.go",
+      "depth": 1,
+      "relations": ["imports_from"],
+      "include_possible": false,
+      "definite": [[
+        {"node": "imports.go::imports.go", "kind": "imports_from"}
+      ]],
+      "possible": [[]]
+    }
   ]
 }

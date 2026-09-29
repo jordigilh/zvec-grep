@@ -1,12 +1,100 @@
 {
   "schema": "zvec-grep.codegraph-relations-v2",
   "language": "rust",
-  "source_files": ["tests.rs", "types.rs"],
+  "source_files": [
+    "imports.rs",
+    "src/helper.rs",
+    "src/one.rs",
+    "src/two.rs",
+    "tests.rs",
+    "types.rs"
+  ],
+  "context_files": ["Cargo.toml"],
+  "source_sha256": {
+    "Cargo.toml": "3d5a54f7c97ee196ae4a9df103496f54dfb0a653402c99ca48fc47a1292d13a5",
+    "imports.rs": "2730a72c47671c963d5592a240d595dcf376241df1f23755dc5503d69d998917",
+    "src/helper.rs": "4d94b55dea19bb348bcaf2b0c92cde697cb4b74cfc9686856e013a3069b68fbe",
+    "src/one.rs": "d43fb0c057531a1578825aa660a5cc1b415a10ae8eb1b42994ca7ceda27d6706",
+    "src/two.rs": "d43fb0c057531a1578825aa660a5cc1b415a10ae8eb1b42994ca7ceda27d6706",
+    "tests.rs": "90739ea3146804f112bdfb9ab7aa8665a6c3bfda10f567192edc02c6aefc0d97",
+    "types.rs": "b588fe6500a143a06ef714e8b330fc192e0ff1f934222a933254283b10ccfc94"
+  },
   "relations": [
     {"kind": "inherits", "source": "Child", "target": "Parent"},
     {"kind": "implements", "source": "Impl", "target": "Parent"},
     {"kind": "references", "source": "Wrapper", "target": "Impl"},
     {"kind": "tests", "source": "test_impl", "target": "helper"},
-    {"kind": "tests", "source": "attribute_test", "target": "helper"}
+    {"kind": "tests", "source": "attribute_test", "target": "helper"},
+    {"kind": "imports_from", "source": "imports.rs", "target": "crate::helper::Helper"},
+    {"kind": "re_exports", "source": "imports.rs", "target": "crate::helper::make"},
+    {"kind": "calls", "source": "imported_user", "target": "make"}
+  ],
+  "absent_relations": [
+    {"kind": "re_exports", "source": "imports.rs", "target": "crate::missing"}
+  ],
+  "call_qrels": [
+    {
+      "caller": "ambiguous_call",
+      "target_name": "load",
+      "resolution": "ambiguous",
+      "candidate_nodes": ["src/one.rs::load", "src/two.rs::load"]
+    },
+    {
+      "caller": "negative_call",
+      "target_name": "missing",
+      "resolution": "unresolved",
+      "candidate_nodes": []
+    }
+  ],
+  "topology_qrels": {
+    "neighbors": [
+      {
+        "query": "imports.rs",
+        "relations": ["imports_from", "re_exports"],
+        "outgoing": [
+          {
+            "node": "src/helper.rs::src/helper.rs",
+            "kind": "imports_from",
+            "target_name": "crate::helper::Helper"
+          },
+          {
+            "node": "src/helper.rs::src/helper.rs",
+            "kind": "re_exports",
+            "target_name": "crate::helper::make"
+          }
+        ],
+        "incoming": []
+      }
+    ],
+    "paths": [
+      {
+        "source": "imports.rs",
+        "target": "src/helper.rs",
+        "relations": ["imports_from"],
+        "path": ["imports.rs::imports.rs", "src/helper.rs::src/helper.rs"],
+        "edge_kinds": ["imports_from"],
+        "possible": false
+      },
+      {
+        "source": "imports.rs",
+        "target": "src/helper.rs",
+        "relations": ["re_exports"],
+        "path": ["imports.rs::imports.rs", "src/helper.rs::src/helper.rs"],
+        "edge_kinds": ["re_exports"],
+        "possible": false
+      }
+    ]
+  },
+  "affected_qrels": [
+    {
+      "query": "src/helper.rs",
+      "depth": 1,
+      "relations": ["imports_from", "re_exports"],
+      "include_possible": false,
+      "definite": [[
+        {"node": "imports.rs::imports.rs", "kind": "imports_from"}
+      ]],
+      "possible": [[]]
+    }
   ]
 }

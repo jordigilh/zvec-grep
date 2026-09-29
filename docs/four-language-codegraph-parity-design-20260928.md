@@ -95,8 +95,14 @@ hide the generic query tools based on project language.
 
 Independent multi-file truth fixtures for the supported subset live under
 `rust/crates/zg-codegraph/tests/fixtures/codegraph-relations-20260928/{go,rust,typescript,python}`.
-Each fixture keeps source files and expected relation labels separate from the
-Graphify comparator and is asserted through the structural graph builder.
+Each fixture is source-hash pinned and keeps topology qrels, affected-query
+qrels, absent relations, and ambiguous/unresolved call cases separate from the
+Graphify comparator. The structural builder, persisted artifact, CLI JSON, MCP
+structured JSON, and incremental refresh path are asserted against those
+qrels. The optional local comparator is documented in
+`docs/codegraph-relations-benchmark-20260929.md`; it scores only explicit
+Graphify/zvec endpoint overlaps and reports the rest as unsupported or
+unscored.
 
 ### 3. Explicit package-manifest dependencies
 
@@ -163,7 +169,7 @@ being applied.
 | Capability | Current state | Parity work |
 |---|---|---|
 | Four-language source snapshot | Implemented | Add broader conformance fixtures |
-| Cross-file `defines`/`imports`/`calls` | Implemented structurally; Go semantic path and four-language topology validated | Validate Rust, TypeScript, and Python semantic overlays with multi-file truth |
+| Cross-file `defines`/`imports`/`calls` | Implemented structurally; four-language source-pinned topology and query qrels validated | Validate Rust, TypeScript, and Python semantic overlays with multi-file truth |
 | Definite/possible/unresolved calls | Implemented | Preserve status on every serialized edge and query surface |
 | Blast radius / affected callers | Implemented for functions and methods | Preserve certainty separation and source provenance |
 | Shortest path | Implemented for calls | Generalize to selected relation types |
@@ -173,7 +179,7 @@ being applied.
 | Override/mixin edges | Reserved; not inferred | Add only where syntax/compiler evidence is defensible |
 | References and test relationships | Implemented for source-anchored syntax facts | Add broader annotation/test-framework coverage |
 | Node/neighbor/path/explain/affected inspection | Implemented | Add richer edge provenance and publication guarantees |
-| Incremental refresh | Implemented | Add explicit watch/ignore/cache parity tests |
+| Incremental refresh | Implemented; fixture-level full/incremental parity is checked for all four lanes | Add explicit watch/ignore/cache parity tests |
 | Snapshot publication | Graph and sidecars are separately persisted | Publish a consistent graph/facts generation |
 | Four-language semantic accuracy | Go cross-file evidence; other producers retain opt-in fallback paths | Add independent multi-file benchmarks |
 
@@ -210,13 +216,15 @@ generalized from a small synthetic corpus.
 
 The parity work is complete when the four-language code graph has:
 
-1. independently truth-labeled multi-file fixtures for all four languages;
+1. independently truth-labeled, source-pinned multi-file fixtures for all four languages;
 2. source-anchored implementations of the supported relation vocabulary, with
    reserved relations added only when evidence is defensible;
 3. generic node, neighbor, path, affected, and explanation queries;
 4. deterministic communities and incremental refresh behavior;
 5. one source/context-attested published snapshot; and
 6. a differential report against Graphify plus separate semantic certainty and
-   freshness evidence.
+   freshness evidence; and
+7. deterministic persisted, CLI, MCP, and incremental-refresh qrel coverage
+   that does not require Graphify in CI.
 
 The implementation should remain opt-in until these gates pass.
