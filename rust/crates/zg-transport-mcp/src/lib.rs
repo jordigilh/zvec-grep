@@ -3264,8 +3264,8 @@ mod tests {
     #[test]
     fn agent_server_exposes_search_and_graph_tools_without_admin_tools() {
         let server = ZvecGrepMcpServer::agent_direct(Arc::new(ZvecGrep::new()));
-        let names = server
-            .listed_tools()
+        let listed = server.listed_tools();
+        let names = listed
             .iter()
             .map(|tool| tool.name.as_ref())
             .collect::<Vec<_>>();

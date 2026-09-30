@@ -23,7 +23,6 @@ and implementation details, see the [Rust README](../rust/README.md).
 | See how the components and trust boundaries fit together | [Architecture](./05-architecture.md) |
 <<<<<<< HEAD
 =======
-| Review four-language code-graph parity design | [Codegraph parity design](./four-language-codegraph-parity-design-20260928.md) |
 | Review codegraph publication and structural decisions | [Publication and structural decisions](./codegraph-publication-and-structural-decisions-20260930.md) |
 | Review real-repository codegraph witness qrels | [Real-repository qrels](./codegraph-real-repository-qrels-20260930.md) |
 | Review real-repository semantic call-facts qrels | [Semantic qrels](./codegraph-semantic-real-repository-qrels-20260930.md) |
