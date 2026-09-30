@@ -45,13 +45,13 @@ zstd-compressed form; legacy `.json` artifacts remain readable. It contains:
 - source files and SHA-256 digests;
 - stable file- and symbol-scoped IDs;
 - declaration nodes and source ranges;
-- `defines`, `imports`, `imports_from`, `re_exports`, `calls`, `inherits`,
+- `defines`, `contains`, `imports`, `imports_from`, `re_exports`, `calls`, `inherits`,
   `implements`, Go `embeds`, `references`, and `tests`, and explicit-manifest
   `depends_on` edges; and
 - unresolved, ambiguous, and syntax-derived relation metadata.
 
 The relation vocabulary is versioned independently as
-`zvec-grep.codegraph.relations` v2 and currently admits `defines`, `imports`,
+`zvec-grep.codegraph.relations` v2 and currently admits `defines`, `contains`, `imports`,
 `imports_from`, `re_exports`, `calls`, `inherits`, `implements`, `embeds`,
 `overrides`, `mixes_in`, `references`, `tests`, and `depends_on`. Older local
 v1 snapshots are not a compatibility contract; unknown future relation strings
@@ -76,7 +76,7 @@ evidence-backed language capability matrix is:
 
 | Relation | Structural producer languages | Current status |
 | --- | --- | --- |
-| `defines`, `imports`, `calls`, `inherits`, `references`, `tests` | Go, Rust, TypeScript/TSX, Python | Supported |
+| `defines`, `contains`, `imports`, `calls`, `inherits`, `references`, `tests` | Go, Rust, TypeScript/TSX, Python | Supported; local symbol imports are syntax-backed |
 | `implements` | Rust, TypeScript/TSX | Supported only for projects containing one of these languages |
 | `imports_from` | Go, Rust, TypeScript/TSX, Python | Syntax-backed; local file targets resolve when the module path is supported |
 | `re_exports` | Rust, TypeScript/TSX | Syntax-backed public/module re-exports |
@@ -179,9 +179,9 @@ being applied.
 | Package-manifest `depends_on` edges | Implemented for explicit Go, Rust, Python, and TypeScript/TSX manifests | Add broader manifest-format conformance fixtures |
 | Override/mixin edges | Reserved; not inferred | Add only where syntax/compiler evidence is defensible |
 | References and test relationships | Implemented for source-anchored syntax facts | Add broader annotation/test-framework coverage |
-| Node/neighbor/path/explain/affected inspection | Implemented | Add richer edge provenance and publication guarantees |
-| Incremental refresh | Implemented; fixture-level full/incremental parity is checked for all four lanes | Add explicit watch/ignore/cache parity tests |
-| Snapshot publication | Graph and sidecars are separately persisted | Publish a consistent graph/facts generation |
+| Node/neighbor/path/explain/affected inspection | Implemented | Add richer edge provenance; publication validation is now available |
+| Incremental refresh | Implemented; fixture-level full/incremental parity is checked for all four lanes, including changed target declarations and symbol imports; scanner, watcher, ignore, cache, reconciliation, and current-source lifecycle tests pass | Add comparator-backed lifecycle fixtures if broader differential evidence is required |
+| Snapshot publication | v1 publication manifest records the graph digest and accepted sidecar generation | Adopt publication validation in consumers that require a committed graph/facts snapshot |
 | Four-language semantic accuracy | Go cross-file evidence; other producers retain opt-in fallback paths | Add independent multi-file benchmarks |
 
 ## Opportunities to surpass Graphify

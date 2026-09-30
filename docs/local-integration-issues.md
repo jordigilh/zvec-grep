@@ -145,7 +145,13 @@ objects; all other programming languages are out of scope.
   re-exports where the language supports them, absent relations, ambiguous and
   unresolved calls, topology qrels, and affected-query qrels. Deterministic
   tests cover the in-memory graph, persisted artifact, CLI JSON, MCP structured
-  JSON, and full-build versus incremental-refresh parity.
+  JSON, full-build versus incremental-refresh parity, and normalized community
+  assignments.
+- Source-pinned witness qrels now cover structural relations, calls,
+  references, tests, and same/different community pairs in real praxis-filter,
+  koku-operator, and kubernaut-console checkouts. A local-only validator checks
+  the pinned revisions and source digests without adding external tools to the
+  product.
 - The optional Graphify comparison runner is local-only. It scores only the
   explicit `imports_from`, `re_exports`, `inherits`, and `implements` endpoint
   overlap and reports calls, references, tests, embedding, and granularity
@@ -169,8 +175,9 @@ objects; all other programming languages are out of scope.
    and accepted semantic overlays.
 6. Validate incremental update, ignore/selection, cache, and current-source
    behavior against the code-only comparator. **Source-pinned full versus
-   incremental refresh parity is implemented; ignore/watch/cache comparator
-   coverage remains.**
+   incremental refresh parity is implemented; focused scanner, watcher,
+   ignore, cache, reconciliation, and current-source lifecycle coverage is
+   implemented.**
 
 ### Opportunities to surpass Graphify
 
