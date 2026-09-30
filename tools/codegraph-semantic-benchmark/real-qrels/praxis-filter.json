@@ -1,0 +1,68 @@
+{
+  "schema": "zvec-grep.codegraph-semantic-qrels-v1",
+  "repository": "github.com/praxis-proxy/praxis",
+  "revision": "932098a3baa8ee267504c71abc481963aa60694b",
+  "scope": ".",
+  "language": "rust",
+  "producer": {
+    "schema": "zvec-grep.rust-callfacts",
+    "version": 1,
+    "sidecar_sha256": "b6212639315ee998a0d49e850919ba3ccb3f83555f51caee80e6d7e25bcad947",
+    "context_sha256": "45b5a276433faccfeed79213f822c9d3d07613570dfa976875fabfbdd8a00d60",
+    "context": {
+      "rustc_version": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+      "host": "aarch64-apple-darwin",
+      "target": "aarch64-apple-darwin",
+      "manifest_path": "crates/filter/Cargo.toml",
+      "edition": "mixed:2015,2018,2021,2024,unknown"
+    }
+  },
+  "source_sha256": {
+    "benchmarks/src/net.rs": "bdf420a6e67fae716b5f182947e3c0cce8b5349bd5425873b9412ba3bebbc6a5",
+    "benchmarks/src/proxy/envoy.rs": "db886ea3214c9501860d333a5eb4321f54b179cc7b22e744182352487775b7dd",
+    "crates/core/src/config/bootstrap.rs": "39376c7f9216ace6ae9dbab58bdac7e6c53eef011b08970d847a59932f884c21",
+    "crates/core/src/config/cluster/mod.rs": "ab5edc0292fa39dfc86b9babebb7d5e76e52d56b4f4e261aac7729df755527cd",
+    "crates/core/src/logging.rs": "0c659748289d83bc3f23b99fd8059f21d3abee8125ce0ca4c669387856649198",
+    "crates/core/src/config/validate/cluster/mod.rs": "a610804710ced629e58263ac6747534c9f3b274c7882f2112bfde58b152b1543",
+    "crates/core/src/config/validate/cluster/application.rs": "ae1cf927c2040cd819d5ebe3d7c493b534b63cf01b36c399eda8857e81db5956"
+  },
+  "calls": [
+    {
+      "path": "crates/core/src/config/bootstrap.rs",
+      "line": 50,
+      "target_name": "load",
+      "caller": {"path": "crates/core/src/config/bootstrap.rs", "line": 49},
+      "expected_class": "static",
+      "target": {"path": "crates/core/src/config/mod.rs", "line": 216}
+    },
+    {
+      "path": "crates/core/src/config/cluster/mod.rs",
+      "line": 227,
+      "target_name": "validate_authority",
+      "caller": {"path": "crates/core/src/config/cluster/mod.rs", "line": 223},
+      "expected_class": "static",
+      "target": {"path": "crates/core/src/config/validate/cluster/mod.rs", "line": 19}
+    },
+    {
+      "path": "benchmarks/src/proxy/envoy.rs",
+      "line": 35,
+      "target_name": "into",
+      "caller": {"path": "benchmarks/src/proxy/envoy.rs", "line": 33},
+      "expected_class": "possible"
+    },
+    {
+      "path": "crates/core/src/logging.rs",
+      "line": 212,
+      "target_name": "function-value",
+      "caller": {"path": "crates/core/src/logging.rs", "line": 206},
+      "expected_class": "function-value"
+    },
+    {
+      "path": "benchmarks/src/net.rs",
+      "line": 108,
+      "target_name": "new",
+      "caller": {"path": "benchmarks/src/net.rs", "line": 107},
+      "expected_class": "external"
+    }
+  ]
+}

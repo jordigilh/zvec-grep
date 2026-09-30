@@ -1,0 +1,65 @@
+{
+  "schema": "zvec-grep.codegraph-semantic-qrels-v1",
+  "repository": "github.com/jordigilh/kubernaut-console",
+  "revision": "a5755470a5588d20b53bf641829a22721a55a2d3",
+  "scope": "packages/ui-core",
+  "language": "typescript",
+  "producer": {
+    "schema": "zvec-grep.typescript-callfacts",
+    "version": 1,
+    "sidecar_sha256": "76ffb5eb52c72b8fa2d80d6ea287299fe34b515d85f1c4d39fbc7a29bf224e75",
+    "context_sha256": "35b842a771476f6b8b8bae2f984e746c0b839c1fcc06fe874fbf843d59163a81",
+    "context": {
+      "typescript_version": "5.9.3",
+      "node_version": "v26.7.0",
+      "project_path": "tsconfig.json",
+      "target": "ES2022",
+      "module": "ESNext",
+      "jsx": "ReactJSX"
+    }
+  },
+  "source_sha256": {
+    "src/components/AgentBubble.tsx": "a5f25cfdd2cb0145a552ac5020bc5822588af4146aac028e047f98f5763126d3",
+    "src/components/ChatContainer.tsx": "b739283208c356f89e2ef33768b0f5be46877c8898350a9075102f3d8e8d383a",
+    "src/lib/approval-dedup.ts": "2dfc1b1880b88be9fbba24ce44f0cd41021c685d2ef9da2906b698547fcb0ec4"
+  },
+  "calls": [
+    {
+      "path": "src/components/AgentBubble.tsx",
+      "line": 168,
+      "target_name": "formatTime",
+      "caller": {"path": "src/components/AgentBubble.tsx", "line": 33},
+      "expected_class": "static",
+      "target": {"path": "src/components/AgentBubble.tsx", "line": 29}
+    },
+    {
+      "path": "src/components/ChatContainer.tsx",
+      "line": 204,
+      "target_name": "findApprovalMessageIndex",
+      "caller": {"path": "src/components/ChatContainer.tsx", "line": 27},
+      "expected_class": "static",
+      "target": {"path": "src/lib/approval-dedup.ts", "line": 37}
+    },
+    {
+      "path": "src/components/AgentBubble.tsx",
+      "line": 149,
+      "target_name": "onApprove",
+      "caller": {"path": "src/components/AgentBubble.tsx", "line": 33},
+      "expected_class": "possible"
+    },
+    {
+      "path": "src/components/ChatContainer.tsx",
+      "line": 275,
+      "target_name": "submitInput",
+      "caller": {"path": "src/components/ChatContainer.tsx", "line": 27},
+      "expected_class": "function-value"
+    },
+    {
+      "path": "src/components/ChatContainer.tsx",
+      "line": 265,
+      "target_name": "requestAnimationFrame",
+      "caller": {"path": "src/components/ChatContainer.tsx", "line": 27},
+      "expected_class": "external"
+    }
+  ]
+}
