@@ -170,7 +170,7 @@ being applied.
 | Capability | Current state | Parity work |
 |---|---|---|
 | Four-language source snapshot | Implemented | Add broader conformance fixtures |
-| Cross-file `defines`/`imports`/`calls` | Implemented structurally; four-language source-pinned topology and query qrels validated | Validate Rust, TypeScript, and Python semantic overlays with multi-file truth |
+| Cross-file `defines`/`imports`/`calls` | Implemented structurally; four-language source-pinned topology/query qrels and bounded real-root semantic qrels validated | Broaden independent semantic qrels and toolchain/context coverage |
 | Definite/possible/unresolved calls | Implemented | Preserve status on every serialized edge and query surface |
 | Blast radius / affected callers | Implemented for functions and methods | Preserve certainty separation and source provenance |
 | Shortest path | Implemented for calls | Generalize to selected relation types |
@@ -180,9 +180,9 @@ being applied.
 | Override/mixin edges | Reserved; not inferred | Add only where syntax/compiler evidence is defensible |
 | References and test relationships | Implemented for source-anchored syntax facts | Add broader annotation/test-framework coverage |
 | Node/neighbor/path/explain/affected inspection | Implemented | Add richer edge provenance; publication validation is now available |
-| Incremental refresh | Implemented; fixture-level full/incremental parity is checked for all four lanes, including changed target declarations and symbol imports; scanner, watcher, ignore, cache, reconciliation, and current-source lifecycle tests pass | Add comparator-backed lifecycle fixtures if broader differential evidence is required |
+| Incremental refresh | Implemented; fixture-level full/incremental parity is checked for all four lanes, including changed target declarations and symbol imports; scanner, watcher, ignore, cache, reconciliation, current-source, and source-pinned lifecycle differential tests pass | Extend transition coverage only when a new lifecycle contract is introduced |
 | Snapshot publication | v1 publication manifest records the graph digest and accepted sidecar generation | Adopt publication validation in consumers that require a committed graph/facts snapshot |
-| Four-language semantic accuracy | Go cross-file evidence; other producers retain opt-in fallback paths | Add independent multi-file benchmarks |
+| Four-language semantic accuracy | Bounded real-root qrels report 1.00 class and exact static-target accuracy for all four opt-in producers; fallback remains conservative | Add broader repositories, toolchains, and language-specific uncertainty qrels before completeness claims |
 
 ## Opportunities to surpass Graphify
 

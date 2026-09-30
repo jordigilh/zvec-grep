@@ -134,8 +134,9 @@ objects; all other programming languages are out of scope.
   and MCP surfaces already exist.
 - Independent opt-in semantic producers exist for all four languages, with
   source/context validation and syntax fallback.
-- Go cross-package semantic blast-radius behavior is validated. Rust,
-  TypeScript, and Python semantic holdouts still need multi-file validation.
+- Go cross-package semantic blast-radius behavior and bounded real-root semantic
+  qrels for Rust, TypeScript/TSX, and Python are validated; all four producer
+  lanes remain opt-in and fallback-safe.
 - The first generic relation-aware follow-up is implemented on top of the v2
   artifact: versioned relation kinds, node/neighbors/relation-path/explain
   queries, CLI/MCP surfaces, and checked-in four-language multi-file fixtures
@@ -170,14 +171,14 @@ objects; all other programming languages are out of scope.
 4. Add independent multi-file fixtures for all four languages covering imports,
    re-exports/aliases, duplicate names, receiver methods, inheritance and
    implementation relationships, and stale-context behavior. **Implemented for
-   structural topology and query qrels; semantic overlay holdouts remain.**
+   structural topology/query qrels and bounded real-root semantic qrels.**
 5. Define a consistent snapshot publication boundary for the structural graph
-   and accepted semantic overlays.
+   and accepted semantic overlays. **Implemented with the v1 publication
+   manifest and validation contract.**
 6. Validate incremental update, ignore/selection, cache, and current-source
    behavior against the code-only comparator. **Source-pinned full versus
-   incremental refresh parity is implemented; focused scanner, watcher,
-   ignore, cache, reconciliation, and current-source lifecycle coverage is
-   implemented.**
+   incremental refresh parity and the add/modify/delete/rename/ignore/cache/
+   reconciliation/publication lifecycle differential fixture are implemented.**
 
 ### Opportunities to surpass Graphify
 

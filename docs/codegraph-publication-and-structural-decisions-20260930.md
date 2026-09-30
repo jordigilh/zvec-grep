@@ -53,11 +53,11 @@ is independent truth data for a proposed expansion.
    corpus rather than changing graph semantics to match an unscored summary.
 7. **Lifecycle work is test expansion, not a refresh rewrite.** Current-source
    refresh, source stamps, ignore handling, and full/incremental parity remain
-   the implementation baseline. Scanner, watcher, cache, reconciliation, and
-   current-source lifecycle contracts are now covered by focused tests; broader
-   comparator fixtures can be added without changing refresh semantics.
+   the implementation baseline. The source-pinned lifecycle fixture covers
+   add/modify/delete/rename/ignore/cache/reconciliation, no-op byte stability,
+   and publication validity without changing refresh semantics.
 
-The next evidence tranche is independent multi-file semantic truth for Rust,
-TypeScript/TSX, and Python, followed by the bounded structural and lifecycle
-fixture expansions above. Large-repository throughput remains isolated in
-issue #25.
+The bounded independent semantic qrels for Go, Rust, TypeScript/TSX, and Python
+and the lifecycle differential fixture are now recorded separately. Broader
+toolchain/context coverage remains evidence work rather than a default-runtime
+claim. Large-repository throughput remains isolated in issue #25.

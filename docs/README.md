@@ -24,6 +24,9 @@ and implementation details, see the [Rust README](../rust/README.md).
 | Review four-language code-graph parity design | [Codegraph parity design](./four-language-codegraph-parity-design-20260928.md) |
 | Review codegraph publication and structural decisions | [Publication and structural decisions](./codegraph-publication-and-structural-decisions-20260930.md) |
 | Review real-repository codegraph witness qrels | [Real-repository qrels](./codegraph-real-repository-qrels-20260930.md) |
+| Review real-repository semantic call-facts qrels | [Semantic qrels](./codegraph-semantic-real-repository-qrels-20260930.md) |
+| Review codegraph lifecycle differential evidence | [Lifecycle evidence](./codegraph-lifecycle-evidence-20260930.md) |
+| Review codegraph upstream handoff | [Upstream readiness](./codegraph-upstream-readiness-20260930.md) |
 | Review large-repository codegraph profile | [Scale performance profile](./codegraph-scale-performance-20260930.md) |
 | Choose between Auto, Server, and Direct execution | [Server and execution modes](./06-server.md) |
 | Choose and configure an Embedding model | [Embedding models](./07-embedding.md) |
