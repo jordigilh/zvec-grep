@@ -19,10 +19,13 @@
     "types.py": "5eadd135dbe5e81bbe169db2d0f6404eee6f6a034fac7ea4550b31c478417d53"
   },
   "relations": [
+    {"kind": "contains", "source": "helper.py", "target": "make"},
     {"kind": "inherits", "source": "Child", "target": "Base"},
     {"kind": "references", "source": "typed_helper", "target": "Base"},
     {"kind": "tests", "source": "test_child", "target": "helper"},
     {"kind": "imports_from", "source": "imports.py", "target": ".helper"},
+    {"kind": "imports", "source": "imports.py", "target": "Helper"},
+    {"kind": "imports", "source": "imports.py", "target": "make"},
     {"kind": "references", "source": "imported_user", "target": "Helper"},
     {"kind": "calls", "source": "imported_user", "target": "make"}
   ],
@@ -80,5 +83,17 @@
       ]],
       "possible": [[]]
     }
-  ]
+  ],
+  "community_qrels": {
+    "community_count": 7,
+    "communities": [
+      ["first.py::load"],
+      ["helper.py::make", "imports.py::imported_user"],
+      ["imports.py::ambiguous_call"],
+      ["second.py::load"],
+      ["tests.py::helper", "tests.py::test_child"],
+      ["tests.py::negative_call"],
+      ["tests.py::typed_helper"]
+    ]
+  }
 }

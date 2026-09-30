@@ -26,6 +26,7 @@ struct FixtureTruth {
     call_qrels: Vec<CallQrel>,
     topology_qrels: TopologyQrels,
     affected_qrels: Vec<AffectedQrel>,
+    community_qrels: CommunityQrels,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +76,12 @@ struct PathQrel {
 }
 
 #[derive(Debug, Deserialize)]
+struct CommunityQrels {
+    community_count: usize,
+    communities: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
 struct AffectedQrel {
     query: String,
     depth: usize,
@@ -100,6 +107,7 @@ fn four_language_relation_fixtures_are_source_pinned_and_queryable() {
         let index = CallGraphIndex::new(&initial);
         assert_topology_qrels(&index, &truth);
         assert_affected_qrels(&index, &truth);
+        assert_community_qrels(&index, &truth);
         assert_call_qrels(&initial, &truth);
 
         let (artifact_path, refreshed) =
@@ -364,6 +372,33 @@ fn assert_affected_qrels(index: &CallGraphIndex, truth: &FixtureTruth) {
         assert_eq!(actual.relation_filter, expected.relations);
         assert_affected_levels(&actual.affected_by_depth, &expected.definite);
         assert_affected_levels(&actual.possible_affected_by_depth, &expected.possible);
+    }
+}
+
+fn assert_community_qrels(index: &CallGraphIndex, truth: &FixtureTruth) {
+    let actual = index.clustering().expect("community qrel query");
+    assert_eq!(
+        actual.community_count,
+        truth.community_qrels.community_count
+    );
+    assert_eq!(
+        actual
+            .communities
+            .iter()
+            .map(|community| community.iter().cloned().collect::<BTreeSet<_>>())
+            .collect::<BTreeSet<_>>(),
+        truth
+            .community_qrels
+            .communities
+            .iter()
+            .map(|community| community.iter().cloned().collect::<BTreeSet<_>>())
+            .collect::<BTreeSet<_>>()
+    );
+    for assignment in actual.assignments {
+        assert!(
+            actual.communities[assignment.community_id].contains(&assignment.function),
+            "community assignment must point at its returned community"
+        );
     }
 }
 

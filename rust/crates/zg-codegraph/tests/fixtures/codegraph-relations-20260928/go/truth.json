@@ -20,6 +20,7 @@
     "types.go": "0619b9a2ee607097065c818fea8ec84d3e0f2248cbb5c2cd0129a21fa0c31610"
   },
   "relations": [
+    {"kind": "contains", "source": "types.go", "target": "demo.Child"},
     {"kind": "embeds", "source": "Child", "target": "Base"},
     {"kind": "references", "source": "Child", "target": "Base"},
     {"kind": "tests", "source": "TestChild", "target": "helper"},
@@ -83,5 +84,16 @@
       ]],
       "possible": [[]]
     }
-  ]
+  ],
+  "community_qrels": {
+    "community_count": 6,
+    "communities": [
+      ["first/load.go::Load"],
+      ["imports.go::AmbiguousCaller"],
+      ["imports.go::UsesHelper", "internal/helper/helper.go::NewBase"],
+      ["second/load.go::Load"],
+      ["tests.go::NegativeCaller"],
+      ["tests.go::TestChild", "tests.go::helper"]
+    ]
+  }
 }

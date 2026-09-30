@@ -326,7 +326,7 @@ fn parse_graph_relations(
     for value in values {
         let Some(relation) = zg_engine::codegraph::CodeGraphRelationKind::parse(value) else {
             return Err(format!(
-                "unknown graph relation `{value}`; expected one of defines, imports, calls, inherits, implements, embeds, imports_from, re_exports, overrides, mixes_in, references, tests, depends_on"
+                "unknown graph relation `{value}`; expected one of defines, contains, imports, calls, inherits, implements, embeds, imports_from, re_exports, overrides, mixes_in, references, tests, depends_on"
             )
             .into());
         };

@@ -20,6 +20,7 @@
     "types.rs": "b588fe6500a143a06ef714e8b330fc192e0ff1f934222a933254283b10ccfc94"
   },
   "relations": [
+    {"kind": "contains", "source": "types.rs", "target": "Wrapper"},
     {"kind": "inherits", "source": "Child", "target": "Parent"},
     {"kind": "implements", "source": "Impl", "target": "Parent"},
     {"kind": "references", "source": "Wrapper", "target": "Impl"},
@@ -27,6 +28,8 @@
     {"kind": "tests", "source": "attribute_test", "target": "helper"},
     {"kind": "imports_from", "source": "imports.rs", "target": "crate::helper::Helper"},
     {"kind": "re_exports", "source": "imports.rs", "target": "crate::helper::make"},
+    {"kind": "imports", "source": "imports.rs", "target": "Helper"},
+    {"kind": "re_exports", "source": "imports.rs", "target": "make"},
     {"kind": "calls", "source": "imported_user", "target": "make"}
   ],
   "absent_relations": [
@@ -61,6 +64,11 @@
             "node": "src/helper.rs::src/helper.rs",
             "kind": "re_exports",
             "target_name": "crate::helper::make"
+          },
+          {
+            "node": "src/helper.rs::make",
+            "kind": "re_exports",
+            "target_name": "make"
           }
         ],
         "incoming": []
@@ -96,5 +104,16 @@
       ]],
       "possible": [[]]
     }
-  ]
+  ],
+  "community_qrels": {
+    "community_count": 6,
+    "communities": [
+      ["imports.rs::ambiguous_call"],
+      ["imports.rs::imported_user", "src/helper.rs::make"],
+      ["src/one.rs::load"],
+      ["src/two.rs::load"],
+      ["tests.rs::attribute_test", "tests.rs::helper", "tests.rs::test_impl"],
+      ["tests.rs::negative_call"]
+    ]
+  }
 }
