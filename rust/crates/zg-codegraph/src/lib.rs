@@ -1810,11 +1810,84 @@ fn resolve_call_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) {
     }
 }
 
+struct RelationCandidateIndex<'a> {
+    names: HashMap<&'a str, Vec<&'a CodeGraphNode>>,
+    qualified_names: HashMap<&'a str, Vec<&'a CodeGraphNode>>,
+    qualified_suffixes: HashMap<&'a str, Vec<&'a CodeGraphNode>>,
+}
+
+impl<'a> RelationCandidateIndex<'a> {
+    fn new(nodes: &'a [CodeGraphNode]) -> Self {
+        let mut names = HashMap::new();
+        let mut qualified_names = HashMap::new();
+        let mut qualified_suffixes = HashMap::new();
+
+        for node in nodes {
+            names
+                .entry(node.name.as_str())
+                .or_insert_with(Vec::new)
+                .push(node);
+            let Some(qualified_name) = node.qualified_name.as_deref() else {
+                continue;
+            };
+            qualified_names
+                .entry(qualified_name)
+                .or_insert_with(Vec::new)
+                .push(node);
+            for (dot, _) in qualified_name.match_indices('.') {
+                let suffix_start = dot + 1;
+                if suffix_start < qualified_name.len() {
+                    qualified_suffixes
+                        .entry(&qualified_name[suffix_start..])
+                        .or_insert_with(Vec::new)
+                        .push(node);
+                }
+            }
+        }
+
+        Self {
+            names,
+            qualified_names,
+            qualified_suffixes,
+        }
+    }
+
+    fn candidate_ids(
+        &self,
+        relation: &str,
+        normalized_name: &str,
+        simple_name: &str,
+    ) -> Vec<String> {
+        let mut matching_nodes = Vec::new();
+        if let Some(nodes) = self.qualified_names.get(normalized_name) {
+            matching_nodes.extend(nodes.iter().copied());
+        }
+        if normalized_name.contains('.')
+            && let Some(nodes) = self.qualified_suffixes.get(normalized_name)
+        {
+            matching_nodes.extend(nodes.iter().copied());
+        }
+        if let Some(nodes) = self.names.get(simple_name) {
+            matching_nodes.extend(nodes.iter().copied());
+        }
+
+        let mut candidates = matching_nodes
+            .into_iter()
+            .filter(|node| relation_target_kind(relation, node.kind.as_str()))
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
+        candidates.sort_unstable();
+        candidates.dedup();
+        candidates
+    }
+}
+
 fn resolve_relation_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) {
     let nodes_by_id = nodes
         .iter()
         .map(|node| (node.id.as_str(), node))
         .collect::<HashMap<_, _>>();
+    let relation_index = RelationCandidateIndex::new(nodes);
 
     for edge in edges.iter_mut().filter(|edge| {
         matches!(
@@ -1845,21 +1918,8 @@ fn resolve_relation_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) 
             .get(edge.source.as_str())
             .and_then(|node| node.path.as_deref());
 
-        let mut candidates = nodes
-            .iter()
-            .filter(|node| relation_target_kind(edge.kind.as_str(), node.kind.as_str()))
-            .filter(|node| {
-                node.qualified_name.as_deref() == Some(normalized_name.as_str())
-                    || (normalized_name.contains('.')
-                        && node.qualified_name.as_deref().is_some_and(|qualified| {
-                            qualified.ends_with(format!(".{normalized_name}").as_str())
-                        }))
-                    || node.name == simple_name
-            })
-            .map(|node| node.id.clone())
-            .collect::<Vec<_>>();
-        candidates.sort();
-        candidates.dedup();
+        let mut candidates =
+            relation_index.candidate_ids(edge.kind.as_str(), &normalized_name, simple_name);
 
         if let Some(source_path) = source_path {
             let same_file = candidates
@@ -8367,6 +8427,54 @@ mod tests {
         assert_eq!(call.target.as_deref(), Some(local_helper.id.as_str()));
         assert!(call.resolved);
         assert!(call.ambiguous_candidates.is_empty());
+    }
+
+    #[test]
+    fn relation_candidate_index_preserves_name_suffix_and_kind_matching() {
+        let nodes = vec![
+            super::CodeGraphNode {
+                id: "z-suffix".to_owned(),
+                kind: "class".to_owned(),
+                path: Some("suffix.ts".to_owned()),
+                name: "Thing".to_owned(),
+                qualified_name: Some("outer.pkg.Thing".to_owned()),
+                range: None,
+                signature: None,
+            },
+            super::CodeGraphNode {
+                id: "a-exact".to_owned(),
+                kind: "class".to_owned(),
+                path: Some("exact.ts".to_owned()),
+                name: "Thing".to_owned(),
+                qualified_name: Some("pkg.Thing".to_owned()),
+                range: None,
+                signature: None,
+            },
+            super::CodeGraphNode {
+                id: "m-function".to_owned(),
+                kind: "function".to_owned(),
+                path: Some("function.ts".to_owned()),
+                name: "Thing".to_owned(),
+                qualified_name: Some("other.Thing".to_owned()),
+                range: None,
+                signature: None,
+            },
+        ];
+        let index = super::RelationCandidateIndex::new(&nodes);
+
+        assert_eq!(
+            index.candidate_ids("references", "pkg.Thing", "Thing"),
+            vec!["a-exact", "m-function", "z-suffix"]
+        );
+        assert_eq!(
+            index.candidate_ids("inherits", "pkg.Thing", "Thing"),
+            vec!["a-exact", "z-suffix"]
+        );
+        assert!(
+            index
+                .candidate_ids("references", "missing.Type", "Type")
+                .is_empty()
+        );
     }
 
     #[test]
