@@ -2,7 +2,7 @@
 
 This review is read-only: it does not rebase the current branch, modify
 `origin/main`, or push any remote. The current branch is
-`spike/codegraph-graphify-followup`, fourteen commits ahead of
+`spike/codegraph-graphify-followup`, sixteen commits ahead of
 `fork/integration/zvec-live-code-intelligence`:
 
 ```text
@@ -16,12 +16,15 @@ ac50fc7 test(codegraph): add source-pinned repository qrels
 3f38d57 docs(codegraph): record lifecycle and benchmark evidence
 2bf2ddd test(codegraph): add real-repository semantic qrels
 12affa7 test(codegraph): add lifecycle differential fixture
+862fde9 docs(codegraph): record validation and upstream slices
 61428c1 perf(codegraph): record current throughput profile
 a29787d perf(codegraph): index relation candidates
 38a6d18 docs(codegraph): record indexed resolver results
+ac15f4f docs(codegraph): update upstream handoff
+0d4d513 docs(codegraph): record helios08 indexed profile
 ```
 
-The branch is also 70 commits ahead of the checked-out `origin/main`, because
+The branch is also 72 commits ahead of the checked-out `origin/main`, because
 the integration branch contains other fork work. A direct rebase would mix
 unrelated history into this review and is intentionally deferred.
 
@@ -38,9 +41,9 @@ they are not an instruction to push them unchanged.
 | semantic holdouts | `6c5664a`, `1153a05` | cross-file Rust/TypeScript/Python truth plus the existing Go evidence row |
 | persistence/parallel extraction | `ab03842` | compressed default artifact, plain JSON compatibility, Rayon parsing/hash paths, benchmark updates |
 | publication boundary | `7ef30d2` | accepted-sidecar manifest, atomic graph/manifest publication, source/context validation, lifecycle fallback |
-| indexed relation resolution | `61428c1`, `a29787d`, `38a6d18` | throughput baseline, TDD-covered candidate indexes, byte-identical graph output, and measured follow-up evidence |
+| indexed relation resolution | `61428c1`, `a29787d`, `38a6d18`, `0d4d513` | throughput baseline, TDD-covered candidate indexes, byte-identical graph output, and same-host follow-up evidence |
 | real-repository structural evidence | `ac50fc7` | revision- and source-digest-pinned witness qrels; no runtime dependency |
-| evidence and handoff docs | `3f38d57` | structural decisions, same-host evidence, issue #25 baseline, and local integration status |
+| evidence and handoff docs | `3f38d57`, `862fde9`, `ac15f4f` | structural decisions, same-host evidence, issue #25 baseline, and local integration status |
 
 The follow-up is split into review units rather than folded into unrelated
 product changes:
