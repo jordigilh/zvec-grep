@@ -62,7 +62,7 @@ case "${command}" in
             --mount "type=bind,src=${source_root},dst=/workspace,readonly" \
             --mount "type=bind,src=${artifact_dir},dst=/artifact" \
             "${extra_mounts[@]}" \
-            "${image}" graph /workspace --output /artifact/codegraph-v2.json "${graph_args[@]}"
+            "${image}" graph /workspace --output /artifact/codegraph-v2.json.zst "${graph_args[@]}"
         ;;
     run)
         source_root="${2:?source root is required}"

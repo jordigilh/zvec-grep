@@ -119,6 +119,30 @@ export async function freePort() {
   return port;
 }
 
+export function isolatedStdioCommand(command, port) {
+  assert.ok(
+    Array.isArray(command) &&
+      command.length >= 3 &&
+      command.every((part) => typeof part === "string"),
+    "MCP stdio command must be a non-empty string array",
+  );
+  assert.ok(
+    Number.isSafeInteger(port) && port > 0 && port <= 65_535,
+    "MCP stdio port must be a valid TCP port",
+  );
+  const args = [...command];
+  const listen = args.indexOf("--listen");
+  if (listen >= 0) {
+    assert.equal(
+      listen + 1 < args.length,
+      true,
+      "--listen requires an address",
+    );
+    args.splice(listen, 2);
+  }
+  return [...args, "--listen", `127.0.0.1:${port}`];
+}
+
 export function nativeCandidate(packageRoot, consumer, metadata) {
   const bin =
     typeof metadata.bin === "string" ? metadata.bin : metadata.bin?.zg;
@@ -333,7 +357,7 @@ async function runRepository({ suite, repo, tasks, candidate, options }) {
     await writeJson(join(output, "installation/install.json"), install);
     const config = await readJson(opencode);
     assert.equal(config.mcp?.zvec_grep?.type, "local");
-    const command = config.mcp.zvec_grep.command;
+    const command = isolatedStdioCommand(config.mcp.zvec_grep.command, port);
     assert.ok(
       Array.isArray(command) &&
         command.length >= 3 &&

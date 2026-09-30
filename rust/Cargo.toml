@@ -28,6 +28,7 @@ hyper-util = { version = "0.1.20", features = ["tokio"] }
 ignore = "0.4.33"
 notify = "8.2.0"
 rmcp = { version = "3.1.4", features = ["macros", "schemars", "server", "transport-streamable-http-server"] }
+rayon = "1.12"
 same-file = "1.0.6"
 schemars = "1"
 serde = { version = "1.0.219", features = ["derive"] }
@@ -52,6 +53,7 @@ tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = "0.23.2"
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
 windows-spawn = "0.1.0"
+zstd = "0.13.3"
 zvec-rust = "=0.7.2"
 zvec-rust-build = "=0.7.2"
 

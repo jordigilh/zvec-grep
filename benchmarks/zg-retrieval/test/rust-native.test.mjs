@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   findSchemaVariant,
+  isolatedStdioCommand,
   isProductPreparationFailure,
   nativeCandidate,
   schemaAllowsType,
@@ -43,6 +44,26 @@ test("the packed Rust npm metadata resolves to a native zg binary", () => {
     () => nativeCandidate(root, "/tmp/candidate", { bin: { zg: "../zg" } }),
     /escapes/,
   );
+});
+
+test("retrieval MCP stdio commands use the repository-isolated server port", () => {
+  const command = ["zg", "--server", "--stdio"];
+  assert.deepEqual(isolatedStdioCommand(command, 8123), [
+    "zg",
+    "--server",
+    "--stdio",
+    "--listen",
+    "127.0.0.1:8123",
+  ]);
+  assert.deepEqual(command, ["zg", "--server", "--stdio"]);
+  assert.deepEqual(
+    isolatedStdioCommand(
+      ["zg", "--server", "--stdio", "--listen", "127.0.0.1:7999"],
+      8123,
+    ),
+    ["zg", "--server", "--stdio", "--listen", "127.0.0.1:8123"],
+  );
+  assert.throws(() => isolatedStdioCommand(command, 0), /valid TCP port/);
 });
 
 test("public Rust status output supplies a stable ready-index audit", () => {

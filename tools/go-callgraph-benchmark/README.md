@@ -29,7 +29,7 @@ does not charge Go compiler startup on every sample:
 
 ```sh
 CXXFLAGS="-isystem $(xcrun --show-sdk-path)/usr/include/c++/v1" \
-  cargo build --manifest-path rust/Cargo.toml -p zg
+  cargo build --release --manifest-path rust/Cargo.toml -p zg
 
 python3 tools/go-callgraph-benchmark/benchmark.py \
   rust/crates/zg-codegraph/tests/fixtures/go-callgraph-large-20260928 \

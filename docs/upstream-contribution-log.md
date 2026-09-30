@@ -824,6 +824,25 @@ command-scoped `xcrun` clang plus the CLT libc++ include path.
 
 **Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.
 
+## 2026-09-30 — LCL-030: SWE-QA20 retrieval-only baseline
+
+Captured the first complete local run of the frozen Rust retrieval-only
+protocol: 20 SWE-QA questions across 11 pinned repositories, three public MCP
+search modes, five repetitions, and 300 successful calls. All modes produced
+20/20 stable Top-10 cases with no product errors. Repository-macro nDCG@10 was
+`0.3527` for `zg-hybrid`, `0.2996` for `zg-fts`, and `0.3254` for `zg-vector`;
+hybrid therefore remains the strongest aggregate arm in this run. Full Hit,
+MRR, output-size, latency, interpretation, and limitations are recorded in
+[`docs/zg-retrieval-only-sweqa20-results-20260930.md`](./zg-retrieval-only-sweqa20-results-20260930.md).
+
+This is a file-localization regression baseline under the frozen protocol, not
+an external semantic-search leaderboard result or an answer-quality evaluation.
+It is separate from the earlier Sense-improvement qevals and from the
+Graphify/codegraph call-edge benchmarks. The protocol quality gate remains
+report-only until a reviewed baseline comparison is established.
+
+**Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.
+
 ## 2026-09-29 — LCL-027: Source-pinned relation qrels and local comparator
 
 The four checked-in relation fixtures now cover local imports, Rust and
@@ -867,5 +886,21 @@ Python, with 1.00 precision in each case. Producer class accuracy was Rust
 intentional conservative structural/interface case. Graphify remained subject
 to false definite promotions or missed possible targets on the same certainty
 qrels.
+
+**Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.
+
+## 2026-09-29 — LCL-029: Compressed graph persistence and parallel parsing
+
+Changed the default codegraph sidecar from the monolithic plain
+`codegraph-v2.json` file to zstd-compressed `codegraph-v2.json.zst` without
+changing the logical v2 artifact schema. CLI graph queries and refreshes read
+both formats; explicit `.json` output remains available for compatibility, and
+legacy default artifacts are migrated after a successful refresh. Full and
+incremental source parsing, plus refresh hashing, now use Rayon parallelism.
+Benchmark runners prefer release binaries while retaining a debug fallback.
+
+Verification passed with the release build, codegraph and CLI/MCP test suites,
+strict codegraph Clippy, and compressed-artifact query smoke coverage. No
+semantic callfacts acceptance behavior was changed.
 
 **Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.

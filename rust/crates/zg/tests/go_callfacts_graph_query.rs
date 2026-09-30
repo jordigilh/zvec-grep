@@ -3,7 +3,8 @@ use std::{collections::BTreeMap, fs, path::Path, process::Command};
 use serde_json::{Value, json};
 use tempfile::tempdir;
 use zg_engine::codegraph::{
-    GO_CALLFACTS_FILE, GO_CALLFACTS_SCHEMA, GO_CALLFACTS_VERSION, GoCallFactsContext,
+    CODEGRAPH_FILE, GO_CALLFACTS_FILE, GO_CALLFACTS_SCHEMA, GO_CALLFACTS_VERSION,
+    GoCallFactsContext, read_codegraph,
 };
 
 fn run_zg(arguments: &[&str]) -> std::process::Output {
@@ -27,10 +28,10 @@ fn cli_graph_query_uses_pinned_go_callfacts_and_falls_back_after_removal() {
         "graph build failed: {}",
         String::from_utf8_lossy(&graph_build.stderr)
     );
-    let artifact = workspace.path().join(".zvec-grep/codegraph-v2.json");
+    let artifact = workspace.path().join(".zvec-grep").join(CODEGRAPH_FILE);
     let artifact_value: Value =
-        serde_json::from_slice(&fs::read(&artifact).expect("graph artifact"))
-            .expect("decode graph artifact");
+        serde_json::to_value(read_codegraph(&artifact).expect("decode graph artifact"))
+            .expect("graph JSON value");
     let semantic_manifest = artifact_value["manifest_key"]
         .as_str()
         .expect("semantic manifest")
@@ -63,8 +64,8 @@ fn cli_graph_query_uses_pinned_go_callfacts_and_falls_back_after_removal() {
         "syntax fallback graph build failed"
     );
     let fallback_artifact: Value =
-        serde_json::from_slice(&fs::read(&artifact).expect("fallback graph artifact"))
-            .expect("decode fallback graph");
+        serde_json::to_value(read_codegraph(&artifact).expect("decode fallback graph"))
+            .expect("fallback graph JSON value");
     assert_ne!(
         fallback_artifact["manifest_key"].as_str(),
         Some(semantic_manifest.as_str())

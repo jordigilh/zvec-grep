@@ -6,7 +6,9 @@ inputs, validates the source hashes from each fixture's `truth.json`, and
 reports relation-level precision/recall.
 
 Graphify is not a zvec runtime, build, or CI dependency. Do not add this runner
-to the normal test suite. Run it manually after building `rust/target/debug/zg`:
+to the normal test suite. Run it manually after building
+`rust/target/release/zg` (the runner falls back to a debug binary when no
+release binary exists):
 
 ```sh
 python3 tools/codegraph-relations-benchmark/benchmark.py \

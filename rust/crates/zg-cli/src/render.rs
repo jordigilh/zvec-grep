@@ -487,7 +487,7 @@ Examples:
   zg --auth status
   zg --server on
   zg --graph
-  zg --graph-query .zvec-grep/codegraph-v2.json blast-radius Reconcile
+  zg --graph-query .zvec-grep/codegraph-v2.json.zst blast-radius Reconcile
   zg --config model set local/potion-code-16m-v2 --device metal
   zg --install
 
@@ -639,9 +639,11 @@ const GRAPH_HELP: &str = r"Usage:
   zg --graph [root] --base <artifact> [--changed <path>]... [--deleted <path>]...
 
 Builds a deterministic structural sidecar for Go, Rust, TypeScript/TSX, and
-Python. The default artifact is
-<root>/.zvec-grep/codegraph-v2.json and includes definitions, imports, and
-lexical call edges. An optional, source- and context-matched Go call-facts
+Python. The default artifact is the zstd-compressed
+<root>/.zvec-grep/codegraph-v2.json.zst and includes definitions, imports, and
+lexical call edges. An explicit --output path ending in .json writes the
+legacy uncompressed form. Existing .json artifacts remain readable. An
+optional, source- and context-matched Go call-facts
 sidecar at <root>/.zvec-grep/go-callfacts-v2.json replaces covered Go call
 edges with go/types-resolved edges; stale or unsupported facts fall back to
 syntax-derived edges. Facts are scoped to their recorded generation context;

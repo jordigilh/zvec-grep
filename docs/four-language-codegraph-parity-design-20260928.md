@@ -39,7 +39,8 @@ dependency.
 
 `zg-codegraph` recursively scans the selected checkout for Go, Rust,
 TypeScript/TSX, and Python source. It persists a versioned
-`.zvec-grep/codegraph-v2.json` artifact containing:
+`.zvec-grep/codegraph-v2.json.zst` artifact. It uses the same JSON schema in
+zstd-compressed form; legacy `.json` artifacts remain readable. It contains:
 
 - source files and SHA-256 digests;
 - stable file- and symbol-scoped IDs;

@@ -204,9 +204,7 @@ fn execute_graph(
 ) -> Result<(), Box<dyn Error>> {
     let started = Instant::now();
     let (path, artifact) = if let Some(base_path) = base {
-        let base_bytes = std::fs::read(base_path)?;
-        let base_artifact: zg_engine::codegraph::CodeGraphArtifact =
-            serde_json::from_slice(&base_bytes)?;
+        let base_artifact = zg_engine::codegraph::read_codegraph(base_path)?;
         let graph_changes = changed
             .iter()
             .cloned()
@@ -239,8 +237,7 @@ fn execute_graph_query(
     artifact_path: &Path,
     action: zg_cli::GraphQueryAction,
 ) -> Result<(), Box<dyn Error>> {
-    let encoded = std::fs::read(artifact_path)?;
-    let artifact: zg_engine::codegraph::CodeGraphArtifact = serde_json::from_slice(&encoded)?;
+    let artifact = zg_engine::codegraph::read_codegraph(artifact_path)?;
     if artifact.schema != zg_engine::codegraph::CODEGRAPH_SCHEMA
         || artifact.version != zg_engine::codegraph::CODEGRAPH_VERSION
     {
