@@ -24,6 +24,49 @@ slower. These ratios are diagnostic only: the tools emit different graph
 shapes and relation sets, so they are not an accuracy or feature-equivalence
 claim.
 
+## Controlled `helios08` rerun after the indexed refactor
+
+The TDD refactor was rerun on the original baseline host using the exact
+preserved input at `/root/kubernaut-go-benchmark/input`: 3,125 Go files and
+926,775 Go source lines. The host was Linux x86_64 with Go
+`1.26.7-X:nodwarf5`, Rust `1.98.0`, and Graphify `0.9.71`. The current debug
+zvec binary was built from commit `a29787d` with the baseline dynamic ONNX
+configuration; its SHA-256 was
+`94b899c0a448e3a10b43437c768c48fab7eda737d53c17b91a23e05448bd62f9`.
+The Go helper SHA-256 remained
+`8afc5fee10f68639dd16dd0f182cae5455e546259ecdc160ed0a9501d8e50027`.
+
+### Plain JSON baseline protocol
+
+| Phase | Median | Min–max | Output shape |
+| --- | ---: | ---: | --- |
+| Graphify code-only extraction | 20.282 s | 19.962–20.329 s | 27,595 nodes / 188,062 edges |
+| zvec syntax-only graph | 55.268 s | 54.563–55.299 s | 29,106 nodes / 564,526 edges |
+| Go call-facts producer | 25.528 s | 25.283–25.773 s | 82,140 facts |
+| zvec semantic graph | 61.365 s | 61.009–61.390 s | 29,106 nodes / 564,526 edges |
+| semantic end-to-end | 86.782 s | 86.672–86.894 s | producer + semantic graph |
+
+Against the prior `helios08` medians, the indexed resolver improved syntax,
+semantic graph, and semantic end-to-end time by 2.10×, 2.00×, and 1.71×.
+The producer phase was unchanged. The larger edge count is expected from the
+current relation-generation implementation; these are throughput comparisons,
+not graph-shape equivalence claims.
+
+### Default compressed protocol
+
+The same host also measured the default zstd artifact and publication manifest
+on three fresh trees:
+
+| Phase | Median | Min–max |
+| --- | ---: | ---: |
+| zvec syntax-only graph | 60.221 s | 59.726–60.475 s |
+| Go call-facts producer | 25.591 s | 25.586–25.594 s |
+| zvec semantic graph | 66.018 s | 65.840–66.066 s |
+| semantic end-to-end | 91.612 s | 91.426–91.657 s |
+
+The compressed artifact was 27,641,631 bytes and contained 29,106 nodes,
+564,526 edges, and 377,668 call edges.
+
 The profile is a baseline for issue #25, not an optimization authorization.
 Correctness, semantic certainty, persistence compatibility, and lifecycle
 behavior remain the release gates; Graphify remains local-only and outside
