@@ -1,0 +1,77 @@
+{
+  "schema": "zvec-grep.codegraph-semantic-qrels-v1",
+  "repository": "github.com/project-koku/koku-service-operator",
+  "revision": "e77bf79d430d87ecdc2921bf5ebdfeb27d9122aa",
+  "scope": ".",
+  "language": "go",
+  "producer": {
+    "schema": "zvec-grep.go-callfacts",
+    "version": 2,
+    "sidecar_sha256": "0d4cd7821439fa07dbcd458b3f5b57b0516249a4f811f5d4ddbda9a24780c02f",
+    "context_sha256": "eade8839e86bb8734b9f8bec8c527ce03b17dd4a17b0ecdc2ebbbafd5b44ba8f",
+    "context": {
+      "go_version": "go1.26.5",
+      "go_mod": "go.mod",
+      "go_work": ""
+    }
+  },
+  "source_sha256": {
+    "api/v1alpha1/costmanagementserviceconfig_types.go": "b712afca92fc6d51fae28b23b8f476b3f5e2347776aa2ece1ec7d2dc9207df23",
+    "api/v1alpha1/costmanagementserviceconfig_webhook.go": "2d35b665084add0d9aba90ed173eae1009e75e441effd0c2c7e45ded03c8db56",
+    "api/v1alpha1/resource_validation.go": "91642144e1943285111c4063197e338de1333554a24b47ce6b6d107e14f19d66",
+    "cmd/main.go": "f0d71b6a1c5b8be022ee32701cca55fcab4a453918c90acf2249b147d521f40f"
+  },
+  "calls": [
+    {
+      "path": "api/v1alpha1/costmanagementserviceconfig_webhook.go",
+      "line": 50,
+      "target_name": "cms.validateCostManagementServiceConfig",
+      "caller": "api/v1alpha1/costmanagementserviceconfig_webhook.go::v1alpha1.CostManagementServiceConfig.ValidateCreate",
+      "expected_class": "static",
+      "target": {
+        "label": "api/v1alpha1/costmanagementserviceconfig_webhook.go::v1alpha1.CostManagementServiceConfig.validateCostManagementServiceConfig"
+      }
+    },
+    {
+      "path": "api/v1alpha1/costmanagementserviceconfig_webhook.go",
+      "line": 73,
+      "target_name": "validateResourceRequirements",
+      "caller": "api/v1alpha1/costmanagementserviceconfig_webhook.go::v1alpha1.CostManagementServiceConfig.validateCostManagementServiceConfig",
+      "expected_class": "static",
+      "target": {
+        "label": "api/v1alpha1/resource_validation.go::v1alpha1.validateResourceRequirements"
+      }
+    },
+    {
+      "path": "api/v1alpha1/costmanagementserviceconfig_types.go",
+      "line": 410,
+      "target_name": "BoolVal",
+      "caller": "api/v1alpha1/costmanagementserviceconfig_types.go::v1alpha1.ROSEnabled",
+      "expected_class": "static",
+      "target": {
+        "label": "api/v1alpha1/costmanagementserviceconfig_types.go::v1alpha1.BoolVal"
+      }
+    },
+    {
+      "path": "api/v1alpha1/costmanagementserviceconfig_types.go",
+      "line": 711,
+      "target_name": "SchemeBuilder.Register",
+      "caller": "api/v1alpha1/costmanagementserviceconfig_types.go::v1alpha1.init",
+      "expected_class": "external"
+    },
+    {
+      "path": "api/v1alpha1/resource_validation.go",
+      "line": 22,
+      "target_name": "string",
+      "caller": "api/v1alpha1/resource_validation.go::v1alpha1.validateResourceRequirements",
+      "expected_class": "unresolved"
+    },
+    {
+      "path": "cmd/main.go",
+      "line": 127,
+      "target_name": "mgr.GetClient",
+      "caller": "cmd/main.go::main.main",
+      "expected_class": "possible"
+    }
+  ]
+}
