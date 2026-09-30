@@ -27,6 +27,7 @@ use crate::{CodeGraphArtifact, CodeGraphEdge, CodeGraphError, CodeGraphNode, Cod
 #[serde(rename_all = "snake_case")]
 pub enum CodeGraphRelationKind {
     Defines,
+    Contains,
     Imports,
     Calls,
     Inherits,
@@ -44,8 +45,9 @@ pub enum CodeGraphRelationKind {
 impl CodeGraphRelationKind {
     pub const VERSION: u32 = 2;
 
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Defines,
+        Self::Contains,
         Self::Imports,
         Self::Calls,
         Self::Inherits,
@@ -64,6 +66,7 @@ impl CodeGraphRelationKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Defines => "defines",
+            Self::Contains => "contains",
             Self::Imports => "imports",
             Self::Calls => "calls",
             Self::Inherits => "inherits",
@@ -83,6 +86,7 @@ impl CodeGraphRelationKind {
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim() {
             "defines" => Some(Self::Defines),
+            "contains" => Some(Self::Contains),
             "imports" => Some(Self::Imports),
             "calls" => Some(Self::Calls),
             "inherits" => Some(Self::Inherits),
@@ -103,6 +107,7 @@ impl CodeGraphRelationKind {
     pub const fn supported_languages(self) -> &'static [&'static str] {
         match self {
             Self::Defines
+            | Self::Contains
             | Self::Imports
             | Self::Calls
             | Self::Inherits
@@ -1315,8 +1320,34 @@ impl CallGraphIndex {
         })
         .run(&graph_data)
         .map_err(|error| error.to_string())?;
-        let membership = (0..self.nodes.len())
+        let raw_membership = (0..self.nodes.len())
             .map(|index| result.partition.community_of(index))
+            .collect::<Vec<_>>();
+        let mut members_by_community = vec![Vec::new(); result.partition.num_communities()];
+        for (index, community) in raw_membership.iter().copied().enumerate() {
+            members_by_community[community].push(index);
+        }
+        let mut community_order = (0..members_by_community.len()).collect::<Vec<_>>();
+        community_order.sort_by(|left, right| {
+            let left_name = members_by_community[*left]
+                .iter()
+                .map(|index| self.display_names[*index].as_str())
+                .min()
+                .unwrap_or_default();
+            let right_name = members_by_community[*right]
+                .iter()
+                .map(|index| self.display_names[*index].as_str())
+                .min()
+                .unwrap_or_default();
+            left_name.cmp(right_name)
+        });
+        let mut normalized_ids = vec![0; community_order.len()];
+        for (normalized, raw) in community_order.into_iter().enumerate() {
+            normalized_ids[raw] = normalized;
+        }
+        let membership = raw_membership
+            .into_iter()
+            .map(|community| normalized_ids[community])
             .collect();
         Ok(ClusterPartition {
             membership,
@@ -1556,6 +1587,12 @@ mod tests {
         let clustering = index.clustering().expect("full clustering");
         assert_eq!(clustering.community_count, 2);
         assert_eq!(clustering.communities.len(), 2);
+        for assignment in &clustering.assignments {
+            assert!(
+                clustering.communities[assignment.community_id].contains(&assignment.function),
+                "assignment must index the returned community"
+            );
+        }
     }
 
     #[test]

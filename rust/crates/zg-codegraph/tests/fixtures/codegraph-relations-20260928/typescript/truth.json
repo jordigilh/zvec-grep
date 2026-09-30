@@ -21,12 +21,16 @@
     "types.ts": "ca795bea803f714532e19620825303cbad9f12259580a2c4f2a12096bfe1127d"
   },
   "relations": [
+    {"kind": "contains", "source": "helper.ts", "target": "make"},
     {"kind": "inherits", "source": "Child", "target": "Base"},
     {"kind": "implements", "source": "Child", "target": "Contract"},
     {"kind": "references", "source": "Child", "target": "Base"},
     {"kind": "tests", "source": "testChild", "target": "helper"},
     {"kind": "imports_from", "source": "imports.ts", "target": "./helper"},
     {"kind": "re_exports", "source": "imports.ts", "target": "./helper"},
+    {"kind": "imports", "source": "imports.ts", "target": "Helper"},
+    {"kind": "imports", "source": "imports.ts", "target": "make"},
+    {"kind": "re_exports", "source": "imports.ts", "target": "make"},
     {"kind": "imports_from", "source": "component.tsx", "target": "./helper"},
     {"kind": "calls", "source": "importedUser", "target": "make"}
   ],
@@ -62,6 +66,11 @@
             "node": "helper.ts::helper.ts",
             "kind": "re_exports",
             "target_name": "./helper"
+          },
+          {
+            "node": "helper.ts::make",
+            "kind": "re_exports",
+            "target_name": "make"
           }
         ],
         "incoming": []
@@ -110,5 +119,17 @@
       ]],
       "possible": [[]]
     }
-  ]
+  ],
+  "community_qrels": {
+    "community_count": 7,
+    "communities": [
+      ["component.tsx::render"],
+      ["first.ts::load"],
+      ["helper.ts::make", "imports.ts::importedUser"],
+      ["imports.ts::ambiguousCall"],
+      ["second.ts::load"],
+      ["tests.ts::helper", "tests.ts::testChild"],
+      ["tests.ts::negativeCall"]
+    ]
+  }
 }

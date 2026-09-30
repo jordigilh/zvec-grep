@@ -2461,7 +2461,7 @@ fn parse_codegraph_relations(
         let Some(relation) = zg_engine::codegraph::CodeGraphRelationKind::parse(value.trim())
         else {
             return Err(format!(
-                "unknown graph relation `{value}`; expected one of defines, imports, calls, inherits, implements, embeds, imports_from, re_exports, overrides, mixes_in, references, tests, depends_on"
+                "unknown graph relation `{value}`; expected one of defines, contains, imports, calls, inherits, implements, embeds, imports_from, re_exports, overrides, mixes_in, references, tests, depends_on"
             ));
         };
         if !relations.contains(&relation) {
