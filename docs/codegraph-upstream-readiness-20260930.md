@@ -1,9 +1,13 @@
 # Codegraph upstream-readiness review (2026-09-30)
 
-This review is read-only: it does not rebase the current branch, modify
-`origin/main`, or push any remote. The current branch is
-`spike/codegraph-graphify-followup`, sixteen commits ahead of
-`fork/integration/zvec-live-code-intelligence`:
+The source validation work was originally completed on
+`spike/codegraph-graphify-followup`. It was then replayed locally, without
+modifying `origin/main` or pushing any remote, onto
+`replay/codegraph-issue-26` from `origin/main` at `c1d2297`. The replay branch
+now ends at `e147ed8` and is 40 commits ahead of that target. The original spike
+remains available as the pre-replay evidence branch.
+
+The source history used for the replay was:
 
 ```text
 07f67d6 feat(codegraph): add topology relations and affected traversal
@@ -24,15 +28,13 @@ ac15f4f docs(codegraph): update upstream handoff
 0d4d513 docs(codegraph): record helios08 indexed profile
 ```
 
-The branch is also 72 commits ahead of the checked-out `origin/main`, because
-the integration branch contains other fork work. A direct rebase would mix
-unrelated history into this review and is intentionally deferred.
+The replay branch intentionally excludes the unrelated fork integration
+history; no direct rebase onto that integration branch was performed.
 
-## Proposed logical replay slices
+## Logical replay slices
 
-Replay or cherry-pick these slices onto a fresh branch based on the maintainer's
-current target branch. The hashes below describe the current local history;
-they are not an instruction to push them unchanged.
+These source hashes describe the pre-replay validation history. They are review
+boundaries, not an instruction to push the hashes unchanged.
 
 | Slice | Current commits | Review boundary |
 | --- | --- | --- |
@@ -53,6 +55,15 @@ product changes:
 3. indexed relation resolver and its throughput evidence;
 4. this upstream-readiness review.
 
+## Replay result
+
+- The logical codegraph slices were replayed onto the refreshed target branch.
+- Target-branch MCP parity expectations were updated for the graph-enabled
+  agent toolset; target-specific lifecycle behavior was retained.
+- Stale fork-only tracking ledgers were omitted; benchmark, qrel, lifecycle,
+  publication, performance, and handoff evidence was retained.
+- No upstream branch or remote was modified.
+
 ## Compatibility and dependency gates
 
 - The default graph remains `.zvec-grep/codegraph-v2.json.zst`; explicit plain
@@ -71,11 +82,12 @@ product changes:
 
 ## Verification at this boundary
 
-The focused codegraph suite passed with 55 tests after the indexed resolver
-test was added, including the lifecycle differential test. The four
-real-repository
-semantic qrel runs passed with class accuracy and exact static-target accuracy
-of 1.00 on each bounded witness set. Full workspace verification passed with
+The focused codegraph suite passed with 55 tests, including the lifecycle
+differential test. The four real-repository semantic qrel runs passed with
+class accuracy and exact static-target accuracy of 1.00 on each bounded
+witness set. On the replay branch, full workspace verification passed with
 `CXXFLAGS="-isystem $(xcrun --show-sdk-path)/usr/include/c++/v1" cargo test
---workspace` (439 passed, 10 ignored), and strict workspace Clippy also passed.
-No upstream PR is opened by this branch.
+--workspace --locked` (452 passed, 11 ignored). Strict workspace Clippy,
+formatting, and diff checks passed. The JavaScript `npm run check` gate also
+passed: lint, formatting, typecheck, coverage, all JS test suites, and package
+validation. No upstream PR is opened and no remote was pushed by this branch.
