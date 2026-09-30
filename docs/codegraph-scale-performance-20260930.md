@@ -89,6 +89,44 @@ to pre-index candidates by relation-compatible kind, simple name, qualified name
 and source path while preserving the existing candidate ordering and resolution
 classes.
 
-No optimization is included in this evidence update. The next change must be
-benchmarked against the lifecycle and real-repository qrels, then rerun through
-the same plain/compressed phase matrix before any throughput claim is revised.
+## TDD indexed-resolver refactor
+
+The hotspot was addressed test-first in commit `a29787d`. A new unit test first
+characterizes exact qualified-name matches, dotted qualified-name suffixes,
+simple-name matches, relation-kind filtering, sorted candidate IDs, and the
+empty-candidate case. The resolver was then changed to build name, qualified
+name, and qualified suffix indexes once per graph build instead of scanning all
+nodes for every relation edge. The existing same-file disambiguation and
+candidate ordering remain unchanged.
+
+The refactor was rerun on the same staged source set with three fresh
+repetitions per phase. Representative plain and compressed graph artifacts
+were byte-identical before and after the refactor: plain SHA-256
+`4f779ce4f8956d409631c027186aee8cf8d1fb4b3fda5d17c8aad8cf21520e0f`; compressed
+SHA-256 `a749cff638f50828d7694860722a56ae569f8d1a84b2d38e6ff0a7f95a23d0b0`.
+The refactored release binary SHA-256 was
+`d9dfec2adb2ab61ae654172d36307465ab9378f9daee4367a999400d21706581`.
+
+| Phase | Refactored median | Min–max |
+| --- | ---: | ---: |
+| zvec syntax-only graph, plain JSON | 4.105 s | 3.926–5.597 s |
+| Go call-facts producer | 16.813 s | 16.103–16.880 s |
+| zvec semantic graph, plain JSON | 5.192 s | 4.746–5.197 s |
+| semantic end-to-end, plain JSON | 21.626 s | 21.300–22.005 s |
+| zvec syntax-only graph, default zstd | 4.308 s | 4.084–4.915 s |
+| zvec semantic graph, default zstd | 5.068 s | 5.057–5.281 s |
+| semantic end-to-end, default zstd | 21.174 s | 21.140–23.718 s |
+
+The graph remained 29,112 nodes / 564,692 edges / 377,790 call edges, and the
+producer emitted 82,187 facts. Relative to the pre-refactor medians above, the
+indexed resolver reduced plain syntax, plain semantic graph, and plain
+end-to-end time by 19.02×, 17.61×, and 5.45×; default syntax, default semantic
+graph, and default end-to-end time improved by 14.32×, 12.52×, and 3.75×.
+The remaining end-to-end floor is dominated by Go sidecar production rather
+than relation resolution.
+
+The post-refactor gates passed: focused `zg-codegraph` tests 42 plus all
+integration lanes, workspace `cargo test` 439 passed / 10 ignored, strict
+workspace Clippy, formatting, and diff checks. A follow-up sample showed the
+hot path move away from `resolve_relation_edges` to Go import resolution and
+call resolution; no semantic or persistence regression was observed.
