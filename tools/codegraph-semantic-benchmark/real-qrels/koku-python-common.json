@@ -27,38 +27,38 @@
       "path": "koku/api/common/deprecate_view.py",
       "line": 72,
       "target_name": "DeprecateEndpoint",
-      "caller": {"path": "koku/api/common/deprecate_view.py", "line": 71},
+      "caller": { "path": "koku/api/common/deprecate_view.py", "line": 71 },
       "expected_class": "static",
-      "target": {"path": "koku/api/common/deprecate_view.py", "line": 27}
+      "target": { "path": "koku/api/common/deprecate_view.py", "line": 27 }
     },
     {
       "path": "koku/api/common/deprecate_view.py",
       "line": 74,
       "target_name": "update_response_headers",
-      "caller": {"path": "koku/api/common/deprecate_view.py", "line": 71},
+      "caller": { "path": "koku/api/common/deprecate_view.py", "line": 71 },
       "expected_class": "static",
-      "target": {"path": "koku/api/common/deprecate_view.py", "line": 49}
+      "target": { "path": "koku/api/common/deprecate_view.py", "line": 49 }
     },
     {
       "path": "koku/api/common/deprecate_view.py",
       "line": 52,
       "target_name": "getattr",
-      "caller": {"path": "koku/api/common/deprecate_view.py", "line": 49},
+      "caller": { "path": "koku/api/common/deprecate_view.py", "line": 49 },
       "expected_class": "external"
     },
     {
       "path": "koku/api/common/exception_handler.py",
       "line": 21,
       "target_name": "_generate_errors_from_list",
-      "caller": {"path": "koku/api/common/exception_handler.py", "line": 11},
+      "caller": { "path": "koku/api/common/exception_handler.py", "line": 11 },
       "expected_class": "static",
-      "target": {"path": "koku/api/common/exception_handler.py", "line": 11}
+      "target": { "path": "koku/api/common/exception_handler.py", "line": 11 }
     },
     {
       "path": "koku/api/common/__init__.py",
       "line": 23,
       "target_name": "items",
-      "caller": {"path": "koku/api/common/__init__.py", "line": 17},
+      "caller": { "path": "koku/api/common/__init__.py", "line": 17 },
       "expected_class": "external"
     }
   ]
