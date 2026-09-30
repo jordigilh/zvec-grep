@@ -1,0 +1,93 @@
+{
+  "schema": "zvec-grep.codegraph-real-qrels-v1",
+  "repository": "project-koku/koku-service-operator",
+  "revision": "e77bf79d430d87ecdc2921bf5ebdfeb27d9122aa",
+  "scope": "operator checkout",
+  "source_sha256": {
+    "internal/controller/discovery.go": "17a5e0b1de3d86aae95a30fcdbbad5ff84e634c55209ccc5ec6029f923fa460f",
+    "internal/controller/discovery_s3.go": "3a67d8ca8f23ca2d8e96aac43f0786594430804c03852ddcdd518409f90f4fbc",
+    "internal/controller/costmanagementserviceconfig_controller.go": "7f702807cc025d96a42a2c494b841cab555fa2ea12c4eab858e455eede3878e1",
+    "api/v1alpha1/costmanagementserviceconfig_types.go": "b712afca92fc6d51fae28b23b8f476b3f5e2347776aa2ece1ec7d2dc9207df23",
+    "internal/controller/core_services_test.go": "712df528a697d66f1d8dfbade689b5cc43c6cedb2525defdec4ba0dff21a3edd",
+    "internal/resources/database.go": "5615e5e077be48be18695c82fbab0c12d14296198d8210284192b7b84937e08a"
+  },
+  "relations": [
+    {
+      "category": "structural",
+      "kind": "contains",
+      "source": "internal/controller/discovery.go::internal/controller/discovery.go",
+      "target": "internal/controller/discovery.go::reconcileDiscovery",
+      "evidence": "discovery.go defines reconcileDiscovery"
+    },
+    {
+      "category": "calls",
+      "kind": "calls",
+      "source": "internal/controller/costmanagementserviceconfig_controller.go::reconcile",
+      "target": "internal/controller/discovery.go::reconcileDiscovery",
+      "target_name": "r.reconcileDiscovery",
+      "evidence": "the controller reconcile pipeline invokes discovery"
+    },
+    {
+      "category": "calls",
+      "kind": "calls",
+      "source": "internal/controller/discovery.go::reconcileDiscovery",
+      "target": "internal/controller/discovery_s3.go::resolveS3",
+      "target_name": "r.resolveS3",
+      "evidence": "discovery invokes S3 resolution"
+    },
+    {
+      "category": "references",
+      "kind": "references",
+      "source": "internal/controller/discovery.go::reconcileDiscovery",
+      "target": "api/v1alpha1/costmanagementserviceconfig_types.go::CostManagementServiceConfig",
+      "target_name": "costv1alpha1.CostManagementServiceConfig",
+      "evidence": "discovery accepts the CostManagementServiceConfig custom resource"
+    },
+    {
+      "category": "tests",
+      "kind": "tests",
+      "source": "internal/controller/core_services_test.go::TestReconcileCoreServices_ROSOn_APINotReady",
+      "target": "internal/controller/costmanagementserviceconfig_controller.go::reconcileCoreServices",
+      "target_name": "r.reconcileCoreServices",
+      "evidence": "the controller test exercises reconcileCoreServices"
+    },
+    {
+      "category": "calls",
+      "kind": "calls",
+      "source": "internal/controller/costmanagementserviceconfig_controller.go::reconcileInfrastructure",
+      "target": "internal/resources/database.go::DatabaseStatefulSet",
+      "target_name": "resources.DatabaseStatefulSet",
+      "evidence": "infrastructure reconciliation constructs the database StatefulSet"
+    },
+    {
+      "category": "references",
+      "kind": "references",
+      "source": "internal/controller/discovery_s3.go::discoverNooBaa",
+      "target": "api/v1alpha1/costmanagementserviceconfig_types.go::DiscoveredS3",
+      "target_name": "costv1alpha1.DiscoveredS3",
+      "evidence": "NooBaa discovery returns the DiscoveredS3 API type"
+    }
+  ],
+  "absent_relations": [
+    {
+      "kind": "re_exports",
+      "source": "internal/controller/discovery.go::internal/controller/discovery.go",
+      "target": "internal/controller/discovery_s3.go::resolveS3",
+      "evidence": "Go package files call one another; discovery.go does not re-export resolveS3"
+    }
+  ],
+  "community_pairs": [
+    {
+      "left": "internal/controller/costmanagementserviceconfig_controller.go::reconcile",
+      "right": "internal/controller/discovery.go::reconcileDiscovery",
+      "expected": "same",
+      "evidence": "discovery is a stage in the controller reconcile pipeline"
+    },
+    {
+      "left": "internal/controller/costmanagementserviceconfig_controller.go::reconcile",
+      "right": "internal/resources/database.go::DatabaseStatefulSet",
+      "expected": "different",
+      "evidence": "controller orchestration and a resource constructor are separate units"
+    }
+  ]
+}
