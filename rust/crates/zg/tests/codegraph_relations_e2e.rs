@@ -7,6 +7,7 @@ use std::{
 
 use serde_json::Value;
 use tempfile::{TempDir, tempdir};
+use zg_engine::codegraph::{CODEGRAPH_FILE, read_codegraph};
 
 const LANGUAGES: [&str; 4] = ["go", "rust", "typescript", "python"];
 
@@ -26,8 +27,8 @@ fn cli_persists_and_answers_four_language_relation_qrels() {
             "{language}: graph build failed: {}",
             String::from_utf8_lossy(&graph.stderr)
         );
-        let artifact_path = workspace.path().join(".zvec-grep/codegraph-v2.json");
-        let artifact = read_json(&artifact_path);
+        let artifact_path = workspace.path().join(".zvec-grep").join(CODEGRAPH_FILE);
+        let artifact = read_graph(&artifact_path);
         assert_eq!(artifact["schema"], "zvec-grep.codegraph");
         assert_eq!(artifact["version"], 2);
         assert!(artifact["relation_generation"].as_u64().unwrap_or_default() > 0);
@@ -91,6 +92,10 @@ fn cli_persists_and_answers_four_language_relation_qrels() {
 
 fn read_json(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).expect("JSON file")).expect("valid JSON")
+}
+
+fn read_graph(path: &Path) -> Value {
+    serde_json::to_value(read_codegraph(path).expect("graph artifact")).expect("graph JSON value")
 }
 
 fn copy_fixture(fixture: &Path, truth: &Value) -> TempDir {

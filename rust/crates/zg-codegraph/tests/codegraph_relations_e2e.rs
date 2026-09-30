@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
 use zg_codegraph::{
     CallGraphIndex, CodeGraphAffected, CodeGraphArtifact, CodeGraphChange, CodeGraphDirection,
-    CodeGraphRelationKind, build_codegraph, refresh_codegraph, update_codegraph,
+    CodeGraphRelationKind, build_codegraph, read_codegraph, refresh_codegraph, update_codegraph,
 };
 
 const LANGUAGES: [&str; 4] = ["go", "rust", "typescript", "python"];
@@ -106,8 +106,7 @@ fn four_language_relation_fixtures_are_source_pinned_and_queryable() {
             refresh_codegraph(workspace.path()).expect("persist fixture graph");
         assert_eq!(refreshed, initial, "{language}: refresh differs from build");
         let persisted: CodeGraphArtifact =
-            serde_json::from_slice(&fs::read(&artifact_path).expect("persisted graph artifact"))
-                .expect("decode persisted graph artifact");
+            read_codegraph(&artifact_path).expect("decode persisted graph artifact");
         assert_eq!(persisted, initial, "{language}: persisted graph differs");
         let persisted_bytes = fs::read(&artifact_path).expect("persisted bytes");
 

@@ -10,6 +10,7 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
+use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -28,7 +29,13 @@ pub use graph_queries::{
 
 pub const CODEGRAPH_SCHEMA: &str = "zvec-grep.codegraph";
 pub const CODEGRAPH_VERSION: u32 = 2;
-pub const CODEGRAPH_FILE: &str = "codegraph-v2.json";
+/// The default compressed codegraph sidecar written beside a workspace.
+pub const CODEGRAPH_FILE: &str = "codegraph-v2.json.zst";
+/// The uncompressed filename retained for backwards-compatible reads and
+/// explicit `--output ...json` callers.
+pub const CODEGRAPH_JSON_FILE: &str = "codegraph-v2.json";
+const CODEGRAPH_COMPRESSION_LEVEL: i32 = 3;
+const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
 pub const CODEGRAPH_RELATION_SCHEMA: &str = "zvec-grep.codegraph.relations";
 pub const CODEGRAPH_RELATION_VERSION: u32 = 2;
 /// Generation of the relation extractor serialized into codegraph artifacts.
@@ -602,10 +609,7 @@ pub fn build_codegraph(root: &Path) -> CodeGraphResult<CodeGraphArtifact> {
     let mut paths = Vec::new();
     collect_code_files(&root, &mut paths)?;
     paths.sort();
-    let parsed = paths
-        .iter()
-        .map(|path| parse_file(&root, path))
-        .collect::<CodeGraphResult<Vec<_>>>()?;
+    let parsed = parse_files(&root, &paths)?;
     let package_manifests = collect_package_manifests(&root)?;
     let mut artifact = build_artifact(&parsed, &package_manifests);
     apply_semantic_callfacts(&root, &mut artifact)?;
@@ -624,10 +628,7 @@ pub fn build_go_codegraph(root: &Path) -> CodeGraphResult<CodeGraphArtifact> {
     collect_code_files(&root, &mut paths)?;
     paths.retain(|path| SourceLanguage::from_path(path) == Some(SourceLanguage::Go));
     paths.sort();
-    let parsed = paths
-        .iter()
-        .map(|path| parse_file(&root, path))
-        .collect::<CodeGraphResult<Vec<_>>>()?;
+    let parsed = parse_files(&root, &paths)?;
     let package_manifests = collect_package_manifests(&root)?;
     let package_manifests = package_manifests
         .iter()
@@ -679,17 +680,20 @@ pub fn update_codegraph(
         }
     }
 
-    let mut parsed = Vec::with_capacity(upsert_paths.len());
-    for relative in upsert_paths {
-        let path = root.join(&relative);
-        let canonical = path
-            .canonicalize()
-            .map_err(|error| io_failure("resolve changed source", &path, error))?;
-        if !canonical.starts_with(&root) || !canonical.is_file() {
-            return Err(CodeGraphError::InvalidChangePath(PathBuf::from(relative)));
-        }
-        parsed.push(parse_file(&root, &canonical)?);
-    }
+    let canonical_paths = upsert_paths
+        .into_iter()
+        .map(|relative| {
+            let path = root.join(&relative);
+            let canonical = path
+                .canonicalize()
+                .map_err(|error| io_failure("resolve changed source", &path, error))?;
+            if !canonical.starts_with(&root) || !canonical.is_file() {
+                return Err(CodeGraphError::InvalidChangePath(PathBuf::from(relative)));
+            }
+            Ok(canonical)
+        })
+        .collect::<CodeGraphResult<Vec<_>>>()?;
+    let parsed = parse_files(&root, &canonical_paths)?;
     // The changed artifact contains only source-derived nodes. Manifest-derived
     // package nodes and edges are retained from the base graph; refresh performs
     // a full rebuild when a manifest input changes.
@@ -3785,6 +3789,18 @@ pub fn write_codegraph(
     write_artifact(root, output, artifact)
 }
 
+/// Reads either the default compressed graph sidecar or a legacy/plain JSON
+/// graph artifact.
+///
+/// # Errors
+///
+/// Returns an error if the artifact cannot be read, decompressed, or decoded.
+pub fn read_codegraph(path: &Path) -> CodeGraphResult<CodeGraphArtifact> {
+    let bytes =
+        fs::read(path).map_err(|error| io_failure("read codegraph artifact", path, error))?;
+    decode_codegraph_bytes(path, &bytes)
+}
+
 /// Writes a Go-only graph for existing callers that need the original scope.
 ///
 /// # Errors
@@ -3845,6 +3861,39 @@ fn current_callfacts_digest(
     }
 }
 
+fn decode_codegraph_bytes(path: &Path, bytes: &[u8]) -> CodeGraphResult<CodeGraphArtifact> {
+    let decoded = if path.extension().is_some_and(|extension| extension == "zst")
+        || bytes.starts_with(&ZSTD_MAGIC)
+    {
+        zstd::stream::decode_all(bytes)
+            .map_err(|error| io_failure("decompress codegraph artifact", path, error))?
+    } else {
+        bytes.to_vec()
+    };
+    Ok(serde_json::from_slice(&decoded)?)
+}
+
+fn read_existing_codegraph(root: &Path) -> CodeGraphResult<Option<(PathBuf, CodeGraphArtifact)>> {
+    for filename in [CODEGRAPH_FILE, CODEGRAPH_JSON_FILE] {
+        let path = root.join(".zvec-grep").join(filename);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(io_failure("read existing codegraph", &path, error)),
+        };
+        let Ok(artifact) = decode_codegraph_bytes(&path, &bytes) else {
+            continue;
+        };
+        if artifact.schema == CODEGRAPH_SCHEMA
+            && artifact.version == CODEGRAPH_VERSION
+            && has_current_relation_generation(&artifact)
+        {
+            return Ok(Some((path, artifact)));
+        }
+    }
+    Ok(None)
+}
+
 /// Refreshes the persisted graph snapshot against all supported source files.
 /// Existing artifacts are updated only for added, changed, or deleted files.
 ///
@@ -3854,29 +3903,23 @@ fn current_callfacts_digest(
 /// be parsed, or the refreshed artifact cannot be persisted.
 pub fn refresh_codegraph(root: &Path) -> CodeGraphResult<(PathBuf, CodeGraphArtifact)> {
     let root = resolve_root(root)?;
-    let artifact_path = root.join(".zvec-grep").join(CODEGRAPH_FILE);
-    let base = match fs::read(&artifact_path) {
-        Ok(bytes) => serde_json::from_slice::<CodeGraphArtifact>(&bytes)
-            .ok()
-            .filter(|artifact| {
-                artifact.schema == CODEGRAPH_SCHEMA
-                    && artifact.version == CODEGRAPH_VERSION
-                    && has_current_relation_generation(artifact)
-            }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(io_failure("read existing codegraph", &artifact_path, error));
-        }
-    };
+    let existing = read_existing_codegraph(&root)?;
+    let existing_path = existing.as_ref().map(|(path, _)| path.clone());
+    let base = existing.map(|(_, artifact)| artifact);
+    let default_artifact_path = root.join(".zvec-grep").join(CODEGRAPH_FILE);
 
     let mut paths = Vec::new();
     collect_code_files(&root, &mut paths)?;
     paths.sort();
-    let mut current = BTreeMap::new();
-    for path in paths {
-        let bytes = fs::read(&path).map_err(|error| io_failure("hash source", &path, error))?;
-        current.insert(relative_path(&root, &path), sha256_hex(&bytes));
-    }
+    let current = paths
+        .par_iter()
+        .map(|path| {
+            let bytes = fs::read(path).map_err(|error| io_failure("hash source", path, error))?;
+            Ok((relative_path(&root, path), sha256_hex(&bytes)))
+        })
+        .collect::<CodeGraphResult<Vec<_>>>()?
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
     let package_manifests = collect_package_manifests(&root)?;
     let current_go_callfacts_digest = current_callfacts_digest(&root, GO_CALLFACTS_FILE, "Go")?;
     let current_rust_callfacts_digest =
@@ -3917,8 +3960,12 @@ pub fn refresh_codegraph(root: &Path) -> CodeGraphResult<(PathBuf, CodeGraphArti
             || current_rust_callfacts_digest.is_some()
             || current_typescript_callfacts_digest.is_some()
             || current_python_callfacts_digest.is_some();
-        if changes.is_empty() && !has_callfacts && base.manifest_key == expected_manifest {
-            return Ok((artifact_path, base));
+        if changes.is_empty()
+            && !has_callfacts
+            && base.manifest_key == expected_manifest
+            && existing_path.as_deref() == Some(default_artifact_path.as_path())
+        {
+            return Ok((default_artifact_path, base));
         }
         if base.manifest_key != expected_manifest {
             build_codegraph(&root)?
@@ -3932,7 +3979,7 @@ pub fn refresh_codegraph(root: &Path) -> CodeGraphResult<(PathBuf, CodeGraphArti
     } else {
         build_codegraph(&root)?
     };
-    write_artifact(&root, Some(&artifact_path), artifact)
+    write_artifact(&root, None, artifact)
 }
 
 fn write_artifact(
@@ -3940,6 +3987,7 @@ fn write_artifact(
     output: Option<&Path>,
     artifact: CodeGraphArtifact,
 ) -> CodeGraphResult<(PathBuf, CodeGraphArtifact)> {
+    let use_default_output = output.is_none();
     let output = output.map_or_else(
         || root.join(".zvec-grep").join(CODEGRAPH_FILE),
         Path::to_path_buf,
@@ -3949,8 +3997,25 @@ fn write_artifact(
             .map_err(|error| io_failure("create codegraph output directory", parent, error))?;
     }
     let encoded = serde_json::to_vec(&artifact)?;
+    let encoded = if output
+        .extension()
+        .is_some_and(|extension| extension == "zst")
+    {
+        zstd::stream::encode_all(encoded.as_slice(), CODEGRAPH_COMPRESSION_LEVEL)
+            .map_err(|error| io_failure("compress codegraph artifact", &output, error))?
+    } else {
+        encoded
+    };
     fs::write(&output, encoded)
         .map_err(|error| io_failure("write codegraph artifact", &output, error))?;
+    if use_default_output {
+        let legacy = root.join(".zvec-grep").join(CODEGRAPH_JSON_FILE);
+        match fs::remove_file(&legacy) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_failure("remove legacy codegraph", &legacy, error)),
+        }
+    }
     Ok((output, artifact))
 }
 
@@ -4828,6 +4893,13 @@ fn insert_callfacts_stamp(
         source_stamp(&metadata, Some(sha256_hex(&bytes))),
     );
     Ok(())
+}
+
+fn parse_files(root: &Path, paths: &[PathBuf]) -> CodeGraphResult<Vec<ParsedFile>> {
+    paths
+        .par_iter()
+        .map(|path| parse_file(root, path))
+        .collect()
 }
 
 fn parse_file(root: &Path, path: &Path) -> CodeGraphResult<ParsedFile> {
@@ -5949,8 +6021,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        CODEGRAPH_RELATION_GENERATION, CodeGraphChange, build_codegraph, build_go_codegraph,
-        refresh_codegraph, update_codegraph, update_go_codegraph, write_go_codegraph,
+        CODEGRAPH_FILE, CODEGRAPH_JSON_FILE, CODEGRAPH_RELATION_GENERATION, CodeGraphChange,
+        build_codegraph, build_go_codegraph, read_codegraph, refresh_codegraph, update_codegraph,
+        update_go_codegraph, write_go_codegraph,
     };
 
     #[test]
@@ -7053,7 +7126,8 @@ mod tests {
                 .path()
                 .canonicalize()
                 .expect("canonical workspace")
-                .join(".zvec-grep/codegraph-v2.json")
+                .join(".zvec-grep")
+                .join(CODEGRAPH_FILE)
         );
         assert_ne!(base.manifest_key, refreshed.manifest_key);
         assert!(
@@ -7104,9 +7178,14 @@ mod tests {
             let mut stale = fresh.clone();
             stale.relation_generation = marker;
             stale.edges.retain(|edge| edge.kind != "inherits");
-            let artifact_path = directory.path().join(".zvec-grep/codegraph-v2.json");
+            let artifact_path = directory.path().join(".zvec-grep").join(CODEGRAPH_FILE);
+            fs::remove_file(&artifact_path).expect("remove fresh compressed artifact");
+            let legacy_artifact_path = directory
+                .path()
+                .join(".zvec-grep")
+                .join(CODEGRAPH_JSON_FILE);
             fs::write(
-                &artifact_path,
+                &legacy_artifact_path,
                 serde_json::to_vec(&stale).expect("stale artifact JSON"),
             )
             .expect("write stale artifact");
@@ -7116,6 +7195,7 @@ mod tests {
             assert_eq!(refreshed, expected);
             assert_eq!(refreshed.relation_generation, CODEGRAPH_RELATION_GENERATION);
             assert!(refreshed.edges.iter().any(|edge| edge.kind == "inherits"));
+            assert!(!legacy_artifact_path.exists());
 
             let updated =
                 update_codegraph(&stale, directory.path(), &[]).expect("incremental update stale");
@@ -7284,10 +7364,34 @@ mod tests {
         let directory = tempdir().expect("workspace");
         fs::write(directory.path().join("main.go"), "package main\n").expect("Go source");
         let (path, artifact) = write_go_codegraph(directory.path(), None).expect("write graph");
-        assert_eq!(path, directory.path().join(".zvec-grep/codegraph-v2.json"));
+        assert_eq!(
+            path,
+            directory.path().join(".zvec-grep").join(CODEGRAPH_FILE)
+        );
         assert!(Path::new(&path).is_file());
         assert!(!artifact.manifest_key.is_empty());
-        assert!(!fs::read(&path).expect("encoded artifact").contains(&b'\n'));
+        assert_eq!(
+            read_codegraph(&path).expect("decode compressed artifact"),
+            artifact
+        );
+    }
+
+    #[test]
+    fn reads_an_explicit_legacy_json_sidecar() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("main.go"), "package main\n").expect("Go source");
+        let artifact = build_go_codegraph(directory.path()).expect("build graph");
+        let path = directory.path().join(CODEGRAPH_JSON_FILE);
+        fs::write(
+            &path,
+            serde_json::to_vec(&artifact).expect("encode legacy artifact"),
+        )
+        .expect("write legacy artifact");
+
+        assert_eq!(
+            read_codegraph(&path).expect("decode legacy artifact"),
+            artifact
+        );
     }
 
     #[test]

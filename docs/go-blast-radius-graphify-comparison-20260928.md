@@ -112,11 +112,11 @@ cp -R "$WORK/source-only" "$WORK/type-aware"
 cp -R "$WORK/source-only" "$WORK/syntax-only"
 go -C tools/go-callfacts run . --root "$WORK/type-aware" --write-sidecar
 CXXFLAGS="-isystem $(xcrun --show-sdk-path)/usr/include/c++/v1" \
-  cargo run --manifest-path rust/Cargo.toml -p zg -- --graph "$WORK/type-aware"
-rust/target/debug/zg --graph "$WORK/syntax-only"
+  cargo run --release --manifest-path rust/Cargo.toml -p zg -- --graph "$WORK/type-aware"
+rust/target/release/zg --graph "$WORK/syntax-only"
 ```
 
-Then use `rust/target/debug/zg --graph-query <artifact> blast-radius <symbol>
+Then use `rust/target/release/zg --graph-query <artifact> blast-radius <symbol>
 --depth <N>` and Graphify's `affected <node> --relation calls --depth <N>`.
 All generated graphs and sidecars used for this run were kept outside the
 repository.

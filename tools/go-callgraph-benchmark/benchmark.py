@@ -51,6 +51,14 @@ CSV_FIELDS = [
 ]
 
 
+def default_zg(repo: Path) -> Path:
+    for profile in ("release", "debug"):
+        candidate = repo / f"rust/target/{profile}/zg"
+        if candidate.is_file():
+            return candidate
+    return repo / "rust/target/release/zg"
+
+
 def run(command: list[str], cwd: Path, *, quiet: bool = False) -> str:
     completed = subprocess.run(
         command,
@@ -345,7 +353,7 @@ def main() -> None:
         shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
     truth = load_truth(fixture)
-    zg = (args.zg or (repo / "rust/target/debug/zg")).resolve()
+    zg = (args.zg or default_zg(repo)).resolve()
     if not zg.is_file():
         raise SystemExit(f"zvec binary not found: {zg}; build it before benchmarking")
 
@@ -385,7 +393,12 @@ def main() -> None:
 
         syntax_input = repeat_root / "zvec-syntax"
         copy_source_fixture(fixture, syntax_input)
-        elapsed, _ = timed([str(zg), "--graph", str(syntax_input)], repo, quiet=True)
+        syntax_artifact = syntax_input / ".zvec-grep/codegraph-v2.json"
+        elapsed, _ = timed(
+            [str(zg), "--graph", str(syntax_input), "--output", str(syntax_artifact)],
+            repo,
+            quiet=True,
+        )
         syntax_row = zvec_metrics(
             syntax_input / ".zvec-grep/codegraph-v2.json",
             syntax_input,
@@ -414,7 +427,12 @@ def main() -> None:
             "call_sites": len(truth["static_calls"] + truth["possible_calls"] + truth["dynamic_calls"]),
         }
         rows.append(facts_row)
-        elapsed_graph, _ = timed([str(zg), "--graph", str(type_input)], repo, quiet=True)
+        type_artifact = type_input / ".zvec-grep/codegraph-v2.json"
+        elapsed_graph, _ = timed(
+            [str(zg), "--graph", str(type_input), "--output", str(type_artifact)],
+            repo,
+            quiet=True,
+        )
         type_row = zvec_metrics(
         type_input / ".zvec-grep/codegraph-v2.json",
             type_input,

@@ -11,7 +11,8 @@ uncertainty class, so its emitted call edges are counted as definite for the
 static precision/recall comparison and as unsafe promotions when the oracle
 marks a site possible or non-definite.
 
-Run from the repository root after building `rust/target/debug/zg`:
+Run from the repository root after building `rust/target/release/zg` (the
+runner falls back to a debug binary when no release binary exists):
 
 ```sh
 python3 tools/multilanguage-callgraph-benchmark/benchmark.py \
