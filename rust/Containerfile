@@ -3,8 +3,6 @@
 ARG RUST_VERSION=1.98.0
 ARG UBI_VERSION=10.2
 ARG ZIG_VERSION=0.15.2
-ARG BUILDPLATFORM
-ARG TARGETPLATFORM
 
 FROM --platform=$TARGETPLATFORM registry.access.redhat.com/ubi10/ubi-minimal:${UBI_VERSION} AS target-runtime
 
