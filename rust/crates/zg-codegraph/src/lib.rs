@@ -975,15 +975,16 @@ fn refresh_import_symbol_edges(
             relations: Vec::new(),
         })
         .collect::<Vec<_>>();
+    let parsed_index = ParsedFileIndex::new(&current_files);
     for file in changed_files {
         for import in &file.import_sites {
             let Some(local_target) =
-                resolve_local_import_target(file, import, &current_files, package_manifests)
+                resolve_local_import_target(file, import, &parsed_index, package_manifests)
             else {
                 continue;
             };
             for symbol_name in &import.symbol_names {
-                let Some(target) = resolve_imported_node_target(nodes, &local_target, symbol_name)
+                let Some(target) = resolve_imported_node_target(nodes, local_target, symbol_name)
                 else {
                     continue;
                 };
@@ -1127,6 +1128,7 @@ fn structural_graph(
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     let mut package_nodes = BTreeMap::new();
+    let parsed_index = ParsedFileIndex::new(parsed);
 
     for file in parsed {
         nodes.push(CodeGraphNode {
@@ -1167,22 +1169,23 @@ fn structural_graph(
         }
         for import in &file.import_sites {
             let package_id = package_node_id(&import.target_name);
-            let local_target = resolve_local_import_target(file, import, parsed, package_manifests);
+            let local_target =
+                resolve_local_import_target(file, import, &parsed_index, package_manifests);
             ensure_package_node(&mut package_nodes, &import.target_name, None);
             edges.push(CodeGraphEdge {
                 kind: import.kind.clone(),
                 source: file.file_node_id.clone(),
-                target: Some(local_target.as_deref().map_or(package_id, file_node_id)),
+                target: Some(local_target.map_or(package_id, file_node_id)),
                 target_name: Some(import.target_name.clone()),
                 resolved: true,
                 ambiguous_candidates: Vec::new(),
                 resolution: Some("syntax".to_owned()),
                 range: Some(import.range.clone()),
             });
-            if let Some(local_target) = local_target.as_deref() {
+            if let Some(local_target) = local_target {
                 for symbol_name in &import.symbol_names {
                     let Some(target) =
-                        resolve_imported_symbol_target(parsed, local_target, symbol_name)
+                        resolve_imported_symbol_target(&parsed_index, local_target, symbol_name)
                     else {
                         continue;
                     };
@@ -1310,24 +1313,21 @@ fn definition_parent<'a>(
 }
 
 fn resolve_imported_symbol_target<'a>(
-    parsed: &'a [ParsedFile],
+    parsed_index: &'a ParsedFileIndex<'a>,
     path: &str,
     symbol_name: &str,
 ) -> Option<&'a Definition> {
     let normalized = clean_relation_target(symbol_name);
     let simple_name = normalized.rsplit('.').next().unwrap_or(normalized.as_str());
-    parsed
-        .iter()
-        .find(|file| file.file.path == path)
-        .and_then(|file| {
-            file.definitions.iter().find(|definition| {
-                definition.simple_name == simple_name
-                    || definition.qualified_name == normalized
-                    || definition
-                        .qualified_name
-                        .ends_with(format!(".{normalized}").as_str())
-            })
+    parsed_index.by_path.get(path).and_then(|file| {
+        file.definitions.iter().find(|definition| {
+            definition.simple_name == simple_name
+                || definition.qualified_name == normalized
+                || definition
+                    .qualified_name
+                    .ends_with(format!(".{normalized}").as_str())
         })
+    })
 }
 
 fn ensure_package_node(
@@ -1352,30 +1352,70 @@ fn ensure_package_node(
     }
 }
 
-fn resolve_local_import_target(
+fn resolve_local_import_target<'a>(
     file: &ParsedFile,
     import: &ImportSite,
-    parsed: &[ParsedFile],
+    parsed_index: &ParsedFileIndex<'a>,
     package_manifests: &[PackageManifest],
-) -> Option<String> {
-    let candidate = match file.file.language.as_str() {
-        "go" => resolve_go_import(file, &import.target_name, parsed, package_manifests),
-        "rust" => resolve_rust_import(file, &import.target_name, parsed, package_manifests),
-        "typescript" | "tsx" => resolve_typescript_import(file, &import.target_name, parsed),
-        "python" => resolve_python_import(file, &import.target_name, parsed),
+) -> Option<&'a str> {
+    match file.file.language.as_str() {
+        "go" => resolve_go_import(file, &import.target_name, parsed_index, package_manifests),
+        "rust" => resolve_rust_import(file, &import.target_name, parsed_index, package_manifests),
+        "typescript" | "tsx" => resolve_typescript_import(file, &import.target_name, parsed_index),
+        "python" => resolve_python_import(file, &import.target_name, parsed_index),
         _ => None,
-    }?;
-    parsed
-        .iter()
-        .find(|candidate_file| candidate_file.file.path == candidate)
-        .map(|candidate_file| candidate_file.file.path.clone())
+    }
 }
 
-fn resolve_typescript_import(
+struct ParsedFileIndex<'a> {
+    by_path: HashMap<&'a str, &'a ParsedFile>,
+    go_paths_by_parent: HashMap<&'a str, Vec<&'a str>>,
+    rust_root: Option<&'a str>,
+}
+
+impl<'a> ParsedFileIndex<'a> {
+    fn new(parsed: &'a [ParsedFile]) -> Self {
+        let mut by_path = HashMap::with_capacity(parsed.len());
+        let mut go_paths_by_parent = HashMap::new();
+        let mut rust_root = None;
+        for file in parsed {
+            let path = file.file.path.as_str();
+            by_path.insert(path, file);
+            if file.file.language == "go" {
+                go_paths_by_parent
+                    .entry(graph_parent_ref(path))
+                    .or_insert_with(Vec::new)
+                    .push(path);
+            }
+            if rust_root.is_none()
+                && file.file.language == "rust"
+                && (path.ends_with("/src/lib.rs")
+                    || path.ends_with("/src/main.rs")
+                    || matches!(path, "src/lib.rs" | "src/main.rs"))
+            {
+                rust_root = Some(path);
+            }
+        }
+        Self {
+            by_path,
+            go_paths_by_parent,
+            rust_root,
+        }
+    }
+
+    fn path_for(&self, path: &str, language: &str) -> Option<&'a str> {
+        self.by_path
+            .get(path)
+            .filter(|file| file.file.language == language)
+            .map(|file| file.file.path.as_str())
+    }
+}
+
+fn resolve_typescript_import<'a>(
     file: &ParsedFile,
     target: &str,
-    parsed: &[ParsedFile],
-) -> Option<String> {
+    parsed_index: &ParsedFileIndex<'a>,
+) -> Option<&'a str> {
     if !target.starts_with('.') {
         return None;
     }
@@ -1391,15 +1431,22 @@ fn resolve_typescript_import(
         format!("{base_without_runtime_extension}/index.ts"),
         format!("{base_without_runtime_extension}/index.tsx"),
     ];
-    candidates.into_iter().find(|candidate| {
-        parsed.iter().any(|candidate_file| {
-            matches!(candidate_file.file.language.as_str(), "typescript" | "tsx")
-                && candidate_file.file.path == *candidate
-        })
+    candidates.iter().find_map(|candidate| {
+        parsed_index
+            .by_path
+            .get(candidate.as_str())
+            .and_then(|file| {
+                matches!(file.file.language.as_str(), "typescript" | "tsx")
+                    .then_some(file.file.path.as_str())
+            })
     })
 }
 
-fn resolve_python_import(file: &ParsedFile, target: &str, parsed: &[ParsedFile]) -> Option<String> {
+fn resolve_python_import<'a>(
+    file: &ParsedFile,
+    target: &str,
+    parsed_index: &ParsedFileIndex<'a>,
+) -> Option<&'a str> {
     let target = target.trim();
     if target.is_empty() {
         return None;
@@ -1420,19 +1467,17 @@ fn resolve_python_import(file: &ParsedFile, target: &str, parsed: &[ParsedFile])
     } else {
         vec![format!("{base}.py"), format!("{base}/__init__.py")]
     };
-    candidates.into_iter().find(|candidate| {
-        parsed.iter().any(|candidate_file| {
-            candidate_file.file.language == "python" && candidate_file.file.path == *candidate
-        })
-    })
+    candidates
+        .iter()
+        .find_map(|candidate| parsed_index.path_for(candidate, "python"))
 }
 
-fn resolve_rust_import(
+fn resolve_rust_import<'a>(
     file: &ParsedFile,
     target: &str,
-    parsed: &[ParsedFile],
+    parsed_index: &ParsedFileIndex<'a>,
     package_manifests: &[PackageManifest],
-) -> Option<String> {
+) -> Option<&'a str> {
     let mut segments = target
         .trim()
         .trim_end_matches(';')
@@ -1458,17 +1503,7 @@ fn resolve_rust_import(
         })
         .max_by_key(|manifest| graph_parent(&manifest.path).len())
         .map(|manifest| join_graph_path(&graph_parent(&manifest.path), "src"))
-        .or_else(|| {
-            parsed
-                .iter()
-                .filter(|candidate| candidate.file.language == "rust")
-                .find(|candidate| {
-                    candidate.file.path.ends_with("/src/lib.rs")
-                        || candidate.file.path.ends_with("/src/main.rs")
-                        || matches!(candidate.file.path.as_str(), "src/lib.rs" | "src/main.rs")
-                })
-                .map(|root| graph_parent(&root.file.path))
-        })
+        .or_else(|| parsed_index.rust_root.map(graph_parent))
         .unwrap_or_else(|| {
             file.file.path.find("/src/").map_or_else(
                 || "src".to_owned(),
@@ -1502,22 +1537,20 @@ fn resolve_rust_import(
         let module_path = segments[..length].join("/");
         let base = join_graph_path(&base_directory, &module_path);
         for candidate in [format!("{base}.rs"), format!("{base}/mod.rs")] {
-            if parsed.iter().any(|candidate_file| {
-                candidate_file.file.language == "rust" && candidate_file.file.path == candidate
-            }) {
-                return Some(candidate);
+            if let Some(path) = parsed_index.path_for(&candidate, "rust") {
+                return Some(path);
             }
         }
     }
     None
 }
 
-fn resolve_go_import(
+fn resolve_go_import<'a>(
     file: &ParsedFile,
     target: &str,
-    parsed: &[ParsedFile],
+    parsed_index: &ParsedFileIndex<'a>,
     package_manifests: &[PackageManifest],
-) -> Option<String> {
+) -> Option<&'a str> {
     let manifest = package_manifests
         .iter()
         .filter(|manifest| manifest.ecosystem == "go")
@@ -1541,14 +1574,12 @@ fn resolve_go_import(
     let module_name = manifest.name.as_deref()?;
     let relative = target.strip_prefix(module_name)?.trim_start_matches('/');
     let directory = join_graph_path(&graph_parent(&manifest.path), relative);
-    let matches = parsed
-        .iter()
-        .filter(|candidate| candidate.file.language == "go")
-        .filter(|candidate| graph_parent(&candidate.file.path) == directory)
-        .map(|candidate| candidate.file.path.clone())
-        .collect::<Vec<_>>();
-    match matches.as_slice() {
-        [path] => Some(path.clone()),
+    match parsed_index
+        .go_paths_by_parent
+        .get(directory.as_str())
+        .map(Vec::as_slice)
+    {
+        Some([path]) => Some(*path),
         _ => None,
     }
 }
@@ -1558,8 +1589,11 @@ fn rust_module_directory(path: &str) -> String {
 }
 
 fn graph_parent(path: &str) -> String {
-    path.rsplit_once('/')
-        .map_or_else(String::new, |(parent, _)| parent.to_owned())
+    graph_parent_ref(path).to_owned()
+}
+
+fn graph_parent_ref(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(parent, _)| parent)
 }
 
 fn join_graph_path(parent: &str, child: &str) -> String {
@@ -1597,6 +1631,7 @@ fn refresh_import_edge_targets(
             relations: Vec::new(),
         })
         .collect::<Vec<_>>();
+    let parsed_index = ParsedFileIndex::new(&parsed);
     let nodes_by_id = nodes
         .iter()
         .map(|node| (node.id.as_str(), node))
@@ -1619,7 +1654,7 @@ fn refresh_import_edge_targets(
         let Some(source_file) = source
             .path
             .as_deref()
-            .and_then(|path| parsed.iter().find(|file| file.file.path == path))
+            .and_then(|path| parsed_index.by_path.get(path).copied())
         else {
             continue;
         };
@@ -1642,8 +1677,9 @@ fn refresh_import_edge_targets(
                 end_column: 0,
             }),
         };
-        let target = resolve_local_import_target(source_file, &import, &parsed, package_manifests)
-            .map_or_else(|| package_node_id(target_name), |path| file_node_id(&path));
+        let target =
+            resolve_local_import_target(source_file, &import, &parsed_index, package_manifests)
+                .map_or_else(|| package_node_id(target_name), file_node_id);
         edge.target = Some(target);
         edge.resolved = true;
         edge.ambiguous_candidates.clear();
@@ -1736,30 +1772,17 @@ fn sort_edges(edges: &mut [CodeGraphEdge]) {
 }
 
 fn resolve_call_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) {
-    let definitions = nodes
-        .iter()
-        .filter(|node| matches!(node.kind.as_str(), "function" | "method"))
-        .filter_map(|node| {
-            let qualified_name = node.qualified_name.clone()?;
-            Some(Definition {
-                node: node.clone(),
-                start_byte: 0,
-                end_byte: 0,
-                simple_name: node.name.clone(),
-                qualified_name,
-            })
-        })
-        .collect::<Vec<_>>();
     let nodes_by_id = nodes
         .iter()
         .map(|node| (node.id.as_str(), node))
         .collect::<HashMap<_, _>>();
-    let mut by_name: HashMap<&str, Vec<&Definition>> = HashMap::new();
-    for definition in &definitions {
-        by_name
-            .entry(definition.simple_name.as_str())
-            .or_default()
-            .push(definition);
+    let mut by_name: HashMap<&str, Vec<&CodeGraphNode>> = HashMap::new();
+    for node in nodes
+        .iter()
+        .filter(|node| matches!(node.kind.as_str(), "function" | "method"))
+        .filter(|node| node.qualified_name.is_some())
+    {
+        by_name.entry(node.name.as_str()).or_default().push(node);
     }
 
     for edge in edges.iter_mut().filter(|edge| edge.kind == "calls") {
@@ -1794,7 +1817,7 @@ fn resolve_call_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) {
             .get(edge.source.as_str())
             .and_then(|node| node.path.as_deref());
         let (target, ambiguous_candidates) = resolve_call(&call, caller_path, &by_name);
-        edge.target = target.map(|definition| definition.node.id.clone());
+        edge.target = target.map(|node| node.id.clone());
         edge.resolved = edge.target.is_some();
         edge.ambiguous_candidates = ambiguous_candidates;
         edge.resolution = Some(
@@ -6980,30 +7003,35 @@ fn receiver_type(node: Node<'_>, source: &[u8]) -> Option<String> {
 fn resolve_call<'a>(
     call: &CallSite,
     caller_path: Option<&str>,
-    by_name: &HashMap<&str, Vec<&'a Definition>>,
-) -> (Option<&'a Definition>, Vec<String>) {
+    by_name: &HashMap<&str, Vec<&'a CodeGraphNode>>,
+) -> (Option<&'a CodeGraphNode>, Vec<String>) {
     let Some(candidates) = by_name.get(call.target_name.as_str()) else {
         return (None, Vec::new());
     };
-    let same_file_candidates = caller_path.map_or_else(Vec::new, |path| {
-        candidates
+
+    if let Some(path) = caller_path {
+        let mut same_file = candidates
             .iter()
             .copied()
-            .filter(|definition| definition.node.path.as_deref() == Some(path))
-            .collect::<Vec<_>>()
-    });
-    let candidates = if same_file_candidates.is_empty() {
-        candidates
-    } else {
-        &same_file_candidates
-    };
+            .filter(|node| node.path.as_deref() == Some(path));
+        if let Some(first) = same_file.next() {
+            if let Some(second) = same_file.next() {
+                let mut candidate_ids = vec![first.id.clone(), second.id.clone()];
+                candidate_ids.extend(same_file.map(|node| node.id.clone()));
+                candidate_ids.sort();
+                return (None, candidate_ids);
+            }
+            return (Some(first), Vec::new());
+        }
+    }
+
     match candidates.as_slice() {
         [candidate] => (Some(*candidate), Vec::new()),
         [] => (None, Vec::new()),
         ambiguous => {
             let mut candidate_ids = ambiguous
                 .iter()
-                .map(|candidate| candidate.node.id.clone())
+                .map(|node| node.id.clone())
                 .collect::<Vec<_>>();
             candidate_ids.sort();
             (None, candidate_ids)
