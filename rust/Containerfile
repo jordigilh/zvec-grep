@@ -1,0 +1,81 @@
+# syntax=docker/dockerfile:1.7
+
+ARG RUST_VERSION=1.98.0
+
+FROM rust:${RUST_VERSION}-trixie AS builder
+
+ARG TARGETARCH
+
+ENV CARGO_TERM_COLOR=always
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes \
+        build-essential \
+        ca-certificates \
+        clang \
+        cmake \
+        git \
+        libclang-dev \
+        libssl-dev \
+        pkg-config \
+        python3 \
+        perl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=zg-target-${TARGETARCH},target=/src/target \
+    cargo build --locked --release --package zg \
+    && install --directory /out/bin /out/lib/data/jieba_dict \
+    && install --mode=0755 target/release/zg /out/bin/zg \
+    && install --mode=0755 target/release/libzvec_c_api.so /out/lib/libzvec_c_api.so \
+    && install --mode=0644 \
+        target/release/data/jieba_dict/jieba.dict.utf8 \
+        /out/lib/data/jieba_dict/jieba.dict.utf8 \
+    && install --mode=0644 \
+        target/release/data/jieba_dict/hmm_model.utf8 \
+        /out/lib/data/jieba_dict/hmm_model.utf8
+
+FROM debian:trixie-slim AS runtime
+
+ARG VERSION=0.0.1
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes \
+        ca-certificates \
+        libatomic1 \
+        libgcc-s1 \
+        libgomp1 \
+        libssl3t64 \
+        libstdc++6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 zg \
+    && useradd --system --uid 10001 --gid zg \
+        --home-dir /var/lib/zg --create-home --shell /usr/sbin/nologin zg \
+    && install --directory --owner=zg --group=zg /workspace /var/lib/zg
+
+COPY --from=builder /out/bin/zg /usr/local/bin/zg
+COPY --from=builder /out/lib/libzvec_c_api.so /usr/local/lib/libzvec_c_api.so
+COPY --from=builder /out/lib/data/jieba_dict /usr/local/lib/data/jieba_dict
+
+ENV HOME=/var/lib/zg \
+    ZVEC_GREP_HOME=/var/lib/zg \
+    LD_LIBRARY_PATH=/usr/local/lib
+
+WORKDIR /workspace
+USER zg
+
+LABEL org.opencontainers.image.title="zvec-grep Rust zg" \
+      org.opencontainers.image.description="Local-first workspace search and codegraph MCP server" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/jordigilh/zvec-grep"
+
+VOLUME ["/workspace", "/var/lib/zg"]
+
+EXPOSE 7999
+
+ENTRYPOINT ["/usr/local/bin/zg"]
+CMD ["--server", "--stdio"]
