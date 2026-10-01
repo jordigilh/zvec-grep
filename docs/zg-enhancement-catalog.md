@@ -10,6 +10,8 @@
 
 **Review branch:** `replay/codegraph-issue-26`
 
+**Dedicated review PR:** [zvec-ai/zvec-grep#224](https://github.com/zvec-ai/zvec-grep/pull/224) (draft)
+
 This document is the index and change ledger for the enhancements currently
 carried by this branch. The implementation and tests remain authoritative for
 behavior; this catalog records the intended contracts, evidence boundaries,
@@ -373,8 +375,10 @@ default rather than changing `zg` to an unauthenticated `0.0.0.0` listener.
 ## 9. Review and upstream handoff
 
 The branch is intentionally kept as a replay branch rather than merged into
-`origin/main`. The commit history is chronological, but the following review
-slices identify the logical boundaries for a dedicated PR or later PR split:
+`origin/main`. The complete change set is preserved in dedicated draft PR
+[#224](https://github.com/zvec-ai/zvec-grep/pull/224). The commit history is
+chronological, and the following review slices identify logical boundaries for
+later PR splitting if maintainers prefer smaller reviews:
 
 | Slice | Commit range | Contents |
 | --- | --- | --- |
