@@ -233,3 +233,16 @@ baseline and indexed binary SHA-256 values were respectively
 The percentage differs from the macOS arm64 result because the host, corpus
 line count, and absolute baseline differ; both results are same-host paired
 comparisons and should not be combined into one cross-host number.
+
+### Matched Graphify comparison
+
+For a directly paired same-host comparison, Graphify `0.9.71` was also run
+five times on the same input with `code-only --no-cluster`. Its median was
+20.109 s (20.064–21.206 s), producing 27,595 nodes and 188,062 edges. Against
+that median, the replay zvec build was 2.75× slower and the indexed build was
+2.39× slower. The indexed change therefore narrowed the absolute gap by 7.209
+s, from 35.143 s to 27.934 s.
+
+This is a throughput comparison, not graph equivalence: the indexed zvec
+artifact contains 29,106 nodes, 564,526 edges, and 377,668 call edges, so the
+two tools perform different graph work and emit different relation sets.
