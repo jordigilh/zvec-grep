@@ -173,3 +173,37 @@ integration lanes, workspace `cargo test` 439 passed / 10 ignored, strict
 workspace Clippy, formatting, and diff checks. A follow-up sample showed the
 hot path move away from `resolve_relation_edges` to Go import resolution and
 call resolution; no semantic or persistence regression was observed.
+
+## Follow-up import and call-resolution indexing
+
+The remaining resolver work was measured on the same staged macOS arm64
+source-only corpus: 3,125 Go files and 927,026 source lines. The pre-change
+binary was built from replay `HEAD` `31a522d`; the indexed binary was built
+from the follow-up change. Both runs used the same plain-JSON output protocol,
+five fresh process repetitions, and no semantic sidecar. The change:
+
+- indexes parsed files by relative path, Go package directory, and Rust source
+  root, reusing that index in full and incremental import resolution;
+- returns indexed import targets by borrow rather than cloning a path per
+  import; and
+- indexes borrowed call-definition nodes and avoids allocating a same-file
+  candidate vector for every call while retaining same-file precedence and
+  sorted ambiguity IDs.
+
+| Binary | Median CLI elapsed | Min–max |
+| --- | ---: | ---: |
+| Replay `31a522d` | 4.221 s | 4.211–4.859 s |
+| Indexed follow-up | 2.630 s | 2.539–2.727 s |
+
+This is a 1.60× speedup, or a 37.7% reduction in graph-build elapsed time on
+this host. All five indexed artifacts had the same SHA-256 as the pre-change
+artifact, `4f779ce4f8956d409631c027186aee8cf8d1fb4b3fda5d17c8aad8cf21520e0f`,
+with 29,112 nodes and 564,692 edges. A separate compressed-output check also
+preserved the artifact SHA-256
+`a749cff638f50828d7694860722a56ae569f8d1a84b2d38e6ff0a7f95a23d0b0`.
+
+The semantic-sidecar timings are intentionally not repeated here: the large
+staged checkout's existing Go facts are conservatively rejected for a parser
+symbol-name mismatch, so a syntax-only comparison is the valid isolated
+measurement for this follow-up. Existing semantic qrels and sidecar lifecycle
+tests remain release gates.
