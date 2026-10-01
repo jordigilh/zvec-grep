@@ -207,3 +207,29 @@ staged checkout's existing Go facts are conservatively rejected for a parser
 symbol-name mismatch, so a syntax-only comparison is the valid isolated
 measurement for this follow-up. Existing semantic qrels and sidecar lifecycle
 tests remain release gates.
+
+## Follow-up resolver indexing on `helios08`
+
+The same isolated comparison was rerun on the original Linux x86_64
+`helios08` host using its preserved source-only corpus: 3,125 Go files and
+926,775 source lines. Both binaries were built remotely in debug mode with
+Rust `1.98.0`, Go `1.26.7-X:nodwarf5`, and the system ONNX Runtime; each binary
+was run in five fresh processes with explicit plain-JSON output and no
+semantic sidecar.
+
+| Binary | Median CLI elapsed | Min–max |
+| --- | ---: | ---: |
+| Replay `31a522d` | 55.253 s | 54.788–55.541 s |
+| Indexed follow-up `1c4d749` | 48.044 s | 47.687–48.574 s |
+
+This is a 1.15× speedup, or a 13.0% reduction in graph-build elapsed time on
+helios08. Every artifact was byte-identical across both binaries:
+`bbef7f0cbe11b376ad189b8020050e4b88aea3d0b73dbb0f7e499132242362a9`, with
+480,068,143 bytes, 29,106 nodes, 564,526 edges, and 377,668 call edges. The
+baseline and indexed binary SHA-256 values were respectively
+`f04bdce0c8ec465c8ec78f654cf1ab5bbb3eef1340fd4ffe793d170136a9dbdf` and
+`88a03f2294ff523d1087b6d23578ca182ce4330aa665c36e36a03ad2617c1fa6`.
+
+The percentage differs from the macOS arm64 result because the host, corpus
+line count, and absolute baseline differ; both results are same-host paired
+comparisons and should not be combined into one cross-host number.
