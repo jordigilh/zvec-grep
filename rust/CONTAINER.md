@@ -1,8 +1,11 @@
 # Rust `zg` container
 
-`rust/Containerfile` builds a runtime-only image for the Rust implementation.
+`rust/Containerfile` builds a runtime-only UBI 10 image for the Rust implementation.
 The image contains the `zg` executable, zvec's native runtime library, and the
 Jieba dictionary assets. It does not contain the Rust toolchain or source tree.
+The native Rust builder runs on the build platform and uses Zig plus the target
+UBI 10 C/C++ runtime as its cross-compilation sysroot, so the multi-architecture
+build does not require QEMU.
 
 The default command is the safest MCP transport for a process supervisor:
 
@@ -57,7 +60,8 @@ adding an authenticated internal transport design.
 ## CI publication
 
 `.github/workflows/publish-container.yml` builds `linux/amd64` and
-`linux/arm64`. Pull requests build without publishing. The workflow publishes
+`linux/arm64` from native build-platform stages without QEMU. Pull requests
+build without publishing. The workflow publishes
 on pushes to `main`, `zg-v*` tags, and manual dispatch when `publish` is true.
 
 The workflow expects these repository Actions secrets:
