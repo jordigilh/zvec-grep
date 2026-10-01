@@ -21,15 +21,13 @@ and implementation details, see the [Rust README](../rust/README.md).
 | Understand the tools exposed to an agent | [MCP guide](./03-mcp.md) |
 | Understand indexing, updates, and search routes | [Retrieval pipeline](./04-pipeline.md) |
 | See how the components and trust boundaries fit together | [Architecture](./05-architecture.md) |
-<<<<<<< HEAD
-=======
+| Read the authoritative `zg` enhancement inventory and upstream handoff | [`zg` enhancement catalog](./zg-enhancement-catalog.md) |
 | Review codegraph publication and structural decisions | [Publication and structural decisions](./codegraph-publication-and-structural-decisions-20260930.md) |
 | Review real-repository codegraph witness qrels | [Real-repository qrels](./codegraph-real-repository-qrels-20260930.md) |
 | Review real-repository semantic call-facts qrels | [Semantic qrels](./codegraph-semantic-real-repository-qrels-20260930.md) |
 | Review codegraph lifecycle differential evidence | [Lifecycle evidence](./codegraph-lifecycle-evidence-20260930.md) |
 | Review codegraph upstream handoff | [Upstream readiness](./codegraph-upstream-readiness-20260930.md) |
 | Review large-repository codegraph profile | [Scale performance profile](./codegraph-scale-performance-20260930.md) |
->>>>>>> 3f38d57 (docs(codegraph): record lifecycle and benchmark evidence)
 | Choose between Auto, Server, and Direct execution | [Server and execution modes](./06-server.md) |
 | Choose and configure an Embedding model | [Embedding models](./07-embedding.md) |
 | See what is stable now and what comes next | [Roadmap](./08-roadmap.md) |

@@ -1,5 +1,10 @@
 # Codegraph upstream-readiness review (2026-09-30)
 
+This is the historical replay review for the codegraph validation tranche. The
+current complete change-set inventory, including post-replay resolver work and
+native container publication, is maintained in
+[`zg-enhancement-catalog.md`](./zg-enhancement-catalog.md).
+
 The source validation work was originally completed on
 `spike/codegraph-graphify-followup`. It was then replayed locally, without
 modifying `origin/main` or pushing any remote, onto
@@ -30,7 +35,9 @@ ac15f4f docs(codegraph): update upstream handoff
 ```
 
 The replay branch intentionally excludes the unrelated fork integration
-history; no direct rebase onto that integration branch was performed.
+history; no direct rebase onto that integration branch was performed. At the
+time of this review, the replay had not been pushed and no upstream PR had
+been opened; the current handoff state is tracked by the catalog linked above.
 
 ## Logical replay slices
 
@@ -68,7 +75,7 @@ product changes:
 - The post-replay resolver follow-up preserves graph bytes while reducing the
   same-host large-repository syntax build time; its isolated evidence is in
   [`codegraph-scale-performance-20260930.md`](./codegraph-scale-performance-20260930.md).
-- No upstream branch or remote was modified.
+- No upstream branch or remote was modified by the historical replay step.
 
 ## Compatibility and dependency gates
 
@@ -96,7 +103,8 @@ witness set. On the replay branch, full workspace verification passed with
 --workspace --locked` (452 passed, 11 ignored). Strict workspace Clippy,
 formatting, and diff checks passed. The JavaScript `npm run check` gate also
 passed: lint, formatting, typecheck, coverage, all JS test suites, and package
-validation. No upstream PR is opened and no remote was pushed by this branch.
+validation. The historical verification did not open an upstream PR or push a
+remote; the current PR state is tracked by the catalog linked above.
 
 The post-replay resolver follow-up was also checked independently with the
 workspace test suite (`452` passed, `11` ignored), strict workspace Clippy,
