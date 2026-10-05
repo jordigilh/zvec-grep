@@ -657,6 +657,7 @@ Call edges are re-resolved against the updated definitions.";
 
 const GRAPH_QUERY_HELP: &str = r"Usage:
   zg --graph-query <artifact> blast-radius <function> [--depth <n>]
+      (omit --depth for complete reverse reachability)
   zg --graph-query <artifact> shortest-path <source> <target>
   zg --graph-query <artifact> node <query>
   zg --graph-query <artifact> neighbors <query> [--relation <kind>]... [--include-possible]

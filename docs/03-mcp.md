@@ -53,6 +53,21 @@ key, filename, path, source fragment, or regex is sufficient. For mixed tasks,
 start with `zvec_grep_search`, then use native grep or rg for focused follow-up.
 For an exact callers, shortest-call-path, or callgraph-community question, use
 the corresponding `zvec_grep_callgraph_*` tool with the intended worktree root.
+For `zvec_grep_callgraph_blast_radius`, omit `depth` to traverse the complete
+reverse reachable callgraph; an explicit `depth` value limits traversal to
+that many hops. Definite and possible callers remain separate at each shortest
+distance, and cycles are deduplicated safely. This supports tracing a function
+through multiple source-present packages or libraries to application flows.
+`callers_by_depth` is definite static reachability;
+`possible_callers_by_depth` is ambiguous or dynamic-dispatch reachability; and
+`unresolved_calls`/`ambiguous_calls` expose incomplete or uncertain evidence.
+An empty bucket means no observed static path, not proof of safety.
+
+The graph does not establish runtime or deployment reachability. Paths may be
+absent when runtime configuration or feature flags, reflection, generated code,
+unsupported build tags, dynamic dispatch, function values, plugins, or
+incomplete source/build context affect execution. Validate those conditions
+separately.
 For source-file, package, declaration, neighbor, relation-path, or provenance
 questions, use the corresponding `zvec_grep_codegraph_*` tool. Call
 `zvec_grep_codegraph_capabilities` first when relation support is material to the

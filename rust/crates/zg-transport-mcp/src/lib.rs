@@ -610,7 +610,7 @@ impl ZvecGrepMcpServer {
 
     #[tool(
         name = "zvec_grep_callgraph_blast_radius",
-        description = "Find direct and transitive callers of a function in the selected live checkout. Returns resolved callers separately from possible callers reached through ambiguous candidates. An explicitly generated Go go/types sidecar is used only when source and recorded module/workspace context inputs match; the result includes its generation-context fingerprint. Facts are scoped to the recorded Go environment, so regenerate after changing Go toolchain, target, flags, workspace, or dependency configuration. Otherwise uses the syntax-derived graph. Refreshes from current source contents before querying, including uncommitted changes.",
+        description = "Find direct and transitive callers of a function in the selected live checkout. Omit depth for complete reverse reachability; explicit depth values limit hops without an artificial ten-hop ceiling. Returns resolved callers separately from possible callers reached through ambiguous candidates. An explicitly generated Go go/types sidecar is used only when source and recorded module/workspace context inputs match; the result includes its generation-context fingerprint. Facts are scoped to the recorded Go environment, so regenerate after changing Go toolchain, target, flags, workspace, or dependency configuration. Otherwise uses the syntax-derived graph. Refreshes from current source contents before querying, including uncommitted changes.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CallGraphBlastRadius>(),
         annotations(
             title = "Find code callers",
@@ -629,13 +629,7 @@ impl ZvecGrepMcpServer {
         validate_text("function", &input.function, 1, MAX_QUERY_CHARS)
             .map_err(|message| ErrorData::invalid_params(message, None))?;
         let function = input.function.trim();
-        let depth = input.depth.unwrap_or(2);
-        if depth > 10 {
-            return Err(ErrorData::invalid_params(
-                "depth must be between 0 and 10".to_owned(),
-                None,
-            ));
-        }
+        let depth = input.depth;
         let index = self
             .codegraph_index(root)
             .await
@@ -1160,8 +1154,9 @@ pub struct CallGraphBlastRadiusInput {
     /// Function or method name, optionally path-qualified.
     #[schemars(length(min = 1, max = 4000))]
     pub function: String,
-    /// Maximum call distance to include (defaults to 2; range 0-10).
-    #[schemars(range(min = 0, max = 10))]
+    /// Maximum call distance to include. Omit to traverse until the reverse
+    /// frontier is empty; explicit values are honored without an artificial
+    /// ten-hop ceiling.
     pub depth: Option<usize>,
 }
 
@@ -2922,7 +2917,7 @@ mod tests {
             .expect("first codegraph");
         assert_eq!(
             first_index
-                .blast_radius("target", 1)
+                .blast_radius("target", Some(1))
                 .expect("first callers")
                 .callers_by_depth,
             [vec!["module.py::caller".to_owned()]]
@@ -2933,7 +2928,7 @@ mod tests {
             .expect("second codegraph");
         assert!(
             second_index
-                .blast_radius("target", 1)
+                .blast_radius("target", Some(1))
                 .expect("second callers")
                 .callers_by_depth
                 .is_empty()
@@ -2950,14 +2945,14 @@ mod tests {
             .expect("refreshed first codegraph");
         assert!(
             refreshed
-                .blast_radius("target", 1)
+                .blast_radius("target", Some(1))
                 .expect("refreshed callers")
                 .callers_by_depth
                 .is_empty()
         );
         assert!(
             second_index
-                .blast_radius("target", 1)
+                .blast_radius("target", Some(1))
                 .expect("second workspace remains isolated")
                 .callers_by_depth
                 .is_empty()
@@ -3270,6 +3265,34 @@ mod tests {
             serde_json::json!([["app/calls.go::InterfaceCaller"]])
         );
         assert_eq!(fallback["possible_callers_by_depth"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn blast_radius_tool_omitted_depth_is_exhaustive() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../zg-codegraph/tests/fixtures/go-blast-radius");
+        let workspace = tempdir().expect("Go fixture workspace");
+        write_mcp_fixture_callfacts(&fixture, workspace.path());
+        let server =
+            ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
+        let result = server
+            .zvec_grep_callgraph_blast_radius(super::Parameters(super::CallGraphBlastRadiusInput {
+                root: workspace.path().display().to_string(),
+                function: "app.Target".to_owned(),
+                depth: None,
+            }))
+            .await
+            .expect("omitted-depth blast-radius tool call")
+            .structured_content
+            .expect("structured result");
+        assert_eq!(
+            result["callers_by_depth"],
+            serde_json::json!([
+                ["app/calls.go::Direct"],
+                ["app/calls.go::Transitive"],
+                ["app/calls.go::Deep"]
+            ])
+        );
     }
 
     fn write_mcp_fixture_callfacts(fixture: &std::path::Path, root: &std::path::Path) -> String {

@@ -81,14 +81,14 @@ fn rust_callfacts_replace_supported_sites_and_keep_possible_dispatch_separate() 
     let index = CallGraphIndex::new(&semantic);
     assert_eq!(
         index
-            .blast_radius("helper", 1)
+            .blast_radius("helper", Some(1))
             .expect("helper callers")
             .callers_by_depth,
         [vec!["src/lib.rs::caller".to_owned()]]
     );
     assert_eq!(
         index
-            .blast_radius("Worker.work", 1)
+            .blast_radius("Worker.work", Some(1))
             .expect("trait method callers")
             .possible_callers_by_depth,
         [vec!["src/lib.rs::dyn_caller".to_owned()]]

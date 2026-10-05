@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs, path::Path};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde::Deserialize;
 use tempfile::TempDir;
@@ -69,7 +73,7 @@ fn name_only_baseline_misses_frozen_go_call_truth() {
     let index = CallGraphIndex::new(&baseline);
     assert_eq!(
         index
-            .blast_radius("app.Flush", 1)
+            .blast_radius("app.Flush", Some(1))
             .expect("local Flush callers")
             .callers_by_depth,
         [vec![
@@ -79,28 +83,28 @@ fn name_only_baseline_misses_frozen_go_call_truth() {
     );
     assert!(
         index
-            .blast_radius("dep.Flush", 1)
+            .blast_radius("dep.Flush", Some(1))
             .expect("dependency Flush callers")
             .callers_by_depth
             .is_empty()
     );
     assert_eq!(
         index
-            .blast_radius("app.Worker.Execute", 1)
+            .blast_radius("app.Worker.Execute", Some(1))
             .expect("baseline Worker.Execute callers")
             .callers_by_depth,
         [vec!["app/calls.go::InterfaceCaller".to_owned()]]
     );
     assert!(
         index
-            .blast_radius("app.Alpha.Run", 1)
+            .blast_radius("app.Alpha.Run", Some(1))
             .expect("Alpha.Run callers")
             .callers_by_depth
             .is_empty()
     );
     assert_eq!(
         index
-            .blast_radius("app.Alpha.Run", 1)
+            .blast_radius("app.Alpha.Run", Some(1))
             .expect("Alpha.Run candidates")
             .possible_callers_by_depth,
         [vec![
@@ -124,7 +128,7 @@ fn generated_go_callfacts_drive_blast_radius_results() {
             .split_once("::")
             .map_or(expected.target.as_str(), |(_, symbol)| symbol);
         let result = index
-            .blast_radius(target, expected.depth)
+            .blast_radius(target, Some(expected.depth))
             .unwrap_or_else(|error| panic!("blast radius for {}: {error}", expected.target));
         assert_eq!(
             result.callers_by_depth,
@@ -141,7 +145,7 @@ fn generated_go_callfacts_drive_blast_radius_results() {
     }
 
     let interface_result = index
-        .blast_radius("app.Worker.Execute", 2)
+        .blast_radius("app.Worker.Execute", Some(2))
         .expect("Worker.Execute callers");
     assert!(interface_result.callers_by_depth.is_empty());
     assert_eq!(
@@ -151,6 +155,24 @@ fn generated_go_callfacts_drive_blast_radius_results() {
             vec!["app/calls.go::InterfaceCallerOuter".to_owned()],
         ]
     );
+}
+
+#[test]
+fn exhaustive_traversal_crosses_multiple_source_library_packages() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/go-multi-library");
+    let artifact = build_go_codegraph(&fixture).expect("multi-library graph");
+    let result = CallGraphIndex::new(&artifact)
+        .blast_radius("library.Parse", None)
+        .expect("reverse library traversal");
+
+    assert_eq!(
+        result.callers_by_depth,
+        [
+            vec!["middleware/handle.go::Handle".to_owned()],
+            vec!["app/entry.go::Serve".to_owned()],
+        ]
+    );
+    assert!(result.possible_callers_by_depth.is_empty());
 }
 
 #[test]
@@ -165,7 +187,7 @@ fn refresh_reverts_to_syntax_edges_when_sidecar_is_removed_or_stale() {
     assert_ne!(without_sidecar.manifest_key, initial.manifest_key);
     assert_eq!(
         CallGraphIndex::new(&without_sidecar)
-            .blast_radius("app.Worker.Execute", 1)
+            .blast_radius("app.Worker.Execute", Some(1))
             .expect("syntax fallback result")
             .callers_by_depth,
         [vec!["app/calls.go::InterfaceCaller".to_owned()]],
@@ -195,7 +217,7 @@ fn refresh_reverts_to_syntax_edges_when_sidecar_is_removed_or_stale() {
         refresh_codegraph(workspace.path()).expect("inconsistent call-site range should fall back");
     assert_eq!(
         CallGraphIndex::new(&invalid_range_fallback)
-            .blast_radius("app.Worker.Execute", 1)
+            .blast_radius("app.Worker.Execute", Some(1))
             .expect("invalid-range syntax fallback")
             .callers_by_depth,
         [vec!["app/calls.go::InterfaceCaller".to_owned()]]
@@ -210,7 +232,7 @@ fn refresh_reverts_to_syntax_edges_when_sidecar_is_removed_or_stale() {
     let (_, stale_fallback) = refresh_codegraph(workspace.path()).expect("stale sidecar fallback");
     assert_eq!(
         CallGraphIndex::new(&stale_fallback)
-            .blast_radius("app.Worker.Execute", 1)
+            .blast_radius("app.Worker.Execute", Some(1))
             .expect("stale syntax fallback")
             .callers_by_depth,
         [vec!["app/calls.go::InterfaceCaller".to_owned()]]
@@ -222,7 +244,7 @@ fn refresh_reverts_to_syntax_edges_when_sidecar_is_removed_or_stale() {
         refresh_codegraph(workspace.path()).expect("invalid sidecar should not block graph");
     assert_eq!(
         CallGraphIndex::new(&invalid_fallback)
-            .blast_radius("app.Worker.Execute", 1)
+            .blast_radius("app.Worker.Execute", Some(1))
             .expect("invalid-sidecar syntax fallback")
             .callers_by_depth,
         [vec!["app/calls.go::InterfaceCaller".to_owned()]]
