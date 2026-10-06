@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - "rust/**"
+      - "container/zg-loopback-proxy/**"
       - ".github/workflows/publish-container.yml"
   push:
     branches: [main]
     tags: ["zg-v*"]
     paths:
       - "rust/**"
+      - "container/zg-loopback-proxy/**"
       - ".github/workflows/publish-container.yml"
   workflow_dispatch:
     inputs:
@@ -32,6 +34,7 @@ concurrency:
 
 env:
   IMAGE_NAME: quay.io/jordigilh/zvec-grep
+  PROXY_IMAGE_NAME: quay.io/jordigilh/zg-loopback-proxy
 
 jobs:
   container:
@@ -83,5 +86,31 @@ jobs:
             VERSION=${{ github.ref_name }}
           cache-from: type=gha,scope=zg-container
           cache-to: type=gha,mode=max,scope=zg-container
+          provenance: mode=max
+          sbom: true
+
+      - name: Compute proxy image metadata
+        id: proxy-metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.PROXY_IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=raw,value=${{ inputs.image_tag }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.image_tag != '' }}
+
+      - name: Build and publish loopback proxy
+        uses: docker/build-push-action@v6
+        with:
+          context: ./container/zg-loopback-proxy
+          file: ./container/zg-loopback-proxy/Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
+          tags: ${{ steps.proxy-metadata.outputs.tags }}
+          labels: ${{ steps.proxy-metadata.outputs.labels }}
+          cache-from: type=gha,scope=zg-loopback-proxy
+          cache-to: type=gha,mode=max,scope=zg-loopback-proxy
           provenance: mode=max
           sbom: true
