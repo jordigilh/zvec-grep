@@ -31,37 +31,43 @@
       "path": "crates/core/src/config/bootstrap.rs",
       "line": 50,
       "target_name": "load",
-      "caller": {"path": "crates/core/src/config/bootstrap.rs", "line": 49},
+      "caller": { "path": "crates/core/src/config/bootstrap.rs", "line": 49 },
       "expected_class": "static",
-      "target": {"path": "crates/core/src/config/mod.rs", "line": 216}
+      "target": { "path": "crates/core/src/config/mod.rs", "line": 216 }
     },
     {
       "path": "crates/core/src/config/cluster/mod.rs",
       "line": 227,
       "target_name": "validate_authority",
-      "caller": {"path": "crates/core/src/config/cluster/mod.rs", "line": 223},
+      "caller": {
+        "path": "crates/core/src/config/cluster/mod.rs",
+        "line": 223
+      },
       "expected_class": "static",
-      "target": {"path": "crates/core/src/config/validate/cluster/mod.rs", "line": 19}
+      "target": {
+        "path": "crates/core/src/config/validate/cluster/mod.rs",
+        "line": 19
+      }
     },
     {
       "path": "benchmarks/src/proxy/envoy.rs",
       "line": 35,
       "target_name": "into",
-      "caller": {"path": "benchmarks/src/proxy/envoy.rs", "line": 33},
+      "caller": { "path": "benchmarks/src/proxy/envoy.rs", "line": 33 },
       "expected_class": "possible"
     },
     {
       "path": "crates/core/src/logging.rs",
       "line": 212,
       "target_name": "function-value",
-      "caller": {"path": "crates/core/src/logging.rs", "line": 206},
+      "caller": { "path": "crates/core/src/logging.rs", "line": 206 },
       "expected_class": "function-value"
     },
     {
       "path": "benchmarks/src/net.rs",
       "line": 108,
       "target_name": "new",
-      "caller": {"path": "benchmarks/src/net.rs", "line": 107},
+      "caller": { "path": "benchmarks/src/net.rs", "line": 107 },
       "expected_class": "external"
     }
   ]
