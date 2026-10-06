@@ -593,11 +593,12 @@ pub struct GraphQueryArgs {
 
 #[derive(Clone, Debug, Subcommand)]
 pub enum GraphQueryAction {
-    /// List direct and transitive callers of a function.
+    /// List direct and transitive callers of a function. Omit `--depth` for
+    /// complete reverse reachability.
     BlastRadius {
         function: String,
-        #[arg(long, default_value_t = 2)]
-        depth: usize,
+        #[arg(long)]
+        depth: Option<usize>,
     },
     /// List reverse dependencies of any codegraph node over selected relations.
     Affected {
@@ -1854,8 +1855,25 @@ mod tests {
         assert_eq!(artifact, PathBuf::from("/workspace/graph.json"));
         assert!(matches!(
             action,
-            GraphQueryAction::BlastRadius { function, depth: 4 } if function == "reconcile"
+            GraphQueryAction::BlastRadius { function, depth: Some(4) } if function == "reconcile"
         ));
+
+        let plan = Cli::try_parse_from([
+            "zg",
+            "--graph-query",
+            "graph.json",
+            "blast-radius",
+            "reconcile",
+        ])
+        .expect("parse omitted depth")
+        .into_plan(PathBuf::from("/workspace"))
+        .expect("plan");
+        let CliPlan::GraphQuery { action, .. } = plan else {
+            panic!("graph query plan")
+        };
+        assert!(
+            matches!(action, GraphQueryAction::BlastRadius { function, depth: None } if function == "reconcile")
+        );
     }
 
     #[test]

@@ -585,6 +585,9 @@ impl CallGraphIndex {
 
     /// Finds callers of a function by depth, like `CocoIndex`'s blast-radius query.
     ///
+    /// An omitted depth traverses until the reverse frontier is empty. An
+    /// explicit depth limits traversal to that many hops.
+    ///
     /// # Errors
     ///
     /// Returns [`CodeGraphError::GraphNodeNotFound`] or
@@ -592,7 +595,7 @@ impl CallGraphIndex {
     pub fn blast_radius(
         &self,
         function: &str,
-        depth: usize,
+        depth: Option<usize>,
     ) -> CodeGraphResult<CallGraphBlastRadius> {
         let target = self.resolve_node(function)?;
         let mut seen = HashSet::from([target]);
@@ -600,7 +603,7 @@ impl CallGraphIndex {
         let mut frontier = vec![target];
         let mut callers_by_depth = Vec::new();
 
-        for _ in 0..depth {
+        while !frontier.is_empty() && depth.is_none_or(|limit| callers_by_depth.len() < limit) {
             let mut next = Vec::new();
             for node in frontier {
                 for caller in self.graph.neighbors_directed(node, Direction::Incoming) {
@@ -626,7 +629,7 @@ impl CallGraphIndex {
         let mut queue = VecDeque::from([(target, false, 0_usize)]);
         let mut visited_states = HashSet::from([(target, false)]);
         while let Some((node, uncertain, distance)) = queue.pop_front() {
-            if distance >= depth {
+            if depth.is_some_and(|limit| distance >= limit) {
                 continue;
             }
             for caller in self.graph.neighbors_directed(node, Direction::Incoming) {
@@ -1488,7 +1491,7 @@ fn display_name(node: &CodeGraphNode) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, fs};
+    use std::{collections::BTreeSet, fmt::Write as _, fs};
 
     use tempfile::tempdir;
 
@@ -1508,7 +1511,7 @@ mod tests {
         let artifact = build_go_codegraph(directory.path()).expect("graph");
         let index = CallGraphIndex::new(&artifact);
 
-        let blast = index.blast_radius("target", 3).expect("blast radius");
+        let blast = index.blast_radius("target", Some(3)).expect("blast radius");
         assert_eq!(blast.function, "main.go::target");
         assert_eq!(
             blast.callers_by_depth,
@@ -1519,6 +1522,29 @@ mod tests {
         );
         assert_eq!(blast.total_calls, 3);
         assert_eq!(blast.unresolved_calls, 0);
+
+        assert_eq!(
+            index
+                .blast_radius("target", None)
+                .expect("complete blast radius")
+                .callers_by_depth,
+            blast.callers_by_depth,
+            "omitted depth must traverse to the empty frontier"
+        );
+        assert!(
+            index
+                .blast_radius("target", Some(0))
+                .expect("zero depth")
+                .callers_by_depth
+                .is_empty()
+        );
+        assert_eq!(
+            index
+                .blast_radius("target", Some(1))
+                .expect("one hop")
+                .callers_by_depth,
+            blast.callers_by_depth[..1]
+        );
 
         let affected = index
             .affected("target", 3, Some(&[CodeGraphRelationKind::Calls]), false)
@@ -1556,6 +1582,68 @@ mod tests {
                 .expect("unreachable path")
                 .path,
             None
+        );
+    }
+
+    #[test]
+    fn exhaustive_blast_radius_handles_deep_branching_cycles_and_shortest_buckets() {
+        let directory = tempdir().expect("workspace");
+        let mut source = String::from("package main\n\nfunc target() {}\n");
+        for index in 1..=12 {
+            let function_name = format!("node{index}");
+            let invoked_name = if index == 1 {
+                "target".to_owned()
+            } else {
+                format!("node{}", index - 1)
+            };
+            writeln!(source, "func {function_name}() {{ {invoked_name}() }}")
+                .expect("writing generated Go source to String cannot fail");
+        }
+        source.push_str("func branch() { target() }\nfunc cycle() { target(); cycle() }\n");
+        fs::write(directory.path().join("main.go"), source).expect("Go source");
+        let index = CallGraphIndex::new(&build_go_codegraph(directory.path()).expect("graph"));
+
+        let complete = index
+            .blast_radius("target", None)
+            .expect("complete blast radius");
+        assert_eq!(complete.callers_by_depth.len(), 12);
+        assert_eq!(
+            complete.callers_by_depth[0],
+            ["main.go::branch", "main.go::cycle", "main.go::node1"]
+        );
+        assert_eq!(complete.callers_by_depth[11], ["main.go::node12"]);
+        assert_eq!(
+            complete
+                .callers_by_depth
+                .iter()
+                .flatten()
+                .filter(|name| *name == "main.go::cycle")
+                .count(),
+            1
+        );
+        assert_eq!(
+            complete,
+            index
+                .blast_radius("target", None)
+                .expect("repeat blast radius")
+        );
+        let limited = index
+            .blast_radius("target", Some(11))
+            .expect("limited blast radius");
+        assert_eq!(limited.callers_by_depth.len(), 11);
+        assert_eq!(
+            index
+                .blast_radius("target", Some(1))
+                .expect("one hop")
+                .callers_by_depth[0],
+            ["main.go::branch", "main.go::cycle", "main.go::node1"]
+        );
+        assert!(
+            index
+                .blast_radius("target", Some(0))
+                .expect("zero hops")
+                .callers_by_depth
+                .is_empty()
         );
     }
 
@@ -1614,11 +1702,11 @@ mod tests {
         let index = CallGraphIndex::new(&artifact);
 
         assert!(matches!(
-            index.blast_radius("duplicate", 1),
+            index.blast_radius("duplicate", Some(1)),
             Err(CodeGraphError::GraphNodeAmbiguous { .. })
         ));
         assert!(matches!(
-            index.blast_radius("missing", 1),
+            index.blast_radius("missing", Some(1)),
             Err(CodeGraphError::GraphNodeNotFound { .. })
         ));
     }
@@ -1681,7 +1769,7 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert_eq!(clustered_methods, method_displays);
         assert!(matches!(
-            index.blast_radius("main.go::Value", 1),
+            index.blast_radius("main.go::Value", Some(1)),
             Err(CodeGraphError::GraphNodeAmbiguous { .. })
         ));
     }

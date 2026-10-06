@@ -28,37 +28,37 @@
       "path": "src/components/AgentBubble.tsx",
       "line": 168,
       "target_name": "formatTime",
-      "caller": {"path": "src/components/AgentBubble.tsx", "line": 33},
+      "caller": { "path": "src/components/AgentBubble.tsx", "line": 33 },
       "expected_class": "static",
-      "target": {"path": "src/components/AgentBubble.tsx", "line": 29}
+      "target": { "path": "src/components/AgentBubble.tsx", "line": 29 }
     },
     {
       "path": "src/components/ChatContainer.tsx",
       "line": 204,
       "target_name": "findApprovalMessageIndex",
-      "caller": {"path": "src/components/ChatContainer.tsx", "line": 27},
+      "caller": { "path": "src/components/ChatContainer.tsx", "line": 27 },
       "expected_class": "static",
-      "target": {"path": "src/lib/approval-dedup.ts", "line": 37}
+      "target": { "path": "src/lib/approval-dedup.ts", "line": 37 }
     },
     {
       "path": "src/components/AgentBubble.tsx",
       "line": 149,
       "target_name": "onApprove",
-      "caller": {"path": "src/components/AgentBubble.tsx", "line": 33},
+      "caller": { "path": "src/components/AgentBubble.tsx", "line": 33 },
       "expected_class": "possible"
     },
     {
       "path": "src/components/ChatContainer.tsx",
       "line": 275,
       "target_name": "submitInput",
-      "caller": {"path": "src/components/ChatContainer.tsx", "line": 27},
+      "caller": { "path": "src/components/ChatContainer.tsx", "line": 27 },
       "expected_class": "function-value"
     },
     {
       "path": "src/components/ChatContainer.tsx",
       "line": 265,
       "target_name": "requestAnimationFrame",
-      "caller": {"path": "src/components/ChatContainer.tsx", "line": 27},
+      "caller": { "path": "src/components/ChatContainer.tsx", "line": 27 },
       "expected_class": "external"
     }
   ]
