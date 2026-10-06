@@ -101,32 +101,6 @@ jobs:
             type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
             type=raw,value=${{ inputs.image_tag }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.image_tag != '' }}
 
-      - name: Ensure proxy repository exists
-        if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.publish)
-        env:
-          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
-        run: |
-          set -euo pipefail
-          repo_url="https://quay.io/api/v1/repository/jordigilh/zg-loopback-proxy"
-          response_file="$RUNNER_TEMP/zg-loopback-proxy-repository.json"
-          status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
-            --header "Authorization: Bearer ${QUAY_TOKEN}" \
-            "$repo_url")"
-          if [[ "$status" == 200 ]]; then
-            echo "Quay repository already exists: jordigilh/zg-loopback-proxy"
-            exit 0
-          fi
-          if [[ "$status" != 404 ]]; then
-            cat "$response_file" >&2
-            echo "Unexpected Quay repository lookup status: $status" >&2
-            exit 1
-          fi
-          curl --fail-with-body --silent --show-error --request POST \
-            --header "Authorization: Bearer ${QUAY_TOKEN}" \
-            --header 'Content-Type: application/json' \
-            --data '{"namespace":"jordigilh","repository":"zg-loopback-proxy","visibility":"public","description":"Loopback TCP bridge for the zvec-grep container"}' \
-            'https://quay.io/api/v1/repository'
-
       - name: Build and publish loopback proxy
         uses: docker/build-push-action@v6
         with:
