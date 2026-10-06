@@ -1,6 +1,7 @@
 # Go call-facts fixtures and sidecars pin source byte ranges and SHA-256
 # digests. Keep their source inputs byte-identical across checkout platforms.
 *.go text eol=lf
+*.ts text eol=lf
 go.mod text eol=lf
 go.sum text eol=lf
 go.work text eol=lf

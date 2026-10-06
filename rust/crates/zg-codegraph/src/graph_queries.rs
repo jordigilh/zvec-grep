@@ -1491,7 +1491,7 @@ fn display_name(node: &CodeGraphNode) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, fs};
+    use std::{collections::BTreeSet, fmt::Write as _, fs};
 
     use tempfile::tempdir;
 
@@ -1590,13 +1590,14 @@ mod tests {
         let directory = tempdir().expect("workspace");
         let mut source = String::from("package main\n\nfunc target() {}\n");
         for index in 1..=12 {
-            let caller = format!("node{index}");
-            let callee = if index == 1 {
+            let function_name = format!("node{index}");
+            let invoked_name = if index == 1 {
                 "target".to_owned()
             } else {
                 format!("node{}", index - 1)
             };
-            source.push_str(&format!("func {caller}() {{ {callee}() }}\n"));
+            writeln!(source, "func {function_name}() {{ {invoked_name}() }}")
+                .expect("writing generated Go source to String cannot fail");
         }
         source.push_str("func branch() { target() }\nfunc cycle() { target(); cycle() }\n");
         fs::write(directory.path().join("main.go"), source).expect("Go source");
