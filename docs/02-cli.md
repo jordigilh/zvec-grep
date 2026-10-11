@@ -125,11 +125,11 @@ Core options:
 | `--endpoint <url>` | Remote provider endpoint |
 | `--model-cache <path>` | Local model cache directory |
 | `--device <device>` | `auto`, `cpu`, `metal`, `vulkan`, or `cuda` |
-| `--embedding-concurrency <n>` | Concurrent Embedding tasks |
+| `--index-embedding-concurrency <n>` | Concurrent Embedding tasks |
 | `--allow-remote` | Authorize Remote Embedding for this command |
 
 Local Potion embedding tasks run on worker threads. They default to two workers;
-`--embedding-concurrency` can override that value for larger machines.
+`--index-embedding-concurrencyy` can override that value for larger machines.
 
 File discovery accepts `-g/--glob`, `--iglob`, `-t/--type`, `-T/--type-not`,
 `--hidden`, `--no-ignore`, `--ignore-file`, `--max-depth`, `--max-filesize`, and
@@ -158,8 +158,8 @@ scripts.
 ## `zg --install` and `zg --uninstall`
 
 ```text
-zg --install [--target codex|claude|qwen|qoder|opencode|cursor|copilot|vscode|all|auto] [--mcp-transport stdio|http] [--mcp-toolset agent|full] [--yes] [--force]
-zg --uninstall [--target codex|claude|qwen|qoder|opencode|cursor|copilot|vscode|all|auto] [--yes]
+zg --install [--target codex|claude|qwen|qoder|opencode|cursor|copilot|vscode|grok|all|auto] [--mcp-transport stdio|http] [--mcp-toolset agent|full] [--yes] [--force]
+zg --uninstall [--target codex|claude|qwen|qoder|opencode|cursor|copilot|vscode|grok|all|auto] [--yes]
 ```
 
 `--target` is repeatable. `qoder` is the single Qoder target and configures
@@ -175,6 +175,10 @@ the Copilot CLI. `zg --install` also accepts:
 | `--mcp-tool-timeout <seconds>` | Codex, Qwen Code, both Qoder clients, OpenCode, and GitHub Copilot MCP timeout; default 600 seconds |
 | `--mcp-token-env <name>` | Environment variable containing the server token |
 | `--force` | Replace a conflicting unmanaged `zvec_grep` entry |
+
+The `grok` target keeps Grok Build's own per-call timeout default, which is
+already generous, and manages tool pre-approval through the `[permission]`
+table instead.
 
 See [Agent integrations](./01-agents.md) before using `--force`.
 

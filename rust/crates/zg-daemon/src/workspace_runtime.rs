@@ -58,7 +58,7 @@ struct RuntimeManagerInner {
     runtimes: Mutex<HashMap<PathBuf, Arc<WorkspaceRuntime>>>,
     shutdown: CancellationToken,
     closed: AtomicBool,
-    idle_ttl: std::time::Duration,
+    idle_ttl: Option<std::time::Duration>,
     maintenance: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -81,13 +81,17 @@ struct WorkspaceRuntime {
 struct CachedIndexStatus {
     epoch: u64,
     snapshot: Option<IndexStatusSnapshot>,
+    /// Running jobs may use these counts after the public status is invalidated.
+    completion_baseline: Option<IndexStatusSnapshot>,
     job: Option<(uuid::Uuid, JobState)>,
 }
 
 impl CachedIndexStatus {
     fn invalidate(&mut self) -> u64 {
         self.epoch = self.epoch.wrapping_add(1);
-        self.snapshot = None;
+        if let Some(snapshot) = self.snapshot.take() {
+            self.completion_baseline = Some(snapshot);
+        }
         self.epoch
     }
 
@@ -101,7 +105,7 @@ impl CachedIndexStatus {
             return false;
         }
         self.job = job;
-        self.snapshot = Some(IndexStatusSnapshot {
+        let snapshot = IndexStatusSnapshot {
             status: info.index_status(),
             stats: info.status.clone(),
             checked_epoch_ms: u64::try_from(
@@ -111,7 +115,9 @@ impl CachedIndexStatus {
                     .as_millis(),
             )
             .unwrap_or(u64::MAX),
-        });
+        };
+        self.completion_baseline = Some(snapshot.clone());
+        self.snapshot = Some(snapshot);
         true
     }
 }
@@ -230,20 +236,44 @@ impl WorkspaceWatcherFactoryPort for EngineWatcherFactory {
 }
 
 impl WorkspaceRuntimeManager {
+    #[cfg(test)]
     pub(crate) fn native(engine: Arc<ZvecGrep>) -> Self {
-        Self::new(
+        Self::native_with_idle_ttl(engine, Some(Self::DEFAULT_IDLE_TTL))
+    }
+
+    pub(crate) fn native_with_idle_ttl(
+        engine: Arc<ZvecGrep>,
+        idle_ttl: Option<std::time::Duration>,
+    ) -> Self {
+        Self::new_with_idle_ttl(
             Arc::new(ZvecGrepIndexExecutor {
                 engine: Arc::clone(&engine),
             }),
             Arc::new(EngineWatcherFactory { engine }),
             SchedulerConfig::default(),
+            idle_ttl,
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn new(
         executor: Arc<dyn IndexExecutor>,
         watcher_factory: Arc<dyn WorkspaceWatcherFactoryPort>,
         scheduler_config: SchedulerConfig,
+    ) -> Self {
+        Self::new_with_idle_ttl(
+            executor,
+            watcher_factory,
+            scheduler_config,
+            Some(Self::DEFAULT_IDLE_TTL),
+        )
+    }
+
+    pub(crate) fn new_with_idle_ttl(
+        executor: Arc<dyn IndexExecutor>,
+        watcher_factory: Arc<dyn WorkspaceWatcherFactoryPort>,
+        scheduler_config: SchedulerConfig,
+        idle_ttl: Option<std::time::Duration>,
     ) -> Self {
         Self {
             inner: Arc::new(RuntimeManagerInner {
@@ -253,7 +283,7 @@ impl WorkspaceRuntimeManager {
                 runtimes: Mutex::new(HashMap::new()),
                 shutdown: CancellationToken::new(),
                 closed: AtomicBool::new(false),
-                idle_ttl: Self::DEFAULT_IDLE_TTL,
+                idle_ttl,
                 maintenance: Mutex::new(None),
             }),
         }
@@ -1011,10 +1041,10 @@ impl IndexOperationProvider for WorkspaceRuntimeManager {
         let runtime = lock(&self.inner.runtimes).get(&canonical_root).cloned()?;
         let snapshot = WorkspaceRuntimeManager::runtime_snapshot(self, &canonical_root);
         let job = self.job_for_root(&canonical_root);
-        let index_status = if job
+        let active = job
             .as_ref()
-            .is_some_and(|job| matches!(job.state, JobState::Queued | JobState::Running))
-        {
+            .is_some_and(|job| matches!(job.state, JobState::Queued | JobState::Running));
+        let index_status = if active {
             None
         } else {
             let cache = lock(&runtime.index_status);
@@ -1025,6 +1055,9 @@ impl IndexOperationProvider for WorkspaceRuntimeManager {
         };
         Some(IndexRuntimeSnapshot {
             index_status,
+            completion_baseline: active
+                .then(|| lock(&runtime.index_status).completion_baseline.clone())
+                .flatten(),
             watcher_active: snapshot.watcher_active,
             dirty_revision: snapshot.dirty_revision,
             indexed_revision: snapshot.indexed_revision,
@@ -1449,6 +1482,25 @@ mod tests {
             status: Some(IndexStats::default()),
             suggestion: None,
         }
+    }
+
+    #[test]
+    fn invalidating_status_keeps_only_the_completion_baseline() {
+        let mut cached = super::CachedIndexStatus::default();
+        let mut info = inspected_info();
+        let stats = info.status.as_mut().expect("index status");
+        stats.files_scanned = 1001;
+        stats.files_unchanged = 1000;
+        let epoch = cached.invalidate();
+        assert!(cached.record(epoch, &info, None));
+        cached.invalidate();
+        assert!(cached.snapshot.is_none());
+        let stats = cached
+            .completion_baseline
+            .as_ref()
+            .and_then(|baseline| baseline.stats.as_ref())
+            .expect("completion baseline");
+        assert_eq!((stats.files_unchanged, stats.files_scanned), (1000, 1001));
     }
 
     #[test]
@@ -1954,6 +2006,112 @@ mod tests {
             executor.calls.lock().expect("calls should be readable")[2].changes,
             [IndexChange::Rescan]
         );
+    }
+
+    async fn assert_nested_index_after_parent_query(rebuild: bool) {
+        use zg_engine::{
+            ZvecGrep,
+            api::{
+                context::{
+                    ContextOptions,
+                    options::{ContextRoute, ContextRouteMode, RefreshPolicy},
+                },
+                index::options::{Device, EmbeddingModelSpec, ScanRulesUpdate},
+            },
+        };
+        use zg_transport_mcp::IndexOperationProvider;
+
+        let directory = tempdir().expect("nested workspaces");
+        let root = std::fs::canonicalize(directory.path()).expect("parent root");
+        let child = root.join("sub");
+        std::fs::create_dir(root.join("docs")).expect("parent sources");
+        std::fs::create_dir_all(child.join("src")).expect("child sources");
+        let engine = Arc::new(ZvecGrep::new());
+        let mut options = IndexOptions {
+            root: Some(root.clone()),
+            name: Some(format!("nested-parent-{}", uuid::Uuid::new_v4())),
+            embedding: Some(EmbeddingModelSpec {
+                reference: "local/potion-retrieval-32m".into(),
+                revision: None,
+                cache_dir: None,
+                endpoint: None,
+                device: Device::Cpu,
+            }),
+            scan: ScanRulesUpdate {
+                globs: Some(vec!["docs/**".into()]),
+                ..ScanRulesUpdate::default()
+            },
+            ..IndexOptions::default()
+        };
+        engine.index(options.clone()).await.expect("parent index");
+        let manager = WorkspaceRuntimeManager::native(Arc::clone(&engine));
+        let result = IndexOperationProvider::search(
+            &manager,
+            &engine,
+            ContextOptions {
+                root: Some(child.clone()),
+                routes: vec![ContextRoute {
+                    mode: ContextRouteMode::Fts,
+                    query: "needle".into(),
+                }],
+                refresh: Some(RefreshPolicy::Wait),
+                auto_update: false,
+                ..ContextOptions::default()
+            },
+        )
+        .await
+        .expect("query discovers and refreshes parent index");
+        assert_eq!(result.root, root);
+        assert_eq!(manager.snapshot().active_runtimes, 1);
+        let parent_manifest = root.join(".zvec-grep/manifest.json");
+        let before = std::fs::read(&parent_manifest).expect("parent manifest");
+
+        options.root = Some(child.clone());
+        options.name = Some(format!("nested-child-{}", uuid::Uuid::new_v4()));
+        options.embedding.as_mut().expect("child model").reference =
+            "local/potion-code-16m-v2".into();
+        options.scan.globs = Some(vec!["src/**".into()]);
+        options.rebuild = rebuild;
+        let indexed = manager
+            .submit_index(options, true)
+            .await
+            .expect("child submission");
+        assert_eq!(
+            indexed.job.state,
+            super::JobState::Succeeded,
+            "{:?}",
+            indexed.job.error
+        );
+        assert_eq!(indexed.job.canonical_root, child);
+        assert!(child.join(".zvec-grep/manifest.json").is_file());
+        assert_eq!(
+            std::fs::read(parent_manifest).expect("parent manifest unchanged"),
+            before
+        );
+        assert_eq!(
+            engine
+                .info(InfoOptions {
+                    root: Some(child.clone()),
+                    include_status: false
+                })
+                .await
+                .expect("child info")
+                .root,
+            child
+        );
+        assert_eq!(manager.snapshot().active_runtimes, 2);
+        manager.shutdown_all().await.expect("runtime shutdown");
+        engine.close();
+    }
+
+    #[tokio::test]
+    async fn nested_index_after_parent_query_uses_child_root() {
+        assert_nested_index_after_parent_query(false).await;
+    }
+
+    #[tokio::test]
+    async fn nested_index_rebuild_after_parent_query_keeps_parent() {
+        assert_nested_index_after_parent_query(true).await;
     }
 
     #[tokio::test]

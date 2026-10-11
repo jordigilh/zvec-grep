@@ -4,16 +4,12 @@ use std::{
 };
 
 use thiserror::Error;
-use zg_engine::api::{
-    context::{
-        ContextResult,
-        result::{
-            CodeMetadata, ContentRange, ContextItem, ContextItemStatus, EntityMetadata,
-            MarkdownMetadata,
-        },
+use zg_engine::api::context::{
+    ContextResult,
+    result::{
+        CodeMetadata, ContentRange, ContextItem, ContextItemStatus, EntityMetadata,
+        MarkdownMetadata,
     },
-    index::IndexResult,
-    info::{InfoResult, result::IndexCompatibility},
 };
 
 /// Writes a context reply in the stable CLI text layout.
@@ -226,143 +222,6 @@ fn range_label(range: &ContentRange) -> String {
         return format!("bytes:{start_offset}-{end_offset}");
     }
     "file".to_owned()
-}
-
-/// Writes workspace status with the requested presentation and color policy.
-/// # Errors
-/// Returns the underlying writer error.
-pub fn write_info_with_options(
-    mut writer: impl Write,
-    result: &InfoResult,
-    options: crate::OutputOptions,
-    terminal: bool,
-) -> io::Result<()> {
-    let mut buffer = Vec::new();
-    write_info_result(&mut buffer, result)?;
-    let color = options.color == crate::ColorMode::Always
-        || (options.color == crate::ColorMode::Auto
-            && terminal
-            && std::env::var_os("NO_COLOR").is_none());
-    for line in String::from_utf8_lossy(&buffer).lines() {
-        if color && let Some((key, value)) = line.split_once(':') {
-            writeln!(writer, "\x1b[1;36m{key}\x1b[0m:{value}")?;
-            continue;
-        }
-        if options.human {
-            writeln!(writer, "  {line}")?;
-        } else {
-            writeln!(writer, "{line}")?;
-        }
-    }
-    Ok(())
-}
-
-/// Writes a completed index reply.
-///
-/// # Errors
-///
-/// Returns the underlying writer error.
-pub fn write_index_result(
-    mut writer: impl Write,
-    root: &Path,
-    result: &IndexResult,
-) -> io::Result<()> {
-    writeln!(writer, "Workspace index: ready")?;
-    writeln!(writer, "Root: {}", root.display())?;
-    writeln!(
-        writer,
-        "Files: scanned={} added={} modified={} deleted={} unchanged={} failed={}",
-        result.files_scanned,
-        result.files_added,
-        result.files_modified,
-        result.files_deleted,
-        result.files_unchanged,
-        result.files_failed
-    )?;
-    for file in &result.failed_files {
-        writeln!(writer, "Failed: {}: {}", file.path.display(), file.reason)?;
-    }
-    writeln!(writer, "Entities: {}", result.entities_created)
-}
-
-/// Writes workspace index status.
-///
-/// # Errors
-///
-/// Returns the underlying writer error.
-pub fn write_info_result(mut writer: impl Write, result: &InfoResult) -> io::Result<()> {
-    let state = result.index_status().as_str();
-    writeln!(writer, "Workspace index: {state}")?;
-    writeln!(writer, "Root: {}", result.root.display())?;
-    writeln!(writer, "Index path: {}", result.index_path.display())?;
-    match &result.compatibility {
-        IndexCompatibility::Unbuilt => {}
-        IndexCompatibility::Compatible { version } => {
-            writeln!(writer, "Index version: {version}")?;
-        }
-        IndexCompatibility::RebuildRequired {
-            actual_version,
-            expected_version,
-            reason,
-        } => {
-            let actual =
-                actual_version.map_or_else(|| "unknown".to_owned(), |version| version.to_string());
-            writeln!(
-                writer,
-                "Index version: {actual} (expected {expected_version})"
-            )?;
-            writeln!(writer, "Reason: {reason}")?;
-            if result.suggestion.is_none() {
-                writeln!(writer, "Suggestion: zg --index --rebuild")?;
-            }
-        }
-    }
-    if let Some(index) = &result.workspace_index {
-        writeln!(
-            writer,
-            "Nested Git repositories: {}",
-            if index.scan.nested_git {
-                "included"
-            } else {
-                "excluded"
-            }
-        )?;
-        if let Some(embedding) = &index.embedding {
-            writeln!(
-                writer,
-                "Embedding: {}/{}",
-                embedding.provider, embedding.model
-            )?;
-        }
-        if let Some(fts) = &index.fts {
-            writeln!(
-                writer,
-                "FTS: tokenizer={} filters={}",
-                fts.tokenizer,
-                fts.filters.join(", ")
-            )?;
-        }
-    }
-    if let Some(status) = &result.status {
-        writeln!(
-            writer,
-            "Files: scanned={} indexed={} pending={} failed={}",
-            status.files_scanned, status.files_indexed, status.files_pending, status.files_failed
-        )?;
-        for file in &status.failed_files {
-            writeln!(writer, "Failed: {}: {}", file.path.display(), file.reason)?;
-        }
-        writeln!(writer, "Entities: {}", status.entities_indexed)?;
-        writeln!(
-            writer,
-            "Indexed source size: {} bytes",
-            status.indexed_size_bytes
-        )?;
-    }
-    if let Some(suggestion) = &result.suggestion {
-        writeln!(writer, "Suggestion: {suggestion}")?;
-    }
-    Ok(())
 }
 
 #[derive(Debug, Error)]
@@ -624,6 +483,10 @@ ZVEC_GREP_EMBEDDING.
 index endpoint, ZVEC_GREP_ENDPOINT, or provider default is used. Grants bind the
 canonical workspace root, model, and endpoint. Granting sends no remote data.
 
+Output:
+  --color <auto|always|never>       Color output (default: auto)
+  --no-color                        Disable color output
+
 Scopes used during operations:
   once                              Current CLI command or Agent tool call only
   workspace                         Persisted in this Workspace
@@ -667,10 +530,10 @@ Environment:
 See zg --help environment for daemon startup scope.";
 
 const INSTALL_HELP: &str = r"Usage:
-  zg --install [--target codex|claude|qwen|qoder|opencode|cursor|all|auto] [--mcp-transport stdio|http] [--mcp-toolset agent|full] [--yes] [--force]
+  zg --install [--target codex|claude|qwen|qoder|opencode|cursor|copilot|vscode|grok|all|auto] [--mcp-transport stdio|http] [--mcp-toolset agent|full] [--yes] [--force]
 
 Options:
-  --target <agent>                  codex, claude, qwen, qoder, opencode, cursor, auto, or all; repeatable
+  --target <agent>                  codex, claude, qwen, qoder, opencode, cursor, copilot, vscode, grok, auto, or all; repeatable
   --mcp-transport <stdio|http>      MCP connection mode (default: stdio)
   --mcp-toolset <agent|full>        Daemon MCP toolset (default: agent)
   --mcp-tool-timeout <seconds>      MCP tool timeout where supported (default: 600)
@@ -679,20 +542,26 @@ Options:
   --force                           Replace conflicting unmanaged configuration
 
 The qoder target configures Qoder CLI and Qoder IDE together.
+The copilot target configures GitHub Copilot CLI and Agent Host. The vscode
+target configures detected VS Code profiles and shared Copilot instructions.
+The grok target configures Grok Build's user-level config.toml, global
+rules file, and tool pre-approval.
 
 Interactive setup detects supported agents, configures stdio by default, and
 starts the shared daemon. In stdio mode an agent reconnect also starts the
 daemon automatically after a reboot. HTTP users manage later daemon restarts.
-Codex, Claude Code, Qwen Code, Qoder CLI, and OpenCode also receive managed
-guidance. Qoder IDE has no supported global Rules file, so only its MCP
-configuration is managed.
-Codex and Claude Code receive local tool pre-approval. Remote Embedding
+Codex, Claude Code, Qwen Code, Qoder CLI, OpenCode, Copilot, VS Code, and
+Grok Build receive managed guidance. Qoder IDE has no supported global Rules
+file, so only its MCP configuration is managed.
+Codex and Claude Code receive local tool pre-approval. Grok Build receives
+pre-approval through its permission rules unless the configuration already
+defines a [permission] table. Remote Embedding
 authorization remains separate and is requested by zvec-grep on first remote
 use. Restart the agent or open a new session after installation. This does not
 install the npm package.";
 
 const UNINSTALL_HELP: &str = r"Usage:
-  zg --uninstall [--target codex|claude|qwen|qoder|opencode|cursor|all|auto] [--yes]
+  zg --uninstall [--target codex|claude|qwen|qoder|opencode|cursor|copilot|vscode|grok|all|auto] [--yes]
 
 Removes zvec-grep-managed MCP configuration, agent-specific approval, and
 guidance. The qoder target removes the managed Qoder CLI and IDE integration
@@ -858,12 +727,17 @@ Advanced:
 Agent integration paths:
   CODEX_HOME            Codex configuration directory used by zg --install
   CLAUDE_CONFIG_DIR     Claude configuration directory used by zg --install
+  GROK_HOME             Grok Build configuration directory used by zg --install
   QWEN_HOME             Qwen Code configuration directory used by zg --install
   QODER_CONFIG_DIR      Qoder CLI configuration directory used by zg --install
   QODER_IDE_MCP_PATH    Full Qoder IDE SharedClientCache/mcp.json path used by zg --install
   QODER_IDE_EXECUTABLE  Qoder IDE executable used by automatic install-target detection
   OPENCODE_CONFIG       OpenCode configuration file used by zg --install
   CURSOR_CONFIG_DIR     Cursor configuration directory used by zg --install
+  COPILOT_HOME          GitHub Copilot configuration and instructions directory
+  VSCODE_USER_DIR       Complete VS Code User profile directory override
+  VSCODE_PORTABLE       VS Code portable installation directory
+  VSCODE_APPDATA        Base directory for VS Code release channels
 
 Precedence:
   Embedding runtime                 CLI > Workspace snapshot > Global config > Environment
@@ -887,36 +761,6 @@ mod output_tests {
         ContextContentRole, ContextCoverage, ContextDiagnostics, ContextItemKind, ContextSource,
         MatchedBy,
     };
-
-    #[test]
-    fn incompatible_status_shows_versions_reason_and_rebuild_guidance() {
-        use zg_engine::api::info::result::{InfoSource, WorkspaceIndexPolicy};
-        for (actual_version, actual_label) in [(Some(1), "1"), (None, "unknown")] {
-            let result = InfoResult {
-                root: "/workspace".into(),
-                indexed: false,
-                compatibility: IndexCompatibility::RebuildRequired {
-                    actual_version,
-                    expected_version: 2,
-                    reason: "unsupported persisted index".into(),
-                },
-                index_policy: WorkspaceIndexPolicy::Enabled,
-                home: "/workspace/.zvec-grep".into(),
-                index_path: "/workspace/.zvec-grep/storage".into(),
-                source: InfoSource::Unindexed,
-                workspace_index: None,
-                status: None,
-                suggestion: None,
-            };
-            let mut output = Vec::new();
-            write_info_result(&mut output, &result).expect("status output");
-            let output = String::from_utf8(output).expect("UTF-8");
-            assert!(output.contains("Workspace index: rebuild_required"));
-            assert!(output.contains(&format!("Index version: {actual_label} (expected 2)")));
-            assert!(output.contains("unsupported persisted index"));
-            assert!(output.contains("zg --index --rebuild"));
-        }
-    }
 
     fn indexed_item() -> ContextItem {
         ContextItem {
