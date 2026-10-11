@@ -43,6 +43,11 @@ use zg_transport_mcp::{
     IndexRuntimeSnapshot,
 };
 
+// A strict query must fail closed when watcher/index churn never reaches a
+// stable proof. Without a bound, every successor job can keep the request in
+// the reconciliation loop indefinitely.
+const MAX_STRICT_REFRESH_JOBS: usize = 8;
+
 mod freshness;
 use freshness::Freshness;
 
@@ -404,6 +409,7 @@ impl WorkspaceRuntimeManager {
             options.signal = None;
         }
         let mut scheduled = false;
+        let mut strict_jobs_waited = 0_usize;
         loop {
             let refresh = if wait {
                 runtime.refresh.lock().await
@@ -441,10 +447,18 @@ impl WorkspaceRuntimeManager {
                 // Coordination covers admission only. Every waiting request can
                 // subscribe to shared jobs while another request waits for them.
                 drop(refresh);
-                self.inner
-                    .scheduler
-                    .wait_for_root_idle_with_progress(&root, reporter.clone())
-                    .await;
+                if !self
+                    .wait_for_root_idle_with_progress_bounded(
+                        &root,
+                        reporter.clone(),
+                        &mut strict_jobs_waited,
+                    )
+                    .await?
+                {
+                    return Err(EngineError::resource_busy(
+                        "strict freshness could not be established while workspace indexing continued",
+                    ));
+                }
                 runtime
                     .settle_jobs(&self.inner.scheduler, reporter.clone())
                     .await;
@@ -457,6 +471,14 @@ impl WorkspaceRuntimeManager {
             }
             runtime.invalidate_status();
             options.changes = vec![IndexChange::Rescan];
+            if wait {
+                if strict_jobs_waited >= MAX_STRICT_REFRESH_JOBS {
+                    return Err(EngineError::resource_busy(
+                        "strict freshness could not be established while workspace indexing continued",
+                    ));
+                }
+                strict_jobs_waited += 1;
+            }
             let submitted = runtime
                 .submit_tracked(&self.inner.scheduler, options.clone(), JobReason::Watch)
                 .map_err(|error| WorkspaceRuntimeError::from(error).into_engine_error())?;
@@ -500,6 +522,36 @@ impl WorkspaceRuntimeManager {
                 ));
             }
             // Flush again after indexing to include events that arrived during it.
+        }
+    }
+
+    async fn wait_for_root_idle_with_progress_bounded(
+        &self,
+        root: &Path,
+        reporter: Option<zg_engine::api::index::progress::IndexProgressReporter>,
+        jobs_waited: &mut usize,
+    ) -> Result<bool, EngineError> {
+        loop {
+            if !self.inner.scheduler.has_active_root(&root.to_path_buf()) {
+                return Ok(true);
+            }
+            if *jobs_waited >= MAX_STRICT_REFRESH_JOBS {
+                return Ok(false);
+            }
+            let Some(job) = self.job_for_root(root) else {
+                tokio::task::yield_now().await;
+                continue;
+            };
+            if !matches!(job.state, JobState::Queued | JobState::Running) {
+                tokio::task::yield_now().await;
+                continue;
+            }
+            self.inner
+                .scheduler
+                .wait_with_progress(job.id, reporter.clone())
+                .await
+                .map_err(|error| WorkspaceRuntimeError::from(error).into_engine_error())?;
+            *jobs_waited += 1;
         }
     }
 
