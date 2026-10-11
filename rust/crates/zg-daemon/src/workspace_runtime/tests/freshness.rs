@@ -1,5 +1,6 @@
 use super::*;
 use crate::job_scheduler::JobReason;
+use crate::workspace_runtime::MAX_STRICT_REFRESH_JOBS;
 
 fn fixture(
     executor: Arc<dyn IndexExecutor>,
@@ -739,4 +740,125 @@ async fn waiting_for_existing_job_flushes_events_buffered_during_that_job() {
     waiting.await.expect("wait task").expect("fresh");
     assert!(!watcher.pending.load(Ordering::Acquire));
     manager.shutdown_all().await.expect("shutdown");
+}
+
+struct ChurningWatcher {
+    receiver: Arc<tokio::sync::Mutex<mpsc::Receiver<WorkspaceChangeBatch>>>,
+    delivered: mpsc::UnboundedSender<()>,
+    closes: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl WorkspaceWatchSessionPort for ChurningWatcher {
+    async fn next_changes(&self, control: &TaskControl) -> Result<WorkspaceChangeBatch, HostError> {
+        let mut receiver = self.receiver.lock().await;
+        tokio::select! {
+            () = control.cancellation.cancelled() => Err(HostError::cancelled(
+                "workspace watcher operation was cancelled",
+            )),
+            batch = receiver.recv() => {
+                let batch = batch.ok_or_else(|| HostError::resource_closed(
+                    "workspace watcher change stream has been closed",
+                ))?;
+                self.delivered.send(()).map_err(|_| {
+                    HostError::resource_closed("workspace watcher delivery channel is closed")
+                })?;
+                Ok(batch)
+            },
+        }
+    }
+
+    async fn flush_pending(&self) -> Result<(), HostError> {
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<(), HostError> {
+        self.closes.fetch_add(1, Ordering::AcqRel);
+        Ok(())
+    }
+}
+
+struct ChurningWatcherFactory(Arc<ChurningWatcher>);
+
+#[async_trait]
+impl WorkspaceWatcherFactoryPort for ChurningWatcherFactory {
+    async fn watch(
+        &self,
+        _request: &WatchRequest,
+        _control: &TaskControl,
+    ) -> Result<Arc<dyn WorkspaceWatchSessionPort>, HostError> {
+        Ok(self.0.clone())
+    }
+}
+
+#[tokio::test]
+async fn strict_wait_fails_closed_when_watcher_reconciliation_never_stabilizes() {
+    let workspace = tempdir().expect("workspace");
+    let root = workspace.path().canonicalize().expect("root");
+    let (started, mut jobs) = mpsc::unbounded_channel();
+    let executor = Arc::new(GatedExecutor {
+        started,
+        release: tokio::sync::Semaphore::new(0),
+    });
+    let (sender, receiver) = mpsc::channel(8);
+    let (delivered, mut deliveries) = mpsc::unbounded_channel();
+    let closes = Arc::new(AtomicUsize::new(0));
+    let watcher = Arc::new(ChurningWatcher {
+        receiver: Arc::new(tokio::sync::Mutex::new(receiver)),
+        delivered,
+        closes: Arc::clone(&closes),
+    });
+    let manager = WorkspaceRuntimeManager::new(
+        executor.clone(),
+        Arc::new(ChurningWatcherFactory(watcher)),
+        SchedulerConfig::default(),
+    );
+    let waiting = tokio::spawn({
+        let manager = manager.clone();
+        let root = root.clone();
+        async move {
+            manager
+                .refresh_index(
+                    IndexOptions {
+                        root: Some(root),
+                        ..IndexOptions::default()
+                    },
+                    true,
+                )
+                .await
+        }
+    });
+    for _ in 0..(MAX_STRICT_REFRESH_JOBS + 2) {
+        let Some(_) = tokio::time::timeout(Duration::from_secs(1), jobs.recv())
+            .await
+            .expect("strict refresh must keep making bounded progress")
+        else {
+            break;
+        };
+        let previous_revision = manager.runtime_snapshot(&root).dirty_revision;
+        sender
+            .send(WorkspaceChangeBatch {
+                changes: vec![WorkspaceChange::Rescan],
+            })
+            .await
+            .expect("churn event");
+        deliveries.recv().await.expect("churn delivery");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while manager.runtime_snapshot(&root).dirty_revision <= previous_revision {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("churn invalidates the runtime");
+        executor.release.add_permits(1);
+    }
+    let result = tokio::time::timeout(Duration::from_secs(2), waiting)
+        .await
+        .expect("strict refresh must be bounded")
+        .expect("strict refresh task");
+    executor.release.add_permits(MAX_STRICT_REFRESH_JOBS + 2);
+    let result = result.expect_err("strict refresh must not claim freshness during churn");
+    assert_eq!(result.code(), EngineError::RESOURCE_BUSY);
+    manager.shutdown_all().await.expect("shutdown");
+    assert_eq!(closes.load(Ordering::Acquire), 1);
 }
