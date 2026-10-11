@@ -75,6 +75,13 @@ impl WorkspaceRuntime {
                 == self.dirty_revision.load(Ordering::Acquire)
     }
 
+    pub(super) fn job_has_full_reconciliation_proof(&self, id: Uuid) -> bool {
+        lock(&self.freshness)
+            .jobs
+            .get(&id)
+            .is_some_and(|proof| proof.full_epoch.is_some())
+    }
+
     pub(super) fn submit_tracked(
         &self,
         scheduler: &IndexJobScheduler,
@@ -157,6 +164,7 @@ impl WorkspaceRuntime {
         lock(&self.freshness).jobs.is_empty()
     }
 
+    #[cfg(test)]
     pub(super) async fn settle_jobs(
         &self,
         scheduler: &IndexJobScheduler,

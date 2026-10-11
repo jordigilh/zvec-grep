@@ -1,6 +1,5 @@
 use super::*;
 use crate::job_scheduler::JobReason;
-use crate::workspace_runtime::MAX_STRICT_REFRESH_JOBS;
 
 fn fixture(
     executor: Arc<dyn IndexExecutor>,
@@ -188,7 +187,7 @@ async fn concurrent_waits_share_a_refresh_and_background_does_not_wait_for_it() 
 }
 
 #[tokio::test]
-async fn a_new_recovery_epoch_cannot_be_cleared_by_an_older_full_refresh() {
+async fn a_new_recovery_epoch_is_left_for_the_next_serialized_refresh() {
     let workspace = tempdir().expect("workspace");
     let root = workspace.path().canonicalize().expect("root");
     let (started, mut jobs) = mpsc::unbounded_channel();
@@ -203,6 +202,7 @@ async fn a_new_recovery_epoch_cannot_be_cleared_by_an_older_full_refresh() {
     };
     let waiting = tokio::spawn({
         let manager = manager.clone();
+        let options = options.clone();
         async move { manager.refresh_index(options, true).await }
     });
     jobs.recv().await.expect("first refresh");
@@ -211,14 +211,18 @@ async fn a_new_recovery_epoch_cannot_be_cleared_by_an_older_full_refresh() {
         .expect("runtime")
         .require_reconciliation();
     executor.release.add_permits(1);
+    assert!(waiting.await.expect("task").expect("captured refresh"));
+    let repair = tokio::spawn({
+        let manager = manager.clone();
+        async move { manager.refresh_index(options, true).await }
+    });
     let second = jobs
         .recv()
         .await
         .expect("new recovery needs another refresh");
     assert_eq!(second.changes, [IndexChange::Rescan]);
-    assert!(!waiting.is_finished());
     executor.release.add_permits(1);
-    waiting.await.expect("task").expect("fresh");
+    assert!(repair.await.expect("repair task").expect("fresh"));
     manager.shutdown_all().await.expect("shutdown");
 }
 
@@ -559,10 +563,7 @@ async fn background_refresh_accounts_for_late_watcher_notifications() {
 }
 
 #[tokio::test]
-async fn concurrent_waiters_receive_progress_before_shared_refresh_finishes() {
-    use zg_engine::api::index::progress::{
-        IndexProgress, IndexProgressPhase, IndexProgressReporter,
-    };
+async fn concurrent_waiters_serialize_and_reuse_completed_refresh() {
     let workspace = tempdir().expect("workspace");
     let (started, mut jobs) = mpsc::unbounded_channel();
     let executor = Arc::new(GatedExecutor {
@@ -580,41 +581,14 @@ async fn concurrent_waiters_receive_progress_before_shared_refresh_finishes() {
         async move { manager.refresh_index(options, true).await }
     });
     let running = jobs.recv().await.expect("shared job");
-    let (progress, mut received) = mpsc::unbounded_channel();
     let second = tokio::spawn({
         let manager = manager.clone();
-        async move {
-            manager
-                .refresh_index(
-                    IndexOptions {
-                        on_progress: Some(IndexProgressReporter::new(move |event| {
-                            let _ = progress.send(event);
-                        })),
-                        ..options
-                    },
-                    true,
-                )
-                .await
-        }
+        async move { manager.refresh_index(options, true).await }
     });
-    running
-        .on_progress
-        .expect("scheduler reporter")
-        .report(IndexProgress {
-            phase: IndexProgressPhase::Indexing,
-            files_total: Some(7),
-            files_indexed: Some(2),
-            files_failed: Some(0),
-            detail: None,
-            embedding: None,
-        });
-    let event = tokio::time::timeout(Duration::from_secs(2), received.recv())
-        .await
-        .expect("second waiter receives live progress")
-        .expect("event");
-    assert_eq!(event.files_total, Some(7));
+    tokio::task::yield_now().await;
     assert!(!first.is_finished());
     assert!(!second.is_finished());
+    assert_eq!(running.changes, [IndexChange::Rescan]);
     executor.release.add_permits(1);
     first.await.expect("first task").expect("first refresh");
     second.await.expect("second task").expect("second refresh");
@@ -732,7 +706,7 @@ impl WorkspaceWatcherFactoryPort for BufferedWatcherFactory {
 }
 
 #[tokio::test]
-async fn waiting_for_existing_job_flushes_events_buffered_during_that_job() {
+async fn waiting_for_existing_job_defers_buffered_events_to_the_next_refresh() {
     let workspace = tempdir().expect("workspace");
     let root = workspace.path().canonicalize().expect("root");
     let (started, mut jobs) = mpsc::unbounded_channel();
@@ -776,22 +750,32 @@ async fn waiting_for_existing_job_flushes_events_buffered_during_that_job() {
     while barriers.try_recv().is_ok() {}
     let waiting = tokio::spawn({
         let manager = manager.clone();
+        let options = options.clone();
         async move { manager.refresh_index(options, true).await }
     });
     barriers.recv().await.expect("pre-wait flush");
     watcher.pending.store(true, Ordering::Release);
     executor.release.add_permits(1);
+    assert!(!waiting.await.expect("wait task").expect("captured refresh"));
+    tokio::task::yield_now().await;
+    assert!(
+        jobs.try_recv().is_err(),
+        "the captured refresh does not chase pending events"
+    );
+    let next = tokio::spawn({
+        let manager = manager.clone();
+        async move { manager.refresh_index(options, true).await }
+    });
     let followup = tokio::time::timeout(Duration::from_secs(2), jobs.recv())
         .await
-        .expect("post-wait flush schedules buffered event")
+        .expect("next refresh flushes buffered event")
         .expect("followup");
     assert_eq!(
         followup.changes,
         [IndexChange::Upsert("during-index.txt".into())]
     );
-    assert!(!waiting.is_finished());
     executor.release.add_permits(1);
-    waiting.await.expect("wait task").expect("fresh");
+    assert!(!next.await.expect("next refresh task").expect("fresh"));
     assert!(!watcher.pending.load(Ordering::Acquire));
     manager.shutdown_all().await.expect("shutdown");
 }
@@ -846,7 +830,7 @@ impl WorkspaceWatcherFactoryPort for ChurningWatcherFactory {
 }
 
 #[tokio::test]
-async fn strict_wait_fails_closed_when_watcher_reconciliation_never_stabilizes() {
+async fn strict_wait_returns_after_the_captured_generation_during_watcher_churn() {
     let workspace = tempdir().expect("workspace");
     let root = workspace.path().canonicalize().expect("root");
     let (started, mut jobs) = mpsc::unbounded_channel();
@@ -882,13 +866,8 @@ async fn strict_wait_fails_closed_when_watcher_reconciliation_never_stabilizes()
                 .await
         }
     });
-    for _ in 0..(MAX_STRICT_REFRESH_JOBS + 2) {
-        let Some(_) = tokio::time::timeout(Duration::from_secs(1), jobs.recv())
-            .await
-            .expect("strict refresh must keep making bounded progress")
-        else {
-            break;
-        };
+    jobs.recv().await.expect("initial refresh");
+    for _ in 0..3 {
         let previous_revision = manager.runtime_snapshot(&root).dirty_revision;
         sender
             .send(WorkspaceChangeBatch {
@@ -904,15 +883,14 @@ async fn strict_wait_fails_closed_when_watcher_reconciliation_never_stabilizes()
         })
         .await
         .expect("churn invalidates the runtime");
-        executor.release.add_permits(1);
     }
+    executor.release.add_permits(1);
     let result = tokio::time::timeout(Duration::from_secs(2), waiting)
         .await
-        .expect("strict refresh must be bounded")
+        .expect("strict refresh must finish for its captured generation")
         .expect("strict refresh task");
-    executor.release.add_permits(MAX_STRICT_REFRESH_JOBS + 2);
-    let result = result.expect_err("strict refresh must not claim freshness during churn");
-    assert_eq!(result.code(), EngineError::RESOURCE_BUSY);
+    assert!(result.expect("captured generation should be fresh"));
+    executor.release.add_permits(2);
     manager.shutdown_all().await.expect("shutdown");
     assert_eq!(closes.load(Ordering::Acquire), 1);
 }
