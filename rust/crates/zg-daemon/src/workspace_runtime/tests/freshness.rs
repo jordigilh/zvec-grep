@@ -93,6 +93,60 @@ async fn repeated_clean_refreshes_and_narrow_changes_do_not_rescan() {
 }
 
 #[tokio::test]
+async fn a_clean_persisted_index_is_proven_without_submitting_a_rescan() {
+    let workspace = tempdir().expect("workspace");
+    let root = workspace.path().canonicalize().expect("root");
+    let executor = Arc::new(RecordingExecutor::default());
+    *executor.probe.lock().expect("probe should be writable") = Some(true);
+    let (manager, _sender) = fixture(executor.clone());
+    let options = IndexOptions {
+        root: Some(root),
+        ..IndexOptions::default()
+    };
+
+    assert!(
+        !manager
+            .refresh_index(options.clone(), true)
+            .await
+            .expect("clean probe")
+    );
+    assert!(executor.calls.lock().expect("calls").is_empty());
+    assert!(
+        !manager
+            .refresh_index(options, true)
+            .await
+            .expect("clean proof reuse")
+    );
+    assert!(executor.calls.lock().expect("calls").is_empty());
+    manager.shutdown_all().await.expect("shutdown");
+}
+
+#[tokio::test]
+async fn a_stale_probe_submits_one_full_diff_refresh() {
+    let workspace = tempdir().expect("workspace");
+    let root = workspace.path().canonicalize().expect("root");
+    let executor = Arc::new(RecordingExecutor::default());
+    *executor.probe.lock().expect("probe should be writable") = Some(false);
+    let (manager, _sender) = fixture(executor.clone());
+    let options = IndexOptions {
+        root: Some(root),
+        ..IndexOptions::default()
+    };
+
+    assert!(
+        manager
+            .refresh_index(options, true)
+            .await
+            .expect("stale probe refresh")
+    );
+    assert_eq!(
+        executor.calls.lock().expect("calls")[0].changes,
+        [IndexChange::Rescan]
+    );
+    manager.shutdown_all().await.expect("shutdown");
+}
+
+#[tokio::test]
 async fn concurrent_waits_share_a_refresh_and_background_does_not_wait_for_it() {
     let workspace = tempdir().expect("workspace");
     let root = workspace.path().canonicalize().expect("root");

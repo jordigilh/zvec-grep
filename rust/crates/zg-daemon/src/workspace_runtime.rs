@@ -24,7 +24,10 @@ use zg_engine::{
             IndexOptions, IndexResult,
             options::{ScanRulesUpdate, WorkspaceChange as IndexChange},
         },
-        info::{InfoOptions, InfoResult, result::IndexStatusSnapshot},
+        info::{
+            InfoOptions, InfoResult,
+            result::{IndexStatus, IndexStatusSnapshot},
+        },
     },
 };
 use zg_host_native::{
@@ -217,6 +220,18 @@ impl IndexExecutor for ZvecGrepIndexExecutor {
         }
     }
 
+    async fn probe_freshness(&self, root: &Path) -> Result<Option<bool>, EngineError> {
+        let info = self
+            .engine
+            .info(InfoOptions {
+                root: Some(root.to_path_buf()),
+                include_status: true,
+            })
+            .await?;
+        info.compatibility.ensure_compatible()?;
+        Ok(Some(matches!(info.index_status(), IndexStatus::Ready)))
+    }
+
     async fn drop_index(&self, options: InfoOptions) -> Result<bool, EngineError> {
         self.engine.drop_index(options).await
     }
@@ -395,6 +410,10 @@ impl WorkspaceRuntimeManager {
     }
 
     /// Returns whether refresh work was scheduled or is already in flight.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "strict admission, proof, and bounded writer coordination stay linear"
+    )]
     async fn refresh_index(
         &self,
         mut options: IndexOptions,
@@ -466,6 +485,12 @@ impl WorkspaceRuntimeManager {
                 // Reacquire coordination and drain it before trusting the proof.
                 continue;
             }
+            if let Some(proven) = self.prove_clean_reconciliation(&root, &runtime).await? {
+                if proven {
+                    return Ok(scheduled);
+                }
+                continue;
+            }
             if runtime.is_reconciled() {
                 return Ok(scheduled);
             }
@@ -523,6 +548,25 @@ impl WorkspaceRuntimeManager {
             }
             // Flush again after indexing to include events that arrived during it.
         }
+    }
+
+    async fn prove_clean_reconciliation(
+        &self,
+        root: &Path,
+        runtime: &WorkspaceRuntime,
+    ) -> Result<Option<bool>, EngineError> {
+        if !runtime.needs_reconciliation_probe()
+            || !matches!(self.inner.executor.probe_freshness(root).await?, Some(true))
+        {
+            return Ok(None);
+        }
+        // The status scan and the watcher barrier form one proof: no event may
+        // have arrived between the disk observation and the indexed revision.
+        self.flush_watcher(runtime).await?;
+        let observed_revision = runtime.dirty_revision.load(Ordering::Acquire);
+        Ok(Some(
+            runtime.complete_reconciliation_probe(observed_revision) && runtime.is_reconciled(),
+        ))
     }
 
     async fn wait_for_root_idle_with_progress_bounded(
@@ -905,9 +949,11 @@ impl WorkspaceRuntimeManager {
             task,
         });
         // Cover the interval between indexing and installing a watcher, including
-        // first activation. A barrier ensures the daemon has queued the reconciliation.
+        // first activation. The strict refresh barrier performs the persisted
+        // snapshot probe; this pending-only barrier must not manufacture a full
+        // workspace rescan on every daemon restart.
         if let Some(handle) = watcher.as_ref() {
-            handle.session.flush().await?;
+            handle.session.flush_pending().await?;
             let (acknowledge, acknowledged) = oneshot::channel();
             handle
                 .barrier
@@ -1394,6 +1440,7 @@ mod tests {
         calls: Mutex<Vec<IndexOptions>>,
         drops: AtomicUsize,
         fail: AtomicBool,
+        probe: Mutex<Option<bool>>,
     }
 
     struct FailingExecutor;
@@ -1416,6 +1463,13 @@ mod tests {
                 return Err(EngineError::internal("fixture index failed"));
             }
             Ok(IndexResult::default())
+        }
+
+        async fn probe_freshness(
+            &self,
+            _root: &std::path::Path,
+        ) -> Result<Option<bool>, EngineError> {
+            Ok(*self.probe.lock().expect("probe should be readable"))
         }
 
         async fn drop_index(&self, _options: InfoOptions) -> Result<bool, EngineError> {
