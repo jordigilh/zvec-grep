@@ -146,6 +146,38 @@ async fn a_stale_probe_submits_one_full_diff_refresh() {
 }
 
 #[tokio::test]
+async fn resident_refresh_rechecks_persisted_status_before_reusing_clean_proof() {
+    let workspace = tempdir().expect("workspace");
+    let root = workspace.path().canonicalize().expect("root");
+    let executor = Arc::new(RecordingExecutor::default());
+    *executor.probe.lock().expect("probe should be writable") = Some(true);
+    let (manager, _sender) = fixture(executor.clone());
+    let options = IndexOptions {
+        root: Some(root),
+        ..IndexOptions::default()
+    };
+
+    assert!(
+        !manager
+            .refresh_index(options.clone(), true)
+            .await
+            .expect("initial clean proof")
+    );
+    *executor.probe.lock().expect("probe should be writable") = Some(false);
+    assert!(
+        manager
+            .refresh_index(options, true)
+            .await
+            .expect("stale resident proof refresh")
+    );
+    assert_eq!(
+        executor.calls.lock().expect("calls")[0].changes,
+        [IndexChange::Rescan]
+    );
+    manager.shutdown_all().await.expect("shutdown");
+}
+
+#[tokio::test]
 async fn concurrent_waits_share_a_refresh_and_background_does_not_wait_for_it() {
     let workspace = tempdir().expect("workspace");
     let root = workspace.path().canonicalize().expect("root");

@@ -570,10 +570,16 @@ impl WorkspaceRuntimeManager {
         root: &Path,
         runtime: &WorkspaceRuntime,
     ) -> Result<Option<bool>, EngineError> {
-        if !runtime.needs_reconciliation_probe()
-            || !matches!(self.inner.executor.probe_freshness(root).await?, Some(true))
-        {
+        let Some(ready) = self.inner.executor.probe_freshness(root).await? else {
             return Ok(None);
+        };
+        if !ready {
+            // A resident watcher can miss an external notification (for
+            // example, a host-side edit through a container bind mount). Do
+            // not let the in-memory revision proof turn that persisted stale
+            // status into a false clean result.
+            runtime.require_reconciliation();
+            return Ok(Some(false));
         }
         // The status scan and the watcher barrier form one proof: no event may
         // have arrived between the disk observation and the indexed revision.
