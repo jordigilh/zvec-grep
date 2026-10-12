@@ -1,0 +1,72 @@
+# syntax=docker/dockerfile:1.7
+
+ARG RUST_VERSION=1.98.0
+ARG UBI_VERSION=10.2
+ARG ZIG_VERSION=0.15.2
+
+FROM --platform=$TARGETPLATFORM registry.access.redhat.com/ubi10/ubi-minimal:${UBI_VERSION} AS target-runtime
+
+FROM --platform=$BUILDPLATFORM rust:${RUST_VERSION}-trixie AS builder
+
+ARG BUILDARCH
+ARG TARGETARCH
+ARG ZIG_VERSION
+ENV CARGO_TERM_COLOR=always
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes \
+        build-essential \
+        ca-certificates \
+        clang \
+        cmake \
+        curl \
+        git \
+        libclang-dev \
+        libssl-dev \
+        pkg-config \
+        python3 \
+        perl \
+        xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Keep the linker and runtime on the same UBI ABI. The prebuilt ONNX Runtime
+# archives require symbols newer than the Zig-bundled glibc/libstdc++.
+COPY --from=target-runtime /usr/lib64/libc.so.6 /opt/target-libs/libc.so.6
+COPY --from=target-runtime /usr/lib64/libstdc++.so.6* /opt/target-libs/
+
+WORKDIR /src
+COPY . .
+
+RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=zg-target-${TARGETARCH},target=/src/target \
+    bash /src/container-build.sh
+
+FROM target-runtime AS runtime
+
+ARG VERSION=0.0.1
+
+COPY --from=builder --chown=10001:10001 /out/bin/zg /usr/local/bin/zg
+COPY --from=builder --chown=10001:10001 /out/lib/libzvec_c_api.so /usr/local/lib/libzvec_c_api.so
+COPY --from=builder --chown=10001:10001 /out/lib/data/jieba_dict /usr/local/lib/data/jieba_dict
+COPY --from=builder --chown=10001:10001 /out/home /var/lib/zg
+COPY --from=builder --chown=10001:10001 /out/workspace /workspace
+
+ENV HOME=/var/lib/zg \
+    ZVEC_GREP_HOME=/var/lib/zg \
+    LD_LIBRARY_PATH=/usr/local/lib
+
+WORKDIR /workspace
+USER 10001:10001
+
+LABEL org.opencontainers.image.title="zvec-grep Rust zg" \
+      org.opencontainers.image.description="Local-first workspace search and codegraph MCP server" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/jordigilh/zvec-grep"
+
+VOLUME ["/workspace", "/var/lib/zg"]
+
+EXPOSE 7999
+
+ENTRYPOINT ["/usr/local/bin/zg"]
+CMD ["--server", "--stdio"]
