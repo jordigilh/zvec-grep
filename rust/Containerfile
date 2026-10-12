@@ -37,8 +37,8 @@ COPY --from=target-runtime /usr/lib64/libstdc++.so.6* /opt/target-libs/
 WORKDIR /src
 COPY . .
 
-RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
+RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cargo-git-${TARGETARCH},target=/usr/local/cargo/git \
     --mount=type=cache,id=zg-target-${TARGETARCH},target=/src/target \
     bash /src/container-build.sh
 
