@@ -22,7 +22,7 @@ use crate::{
     },
     models::{
         artifacts::{
-            ArtifactSource, ModelDownloadProgressReporter, ResolveArtifacts,
+            ArtifactHttpClient, ArtifactSource, ModelDownloadProgressReporter, ResolveArtifacts,
             resolve_model_artifacts,
         },
         catalog::Model2VecConfig,
@@ -276,13 +276,13 @@ trait TokenizerRuntime: Send + Sync {
 }
 
 struct DefaultModel2VecDependencies {
-    client: reqwest::Client,
+    client: ArtifactHttpClient,
 }
 
 impl DefaultModel2VecDependencies {
     fn new() -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: ArtifactHttpClient::new(),
         }
     }
 }

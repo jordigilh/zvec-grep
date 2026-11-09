@@ -32,7 +32,8 @@ use crate::domain::model::{
 };
 use crate::models::{
     artifacts::{
-        ArtifactSource, ModelDownloadProgressReporter, ResolveArtifacts, resolve_model_artifacts,
+        ArtifactHttpClient, ArtifactSource, ModelDownloadProgressReporter, ResolveArtifacts,
+        resolve_model_artifacts,
     },
     catalog::TransformersConfig,
     runtime::ModelComputeRuntime,
@@ -48,7 +49,7 @@ pub(crate) struct TransformersEmbeddingModel {
     model_cache_dir: PathBuf,
     device: Option<Device>,
     compute_runtime: ModelComputeRuntime,
-    client: reqwest::Client,
+    client: ArtifactHttpClient,
     state: Mutex<Option<Arc<LoadedTransformersModel>>>,
 }
 
@@ -149,7 +150,7 @@ impl TransformersEmbeddingModel {
             model_cache_dir,
             device: options.device,
             compute_runtime,
-            client: reqwest::Client::new(),
+            client: ArtifactHttpClient::new(),
             state: Mutex::new(None),
         }
     }
