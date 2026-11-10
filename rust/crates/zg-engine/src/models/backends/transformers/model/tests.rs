@@ -97,6 +97,7 @@ fn entry(pooling: &'static str, normalize: bool) -> TransformersConfig {
         revision: "0123456789abcdef",
         download,
         dtype: "q8",
+        add_special_tokens: true,
         dimension: 3,
         metric: Metric::Cosine,
         pooling,
@@ -105,6 +106,36 @@ fn entry(pooling: &'static str, normalize: bool) -> TransformersConfig {
         document_prefix: Some("passage: "),
         max_input_tokens: 2,
         max_batch_size: 4,
+    }
+}
+
+
+fn tokenizer_fixture(unknown_token: &str) -> Tokenizer {
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "type": "WordPiece",
+        "unk_token": unknown_token,
+        "continuing_subword_prefix": "##",
+        "max_input_chars_per_word": 100,
+        "vocab": {"[PAD]": 0, "[UNK]": 1, "[CLS]": 2, "[SEP]": 3, "hello": 4, "world": 5}
+    }))
+    .expect("fixture model JSON");
+    let model = tokenizers::models::wordpiece::WordPiece::from_bytes(bytes)
+        .expect("fixture WordPiece model");
+    let mut tokenizer = Tokenizer::new(model);
+    tokenizer.with_pre_tokenizer(Some(
+        tokenizers::pre_tokenizers::whitespace::WhitespaceSplit,
+    ));
+    tokenizer.with_post_processor(Some(tokenizers::processors::bert::BertProcessing::new(
+        ("[SEP]".to_owned(), 3),
+        ("[CLS]".to_owned(), 2),
+    )));
+    tokenizer
+}
+
+fn tokenization_entry() -> TransformersConfig {
+    TransformersConfig {
+        max_input_tokens: 4,
+        ..entry("mean", true)
     }
 }
 
@@ -147,11 +178,49 @@ fn prefixes_and_catalog_info_match_main() {
         crate::models::runtime::ModelComputeRuntime::shared(),
     );
     assert_eq!(model.info().max_input_tokens, Some(2));
-    assert_eq!(onnx_artifact("q4").expect("q4"), "onnx/model_q4.onnx");
     assert_eq!(
-        onnx_artifact("q8").expect("q8"),
+        onnx_artifact(entry("mean", true)).expect("q8"),
         "onnx/model_quantized.onnx"
     );
+}
+
+#[test]
+fn static_batches_omit_special_tokens_and_handle_empty_and_truncated_text() {
+    let entry = TransformersConfig {
+        add_special_tokens: false,
+        ..tokenization_entry()
+    };
+    let tokenizers = prepare_tokenizers(tokenizer_fixture("[UNK]"), entry).expect("tokenizers");
+    let batch = prepare_batch(
+        &tokenizers,
+        &[
+            String::new(),
+            "hello world".to_owned(),
+            "hello world hello world hello".to_owned(),
+        ],
+        entry,
+    )
+    .expect("batch");
+    assert_eq!(batch.input_ids, [0, 0, 0, 0, 4, 5, 0, 0, 4, 5, 4, 5]);
+    assert_eq!(batch.attention_mask, [0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1]);
+    assert_eq!(batch.truncated, [2]);
+    let empty =
+        prepare_batch(&tokenizers, &[String::new(), String::new()], entry).expect("empty text");
+    assert_eq!(empty.sequence_length, 1);
+    assert_eq!(empty.input_ids, [0, 0]);
+    assert_eq!(empty.attention_mask, [0, 0]);
+}
+
+#[test]
+fn normalizes_pooled_sentence_vectors_and_rejects_wrong_dimensions() {
+    let mut entry = entry("mean", true);
+    entry.dimension = 256;
+    let mut data = vec![0.0; 256];
+    data[0] = 3.0;
+    data[1] = 4.0;
+    let vectors = pool_output(&[1, 256], &data, &[1], 1, 1, entry).expect("pooled output");
+    assert_eq!(&vectors[0][..2], &[0.6, 0.8]);
+    assert!(pool_output(&[1, 128], &data, &[1], 1, 1, entry).is_err());
 }
 
 #[tokio::test]
@@ -204,10 +273,8 @@ async fn cached_minilm_runs_real_onnx_inference() {
         .ensure_loaded(None, None)
         .await
         .expect("download and load cached ONNX model");
-    let tokenizer = Tokenizer::from_file(model.model_directory().join("tokenizer.json"))
-        .expect("cached tokenizer");
     let prepared = prepare_batch(
-        tokenizer,
+        &loaded.tokenizers,
         &[
             "find authentication middleware".to_owned(),
             "parse a configuration file".to_owned(),

@@ -445,6 +445,27 @@ Embedding options:
   --embedding-concurrency <n>       Embedding task concurrency
   --allow-remote                    Allow Remote Embedding for this command only
 
+Explicit --device and --model-cache values are saved after successful indexing;
+omitted options keep their saved values. Changes do not require --rebuild.
+Precedence: CLI > Environment > Workspace > Global config > Backend default.
+
+Index embedding concurrency:
+  Applies only to index construction and updates, including automatic indexing
+  and refresh; query-vector inference keeps its own defaults. The CLI option
+  is accepted only with --index and is never saved in workspace settings.
+  llama.cpp: context limit capped at 8, with serialized batches; defaults to 1.
+  Transformers/ORT: in-flight batch limit capped at 8; defaults to 1. Native
+    sessions honor that budget; CoreML uses one physical session.
+  Bekko: CPU batch tasks; defaults to 1, capped at 8.
+  Potion/model2vec: concurrent batch tasks; defaults to 2, with an independent
+    CPU worker-pool capacity. No cap of 8 is applied.
+  Remote: concurrent requests; adaptive scheduling may reduce the limit after
+    failures or rate limits. No cap of 8 is applied.
+  Precedence: CLI/API override, ZVEC_GREP_EMBEDDING_CONCURRENCY, legacy
+    ZVEC_GREP_LLAMA_CONTEXT_PARALLELISM for llama.cpp indexing, then defaults.
+  Explicit CLI overrides work without restarting the Server. Environment
+    changes require restarting the Server so it inherits the new value.
+
 Scan rules:
   -g, --glob <glob>                 Include paths; prefix with ! to exclude; repeatable
   --iglob <glob>                    Case-insensitive path glob; repeatable
@@ -676,6 +697,7 @@ Supported text embedding models (one per workspace):
   MODEL                               RUNTIME  INPUT       DIMS  TOKENS  BACKEND
   ----------------------------------  -------  ----------  ----  ------  ---------------
   local/all-minilm-l6-v2              local    text         384     256  transformers
+  local/bekko-256-int8                local    text         256   32768  bekko
   local/bge-small-en-v1.5             local    text         384     512  transformers
   local/embeddinggemma-300m           local    text         768    2048  llama-cpp
   local/gte-modernbert-base           local    text         768    8192  transformers
