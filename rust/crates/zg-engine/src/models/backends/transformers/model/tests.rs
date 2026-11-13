@@ -109,7 +109,6 @@ fn entry(pooling: &'static str, normalize: bool) -> TransformersConfig {
     }
 }
 
-
 fn tokenizer_fixture(unknown_token: &str) -> Tokenizer {
     let bytes = serde_json::to_vec(&serde_json::json!({
         "type": "WordPiece",

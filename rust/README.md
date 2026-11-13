@@ -4,13 +4,10 @@ This directory contains the Rust implementation of zvec-grep. The TypeScript /
 Node.js implementation remains at the repository root; the [main README](../README.md)
 and [user documentation](../docs/README.md) describe that implementation.
 
-The Rust catalog includes `local/bekko-256-int8`, using the pinned
-[Bekko static ONNX weights](https://huggingface.co/hotchpotch/bekko-static-embedding-v1/tree/c18167b8f244c1bc6de21ce9b710bac8a29c4615/onnx).
+The Rust catalog includes `local/bekko-256-int8`.
 Select it with `zg --index --embedding local/bekko-256-int8 --device cpu`.
-It downloads 52,000,965 bytes of INT8 weights plus a 5,104,874-byte tokenizer,
-verified by SHA-256. Mean pooling and the 256-dimensional normalized output
-remain FP32. Queries and documents have no prefix or special tokens, with a
-32,768-token limit. Only Hugging Face is configured for this model.
+Mean pooling and the 256-dimensional normalized output remain FP32.
+Queries and documents have no prefix or special tokens, with a 32,768-token limit.
 The Rust Bekko backend (`bekko`) reads the quantized table and per-token scales
 directly from the pinned ONNX file; inference runs on the shared CPU pool
 without an ONNX session or padded batches. It retains unknown tokens and
