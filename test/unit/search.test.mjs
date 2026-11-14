@@ -596,3 +596,29 @@ test("artifact fingerprints ignore transient top-level lock files", async (t) =>
 
   assert.equal(second, first);
 });
+
+test("artifact fingerprint fallbacks retry after a transient read failure", async (t) => {
+  const parent = await mkdtemp(join(tmpdir(), "zvec-grep-artifact-retry-"));
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const root = join(parent, "index");
+  const fallback = { workspace_index_id: "workspace-index-retry" };
+  let fallbackCount = 0;
+
+  const first = await cachedArtifactDigest(
+    root,
+    "generation-1",
+    fallback,
+    () => {
+      fallbackCount++;
+    },
+  );
+  await mkdir(root);
+  await writeFile(join(root, "index.zvec"), "recovered index bytes");
+
+  const second = await cachedArtifactDigest(root, "generation-1", fallback);
+  const third = await cachedArtifactDigest(root, "generation-1", fallback);
+
+  assert.equal(fallbackCount, 1);
+  assert.notEqual(second, first);
+  assert.equal(third, second);
+});

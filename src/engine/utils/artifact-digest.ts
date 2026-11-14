@@ -8,9 +8,14 @@ type ArtifactFile = {
   sha256: string;
 };
 
+type ArtifactDigestResult = {
+  value: string;
+  cacheable: boolean;
+};
+
 const digestCache = new Map<
   string,
-  { generationKey: string; digest: Promise<string> }
+  { generationKey: string; digest: Promise<ArtifactDigestResult> }
 >();
 
 /**
@@ -18,47 +23,69 @@ const digestCache = new Map<
  *
  * The promise is cached by generation, so traced searches never synchronously
  * traverse or read the index. Lock state is runtime data, not index content,
- * and is deliberately excluded from the fingerprint.
+ * and is deliberately excluded from the fingerprint. A read failure returns
+ * the metadata fallback for the affected request, but that result is not
+ * retained so a later request can retry the artifact read.
  */
 export function cachedArtifactDigest(
   path: string,
   generationKey: string,
   fallback: Record<string, unknown>,
+  onFallback?: () => void,
 ): Promise<string> {
   const cacheKey = resolve(path);
   const cached = digestCache.get(cacheKey);
   if (cached?.generationKey === generationKey) {
-    return cached.digest;
+    return cached.digest.then((result) => {
+      if (!result.cacheable) {
+        onFallback?.();
+      }
+      return result.value;
+    });
   }
 
-  const digest = computeArtifactDigest(cacheKey, fallback);
-  digestCache.set(cacheKey, { generationKey, digest });
-  return digest;
+  const entry: {
+    generationKey: string;
+    digest: Promise<ArtifactDigestResult>;
+  } = {
+    generationKey,
+    digest: Promise.resolve({ value: "", cacheable: false }),
+  };
+  entry.digest = computeArtifactDigest(cacheKey)
+    .then((value) => ({ value, cacheable: true }))
+    .catch(() => {
+      if (digestCache.get(cacheKey) === entry) {
+        digestCache.delete(cacheKey);
+      }
+      return {
+        value: sha256Value(fallback),
+        cacheable: false,
+      };
+    });
+  digestCache.set(cacheKey, entry);
+  return entry.digest.then((result) => {
+    if (!result.cacheable) {
+      onFallback?.();
+    }
+    return result.value;
+  });
 }
 
 export function invalidateArtifactDigest(path: string): void {
   digestCache.delete(resolve(path));
 }
 
-async function computeArtifactDigest(
-  path: string,
-  fallback: Record<string, unknown>,
-): Promise<string> {
-  try {
-    const details = await stat(path);
-    if (details.isFile()) {
-      return sha256Bytes(await readFile(path));
-    }
-    if (details.isDirectory()) {
-      const files: ArtifactFile[] = [];
-      await collectArtifactFiles(path, path, files);
-      return sha256Value(files);
-    }
-  } catch {
-    // A diagnostic trace must not make an otherwise usable search fail when a
-    // test double or a legacy index path is unavailable.
+async function computeArtifactDigest(path: string): Promise<string> {
+  const details = await stat(path);
+  if (details.isFile()) {
+    return sha256Bytes(await readFile(path));
   }
-  return sha256Value(fallback);
+  if (details.isDirectory()) {
+    const files: ArtifactFile[] = [];
+    await collectArtifactFiles(path, path, files);
+    return sha256Value(files);
+  }
+  throw new Error(`Unsupported artifact path: ${path}`);
 }
 
 async function collectArtifactFiles(

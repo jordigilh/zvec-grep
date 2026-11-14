@@ -656,6 +656,7 @@ class ZvecGrepService implements ZvecGrep {
     return await this.withEmbeddingModelOperation(async () => {
       const timings = new TimingCollector();
       const request = normalizeContextRequest(options);
+      workspaceIndex.invalidateArtifactDigest();
       const result = await timings.time("total", () =>
         contextFromOpenWorkspaceIndex({
           root,

@@ -17,7 +17,7 @@ import {
 } from "../storage/index.js";
 import {
   cachedArtifactDigest,
-  invalidateArtifactDigest,
+  invalidateArtifactDigest as invalidateCachedArtifactDigest,
 } from "../utils/artifact-digest.js";
 import type {
   WorkspaceIndexEmbeddingSchema,
@@ -39,7 +39,7 @@ export class WorkspaceIndex {
   private readonly storage: WorkspaceIndexStorage;
   private readonly embedding: WorkspaceIndexEmbeddingSchema;
   private readonly embeddingModel?: EmbeddingModel;
-  private artifactDigest?: Promise<string>;
+  private artifactDigest?: { token: object; promise: Promise<string> };
   private closed = false;
 
   constructor(
@@ -94,8 +94,7 @@ export class WorkspaceIndex {
         ? indexWorkspacePaths(context, options.changedPaths)
         : indexWorkspace(context));
     } finally {
-      invalidateArtifactDigest(this.info.path);
-      this.artifactDigest = undefined;
+      this.invalidateArtifactDigest();
     }
   }
 
@@ -105,6 +104,11 @@ export class WorkspaceIndex {
 
   prepareArtifactDigest(): void {
     void this.getArtifactDigest();
+  }
+
+  invalidateArtifactDigest(): void {
+    invalidateCachedArtifactDigest(this.info.path);
+    this.artifactDigest = undefined;
   }
 
   searchPlan(plan: SearchPlan): Promise<SearchPlanResult> {
@@ -122,7 +126,12 @@ export class WorkspaceIndex {
   }
 
   private getArtifactDigest(): Promise<string> {
-    this.artifactDigest ??= cachedArtifactDigest(
+    if (this.artifactDigest) {
+      return this.artifactDigest.promise;
+    }
+
+    const token = {};
+    const digest = cachedArtifactDigest(
       this.info.path,
       `${this.info.id}\0${this.info.indexVersion ?? null}\0${this.info.updatedTime}`,
       {
@@ -130,8 +139,14 @@ export class WorkspaceIndex {
         index_version: this.info.indexVersion ?? null,
         updated_time: this.info.updatedTime,
       },
+      () => {
+        if (this.artifactDigest?.token === token) {
+          this.artifactDigest = undefined;
+        }
+      },
     );
-    return this.artifactDigest;
+    this.artifactDigest = { token, promise: digest };
+    return digest;
   }
 
   close(): void {
