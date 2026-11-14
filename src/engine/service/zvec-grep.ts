@@ -1079,6 +1079,13 @@ async function contextFromOpenWorkspaceIndex(input: {
   options: ZvecGrepContextOptions;
   timings: TimingCollector;
 }): Promise<ZvecGrepContextResult> {
+  if (
+    input.request.semanticFeatures &&
+    input.request.semanticFeatures.trace !== "off"
+  ) {
+    input.workspaceIndex.prepareArtifactDigest();
+  }
+
   const searches: SearchPlanResult[] = [];
   const groups: NormalizedContextGroup[] = input.options.fuse
     ? [
@@ -2091,12 +2098,24 @@ function traceForContextResult(
           .filter((candidate) => itemIds.has(candidate.entity_id))
           .slice(0, Math.min(items.length, 100))
       : ranked.slice(0, 100);
+  const upstreamCandidateCount = Math.max(
+    ...traces.map((trace) => trace.candidate_count),
+  );
+  const candidatesTruncatedUpstream = traces.some(
+    (trace) =>
+      trace.candidates_truncated ||
+      trace.candidate_count > trace.candidates.length,
+  );
+  // Per-group candidate arrays may already be bounded, so their union cannot
+  // recover the aggregate total. Retain the strongest upstream count and mark
+  // the result incomplete whenever any upstream trace was truncated.
 
   return {
     ...first,
     candidates: bounded,
-    candidate_count: ranked.length,
-    candidates_truncated: ranked.length > bounded.length,
+    candidate_count: Math.max(ranked.length, upstreamCandidateCount),
+    candidates_truncated:
+      candidatesTruncatedUpstream || ranked.length > bounded.length,
   };
 }
 

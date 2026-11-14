@@ -422,6 +422,7 @@ const semanticTraceGraphEvidenceSchema = z.object({
 
 const semanticTraceCandidateSchema = z.object({
   entity_id: z.string(),
+  forced: z.boolean().optional(),
   fts_rank: z.number().int().positive().optional(),
   vector_rank: z.number().int().positive().optional(),
   representation: z.literal("all"),

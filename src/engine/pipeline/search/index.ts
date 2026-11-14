@@ -1,6 +1,4 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
 import {
   workspaceIndexDetail,
   detail,
@@ -51,6 +49,7 @@ type SearchContext = {
   workspaceIndex: WorkspaceIndexInfo;
   storage: WorkspaceIndexStorage;
   embeddingModel?: EmbeddingModel;
+  indexDigest?: string | Promise<string | undefined>;
 };
 
 type StorageSearchFilter = NonNullable<
@@ -109,6 +108,10 @@ export async function searchWorkspaceIndex(
     const limit = normalized.limit ?? DEFAULT_LIMIT;
     const trace =
       normalized.trace === true || normalized.trackEntityId !== undefined;
+    const semanticTrace =
+      normalized.semanticFeatures && normalized.semanticFeatures.trace !== "off"
+        ? normalized.semanticFeatures
+        : undefined;
     const fileTypePatterns = await timings.time("search_file_types", () =>
       resolveFileTypePatterns(
         normalized.fileTypes,
@@ -185,21 +188,22 @@ export async function searchWorkspaceIndex(
       ? hits.find((hit) => hit.entity.id === normalized.trackEntityId)
       : undefined;
 
+    const indexDigest = semanticTrace ? await ctx.indexDigest : undefined;
+
     return {
       plan: normalized,
       hits,
       trackedHit,
-      trace:
-        normalized.semanticFeatures &&
-        normalized.semanticFeatures.trace !== "off"
-          ? buildSemanticSearchTrace({
-              workspaceIndex: ctx.workspaceIndex,
-              storage: ctx.storage,
-              features: normalized.semanticFeatures,
-              candidates: fused,
-              primaryCandidates: fused.slice(0, limit),
-            })
-          : undefined,
+      trace: semanticTrace
+        ? buildSemanticSearchTrace({
+            workspaceIndex: ctx.workspaceIndex,
+            indexDigest,
+            storage: ctx.storage,
+            features: semanticTrace,
+            candidates: fused,
+            primaryCandidates: visible,
+          })
+        : undefined,
     };
   });
 
@@ -1241,7 +1245,11 @@ function fuseCandidates(candidates: Map<string, Candidate>): Candidate[] {
 }
 
 function candidateTieKey(candidate: Candidate): string {
-  return JSON.stringify([candidate.file.relativePath, candidate.entity.range]);
+  return JSON.stringify([
+    candidate.file.relativePath,
+    candidate.entity.range,
+    candidate.id,
+  ]);
 }
 
 function candidateToHit(
@@ -1363,6 +1371,7 @@ function candidateToTraceCandidate(
   const vectorRank = bestRecallRank(candidate, "vector");
   return {
     entity_id: candidate.id,
+    ...(candidate.forced ? { forced: true } : {}),
     ...(ftsRank === undefined ? {} : { fts_rank: ftsRank }),
     ...(vectorRank === undefined ? {} : { vector_rank: vectorRank }),
     representation: diagnostic.representation,
@@ -1433,6 +1442,7 @@ function identifierTokens(value: string): string[] {
 
 function buildSemanticSearchTrace(input: {
   workspaceIndex: WorkspaceIndexInfo;
+  indexDigest?: string;
   storage: WorkspaceIndexStorage;
   features: SemanticFeatures;
   candidates: readonly Candidate[];
@@ -1451,11 +1461,13 @@ function buildSemanticSearchTrace(input: {
   }));
   const sourceDigest = sha256Value(sourceRecords);
   const sourceSelectionDigest = sha256Value(input.workspaceIndex.rootPaths);
-  const indexDigest = artifactDigest(input.workspaceIndex.path, {
-    workspace_index_id: input.workspaceIndex.id,
-    index_version: input.workspaceIndex.indexVersion ?? null,
-    updated_time: input.workspaceIndex.updatedTime,
-  });
+  const indexDigest =
+    input.indexDigest ??
+    sha256Value({
+      workspace_index_id: input.workspaceIndex.id,
+      index_version: input.workspaceIndex.indexVersion ?? null,
+      updated_time: input.workspaceIndex.updatedTime,
+    });
   const embeddingModel = input.workspaceIndex.embedding
     ? `${input.workspaceIndex.embedding.provider}/${input.workspaceIndex.embedding.model}`
     : "unknown";
@@ -1475,10 +1487,11 @@ function buildSemanticSearchTrace(input: {
     artifacts,
     feature_config: input.features,
   });
-  const candidatePool =
+  const candidatePool = traceCandidatePool(
     input.features.trace === "summary"
       ? input.primaryCandidates
-      : input.candidates.slice(0, 100);
+      : input.candidates,
+  );
 
   return {
     schema_version: 1,
@@ -1515,51 +1528,11 @@ function buildSemanticSearchTrace(input: {
   };
 }
 
-function artifactDigest(
-  path: string,
-  fallback: Record<string, unknown>,
-): string {
-  try {
-    const stat = statSync(path);
-    if (stat.isFile()) {
-      return sha256Bytes(readFileSync(path));
-    }
-    if (stat.isDirectory()) {
-      const files: Array<{ path: string; size_bytes: number; sha256: string }> =
-        [];
-      collectArtifactFiles(path, path, files);
-      return sha256Value(files);
-    }
-  } catch {
-    // A diagnostic trace must not make an otherwise usable search fail when a
-    // test double or a legacy index path is unavailable.
-  }
-  return sha256Value(fallback);
-}
-
-function collectArtifactFiles(
-  root: string,
-  current: string,
-  files: Array<{ path: string; size_bytes: number; sha256: string }>,
-): void {
-  for (const entry of readdirSync(current, { withFileTypes: true }).sort(
-    (left, right) => compareStable(left.name, right.name),
-  )) {
-    const path = join(current, entry.name);
-    if (entry.isDirectory()) {
-      collectArtifactFiles(root, path, files);
-      continue;
-    }
-    if (!entry.isFile()) {
-      continue;
-    }
-    const bytes = readFileSync(path);
-    files.push({
-      path: relative(root, path).split("\\").join("/"),
-      size_bytes: bytes.byteLength,
-      sha256: sha256Bytes(bytes),
-    });
-  }
+function traceCandidatePool(source: readonly Candidate[]): Candidate[] {
+  const forced = source.filter((candidate) => candidate.forced);
+  const regular = source.filter((candidate) => !candidate.forced);
+  const regularLimit = Math.max(0, 100 - forced.length);
+  return [...regular.slice(0, regularLimit), ...forced.slice(0, 100)];
 }
 
 function sha256Value(value: unknown): string {

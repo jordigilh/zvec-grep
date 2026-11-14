@@ -337,6 +337,7 @@ export type SearchTraceGraphEvidence = {
 
 export type SemanticSearchTraceCandidate = {
   entity_id: string;
+  forced?: boolean;
   fts_rank?: number;
   vector_rank?: number;
   representation: SemanticRepresentation;

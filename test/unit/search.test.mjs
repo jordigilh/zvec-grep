@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   diagnoseEntitySearch,
@@ -6,6 +9,7 @@ import {
   searchWorkspaceIndex,
 } from "../../dist/engine/pipeline/search/index.js";
 import { FakeEmbeddingModel } from "../helpers/fake-embedding.mjs";
+import { cachedArtifactDigest } from "../../dist/engine/utils/artifact-digest.js";
 
 function file(id, relativePath, lastModifiedTime = 100) {
   return {
@@ -244,6 +248,18 @@ test("hybrid search filters, deduplicates, fuses, traces, prefers symbols, and t
   assert.equal(result.hits[0].trace.final.returnedByLimit, true);
   assert.equal(result.trackedHit?.entity.id, "entity-c");
   assert.equal(result.trackedHit?.trace.final.returnedByLimit, false);
+  assert.equal(
+    result.trace.candidates.some(
+      (candidate) => candidate.entity_id === "entity-c",
+    ),
+    true,
+  );
+  assert.equal(
+    result.trace.candidates.find(
+      (candidate) => candidate.entity_id === "entity-c",
+    ).forced,
+    true,
+  );
   assert.ok(
     result.trackedHit?.trace.recall.every(
       (recall) =>
@@ -329,6 +345,61 @@ test("hybrid fusion ties use source locations instead of workspace-specific enti
   );
 });
 
+test("hybrid fusion ties use entity IDs when source locations are identical", async () => {
+  function createIdenticalLocationFixture(order) {
+    const fixture = createFixture();
+    const first = entity("entity-z", "file-a", "FirstSymbol");
+    const second = entity("entity-a", "file-a", "SecondSymbol");
+    fixture.entities.push(first, second);
+    const byId = new Map([
+      [first.id, first],
+      [second.id, second],
+    ]);
+    const file = fixture.files[0];
+    const hits = (path, ids) =>
+      ids.map((id, index) => ({
+        fragment: fragment(byId.get(id)),
+        file,
+        path,
+        score: 1 - index * 0.1,
+      }));
+
+    fixture.storage.searchFts = () => hits("fts", order);
+    fixture.storage.searchVector = () => hits("vector", [...order].reverse());
+    return fixture;
+  }
+
+  const first = await searchWorkspaceIndex(
+    {
+      routes: [
+        { mode: "fts", query: "tie" },
+        { mode: "vector", query: "tie" },
+      ],
+      limit: 2,
+    },
+    createIdenticalLocationFixture(["entity-z", "entity-a"]).context,
+  );
+  const second = await searchWorkspaceIndex(
+    {
+      routes: [
+        { mode: "fts", query: "tie" },
+        { mode: "vector", query: "tie" },
+      ],
+      limit: 2,
+    },
+    createIdenticalLocationFixture(["entity-a", "entity-z"]).context,
+  );
+
+  assert.deepEqual(
+    first.hits.map((hit) => hit.entity.id),
+    ["entity-a", "entity-z"],
+  );
+  assert.deepEqual(
+    second.hits.map((hit) => hit.entity.id),
+    ["entity-a", "entity-z"],
+  );
+});
+
 test("search plans short-circuit empty path filters and force-track no-file reasons", async () => {
   const fixture = createFixture();
   const result = await searchWorkspaceIndex(
@@ -399,6 +470,31 @@ test("semantic full traces are bounded, provenance-bearing, deterministic, and b
   });
   assert.equal(first.trace.candidates[0].graph_evidence.length, 0);
   assert.equal(JSON.stringify(first.trace).includes("export function"), false);
+});
+
+test("semantic summary traces cap large visible pools", async () => {
+  const fixture = createFixture();
+  for (let index = 3; index < 105; index += 1) {
+    const fileId = `file-${index}`;
+    fixture.files.push(file(fileId, `src/${index}.ts`, index));
+    fixture.entities.push(entity(`entity-${index}`, fileId, `Symbol${index}`));
+  }
+
+  const result = await searchWorkspaceIndex(
+    {
+      routes: [{ mode: "fts", query: "all symbols" }],
+      limit: 150,
+      semanticFeatures: {
+        semantic_features_version: 1,
+        trace: "summary",
+      },
+    },
+    fixture.context,
+  );
+
+  assert.equal(result.trace.candidates.length, 100);
+  assert.equal(result.trace.candidate_count, fixture.entities.length);
+  assert.equal(result.trace.candidates_truncated, true);
 });
 
 test("semantic feature validation rejects unsupported versions and trace values", async () => {
@@ -482,4 +578,21 @@ test("entity and file diagnosis handle missing targets and fallback entity selec
     ),
     null,
   );
+});
+
+test("artifact fingerprints ignore transient top-level lock files", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "zvec-grep-artifact-digest-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "locks"));
+  await writeFile(join(root, "index.zvec"), "stable index bytes");
+
+  const fallback = { workspace_index_id: "workspace-index-1" };
+  const first = await cachedArtifactDigest(root, "generation-1", fallback);
+  await writeFile(
+    join(root, "locks", "home.readers"),
+    JSON.stringify({ token: "random", startedAt: Date.now() }),
+  );
+  const second = await cachedArtifactDigest(root, "generation-2", fallback);
+
+  assert.equal(second, first);
 });
