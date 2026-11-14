@@ -1184,6 +1184,45 @@ test("search can return the current index without scheduling an update", async (
   assert.equal(received.autoUpdate, false);
 });
 
+test("semantic search traces are rendered in MCP text output", async (t) => {
+  const backend = createBackend();
+  backend.search = async (input) => {
+    const response = await createBackend().search(input);
+    response.result.trace = {
+      schema_version: 1,
+      generation_id: "sha256:generation",
+      feature_config: {
+        semantic_features_version: 1,
+        trace: "summary",
+      },
+      candidates: [{ entity_id: "entity-1" }],
+      candidate_count: 1,
+      candidates_truncated: false,
+    };
+    return response;
+  };
+  const { client, server } = await connect(backend);
+  t.after(async () => {
+    await client.close();
+    await server.close();
+  });
+
+  const result = await client.callTool({
+    name: "zvec_grep_search",
+    arguments: {
+      root,
+      query: "query",
+      semantic_features: { semantic_features_version: 1, trace: "summary" },
+    },
+  });
+
+  assert.equal(result.structuredContent, undefined);
+  assert.match(
+    result.content[0].text,
+    /semantic_trace: mode=summary generation_id=sha256:generation candidates=1\/1 candidates_truncated=false/,
+  );
+});
+
 test("full toolset rg forwards a managed ripgrep command before calling the backend", async (t) => {
   let received;
   const backend = createBackend();

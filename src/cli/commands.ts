@@ -686,7 +686,10 @@ async function runDirectRgQuery(
       console.error(line);
     }
     if (commandOptions.debug) {
-      printDebug(result, { trace: false });
+      printDebug(result, {
+        trace: false,
+        semanticFeatures: commandOptions.semanticFeatures,
+      });
     }
   } finally {
     await zvecGrep.close();
@@ -773,6 +776,7 @@ async function runDirectQuery(
     if (commandOptions.debug) {
       printDebug(result, {
         trace: commandOptions.trace === true,
+        semanticFeatures: commandOptions.semanticFeatures,
       });
     }
   } catch (error) {
@@ -897,7 +901,10 @@ async function runServerQuery(
     printStaleIndexStatus(response.indexing?.state, response.indexing);
   }
   if (options.debug) {
-    printDebug(response.result, { trace: options.trace === true });
+    printDebug(response.result, {
+      trace: options.trace === true,
+      semanticFeatures: options.semanticFeatures,
+    });
   }
 }
 
