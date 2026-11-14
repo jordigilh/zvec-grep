@@ -457,6 +457,66 @@ test("context formatters render indexed, lexical, metadata, preview, trace, and 
   }
 });
 
+test("context and debug formatters render aggregate semantic traces", async () => {
+  const result = contextResult({
+    trace: {
+      schema_version: 1,
+      generation_id: "sha256:generation",
+      source_digest: "sha256:source",
+      source_selection_digest: "sha256:selection",
+      source_files: 2,
+      source_bytes: 20,
+      feature_config: {
+        semantic_features_version: 1,
+        trace: "summary",
+      },
+      artifacts: {
+        index_sha256: "sha256:index",
+        graph_generation_id: null,
+        graph_artifact_sha256: null,
+        graph_publication_sha256: null,
+        embedding_model: "local/test",
+        embedding_schema: "sha256:schema",
+      },
+      candidates: [{ entity_id: "entity-1" }],
+      candidate_count: 2,
+      candidates_truncated: true,
+      graph: {
+        binding: "unbound",
+        generation_id: null,
+        artifact_sha256: null,
+        publication_sha256: null,
+        seed_ids: [],
+        eligible_edges: 0,
+        excluded_edges: { unresolved: 0, ambiguous: 0, stale: 0 },
+      },
+      expansion: { enabled: false, related_count: 0, items: [] },
+    },
+  });
+  const options = {
+    semanticFeatures: {
+      semantic_features_version: 1,
+      trace: "summary",
+    },
+    preview: "none",
+    color: "never",
+  };
+
+  assert.match(
+    formatAgentContextResult(result, options),
+    /semantic_trace: mode=summary generation_id=sha256:generation candidates=1\/2 candidates_truncated=true/,
+  );
+  const human = await captureConsole(() =>
+    printHumanContextResult(result, { human: true, ...options }),
+  );
+  assert.match(human.logs.join("\n"), /Semantic trace/);
+
+  const debug = await captureConsole(() =>
+    printDebug(result, { semanticFeatures: options.semanticFeatures }),
+  );
+  assert.match(debug.errors.join("\n"), /trace=aggregate mode=summary/);
+});
+
 test("indexed agent results preserve global rank and expand every candidate", () => {
   const item = (
     rank,

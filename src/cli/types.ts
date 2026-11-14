@@ -1,4 +1,8 @@
-import type { CodeSymbolType, ZvecGrepContextRoute } from "../index.js";
+import type {
+  CodeSymbolType,
+  SemanticFeatures,
+  ZvecGrepContextRoute,
+} from "../index.js";
 import type { ZvecGrepClientMode } from "../engine/config.js";
 import type { McpToolset } from "../mcp/toolset.js";
 
@@ -36,6 +40,7 @@ export type CliOptions = {
   debug?: boolean;
   trace?: boolean;
   human?: boolean;
+  semanticFeatures?: SemanticFeatures;
   checkReady?: boolean;
   preview?: PreviewMode;
   color?: ColorMode;

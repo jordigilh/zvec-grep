@@ -37,8 +37,10 @@ import type {
   SearchHit,
   SearchPlan,
   SearchPlanResult,
+  SemanticFeatures,
+  SemanticSearchTrace,
 } from "../types.js";
-import { CURRENT_INDEX_VERSION } from "../types.js";
+import { CURRENT_INDEX_VERSION, DEFAULT_SEMANTIC_FEATURES } from "../types.js";
 import { indexStatusNeedsRefresh } from "../index-status.js";
 import {
   workspaceIndexInfoFromManifest,
@@ -654,6 +656,7 @@ class ZvecGrepService implements ZvecGrep {
     return await this.withEmbeddingModelOperation(async () => {
       const timings = new TimingCollector();
       const request = normalizeContextRequest(options);
+      workspaceIndex.invalidateArtifactDigest();
       const result = await timings.time("total", () =>
         contextFromOpenWorkspaceIndex({
           root,
@@ -1077,6 +1080,13 @@ async function contextFromOpenWorkspaceIndex(input: {
   options: ZvecGrepContextOptions;
   timings: TimingCollector;
 }): Promise<ZvecGrepContextResult> {
+  if (
+    input.request.semanticFeatures &&
+    input.request.semanticFeatures.trace !== "off"
+  ) {
+    input.workspaceIndex.prepareArtifactDigest();
+  }
+
   const searches: SearchPlanResult[] = [];
   const groups: NormalizedContextGroup[] = input.options.fuse
     ? [
@@ -1097,6 +1107,7 @@ async function contextFromOpenWorkspaceIndex(input: {
       routes: group.routes,
       limit,
       trace: input.options.trace,
+      semanticFeatures: input.request.semanticFeatures,
       preferSymbol: input.options.preferSymbol,
       symbolTypes: input.options.symbolTypes,
       includePaths: input.options.includePaths,
@@ -1137,6 +1148,7 @@ async function contextFromOpenWorkspaceIndex(input: {
       role: group.role,
       items: groupItems[index] ?? [],
     })),
+    trace: traceForContextResult(searches, items),
     diagnostics: {
       emptyReason: items.length === 0 ? "no_matches" : undefined,
       index: {
@@ -1870,6 +1882,7 @@ type NormalizedContextRequest = {
   rgPatterns: string[];
   routes: SearchPlan["routes"];
   groups: NormalizedContextGroup[];
+  semanticFeatures?: SemanticFeatures;
 };
 
 type NormalizedContextGroup = {
@@ -1923,6 +1936,11 @@ function normalizeContextRequest(
     rgPatterns,
     routes,
     groups,
+    semanticFeatures:
+      options.semanticFeatures ??
+      (options.trace === true
+        ? { ...DEFAULT_SEMANTIC_FEATURES, trace: "summary" }
+        : undefined),
   };
 }
 
@@ -2032,6 +2050,78 @@ function searchPlanToContextItems(
       ],
     };
   });
+}
+
+function traceForContextResult(
+  searches: readonly SearchPlanResult[],
+  items: readonly ZvecGrepContextItem[],
+): SemanticSearchTrace | undefined {
+  const traces = searches.flatMap((search) =>
+    search.trace ? [search.trace] : [],
+  );
+  const first = traces[0];
+  if (!first) {
+    return undefined;
+  }
+  if (traces.length === 1) {
+    return first;
+  }
+
+  const candidates = new Map<
+    string,
+    SemanticSearchTrace["candidates"][number]
+  >();
+  for (const trace of traces) {
+    for (const candidate of trace.candidates) {
+      const existing = candidates.get(candidate.entity_id);
+      if (
+        !existing ||
+        candidate.final_score > existing.final_score ||
+        (candidate.final_score === existing.final_score &&
+          compareStable(candidate.entity_id, existing.entity_id) < 0)
+      ) {
+        candidates.set(candidate.entity_id, candidate);
+      }
+    }
+  }
+
+  const ranked = [...candidates.values()].sort(
+    (left, right) =>
+      right.final_score - left.final_score ||
+      compareStable(left.entity_id, right.entity_id),
+  );
+  const itemIds = new Set(
+    items.flatMap((item) => (item.entityId ? [item.entityId] : [])),
+  );
+  const bounded =
+    first.feature_config.trace === "summary"
+      ? ranked
+          .filter((candidate) => itemIds.has(candidate.entity_id))
+          .slice(0, Math.min(items.length, 100))
+      : ranked.slice(0, 100);
+  const upstreamCandidateCount = Math.max(
+    ...traces.map((trace) => trace.candidate_count),
+  );
+  const candidatesTruncatedUpstream = traces.some(
+    (trace) =>
+      trace.candidates_truncated ||
+      trace.candidate_count > trace.candidates.length,
+  );
+  // Per-group candidate arrays may already be bounded, so their union cannot
+  // recover the aggregate total. Retain the strongest upstream count and mark
+  // the result incomplete whenever any upstream trace was truncated.
+
+  return {
+    ...first,
+    candidates: bounded,
+    candidate_count: Math.max(ranked.length, upstreamCandidateCount),
+    candidates_truncated:
+      candidatesTruncatedUpstream || ranked.length > bounded.length,
+  };
+}
+
+function compareStable(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 const DEFAULT_CONTEXT_PRIORITY_LIMIT = 6;

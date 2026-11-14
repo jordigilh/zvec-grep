@@ -1,8 +1,9 @@
 import type { ZvecGrepContextResult } from "../../index.js";
+import type { SemanticFeatures } from "../../engine/types.js";
 
 export function printDebug(
   result: ZvecGrepContextResult,
-  options: { trace?: boolean } = {},
+  options: { trace?: boolean; semanticFeatures?: SemanticFeatures } = {},
 ): void {
   const items = cliVisibleItems(result);
   console.error(
@@ -54,9 +55,20 @@ export function printDebug(
     );
   }
 
-  if (options.trace) {
+  if (traceRequested(options)) {
     printTrace(result, items);
   }
+}
+
+function traceRequested(options: {
+  trace?: boolean;
+  semanticFeatures?: SemanticFeatures;
+}): boolean {
+  return (
+    options.trace === true ||
+    (options.semanticFeatures?.trace !== undefined &&
+      options.semanticFeatures.trace !== "off")
+  );
 }
 
 function printTrace(
@@ -69,12 +81,21 @@ function printTrace(
   }
 
   const traced = items.filter((item) => item.trace);
-  if (traced.length === 0) {
+  if (traced.length === 0 && !result.trace) {
     console.error("trace=unavailable reason=no-hit-trace");
     return;
   }
 
-  console.error(`trace=inline items=${traced.length}`);
+  if (result.trace) {
+    console.error(
+      `trace=aggregate mode=${result.trace.feature_config.trace} generation_id=${result.trace.generation_id} ` +
+        `candidates=${result.trace.candidates.length}/${result.trace.candidate_count} ` +
+        `candidates_truncated=${result.trace.candidates_truncated}`,
+    );
+  }
+  if (traced.length > 0) {
+    console.error(`trace=inline items=${traced.length}`);
+  }
 }
 
 function cliVisibleItems(

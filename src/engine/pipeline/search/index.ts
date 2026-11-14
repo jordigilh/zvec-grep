@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   workspaceIndexDetail,
   detail,
@@ -22,7 +23,14 @@ import type {
   SearchPlan,
   SearchPlanResult,
   SearchRecallTrace,
+  SemanticFeatures,
+  SemanticRepresentation,
+  SemanticSearchTrace,
+  SemanticSearchTraceCandidate,
+  SearchTraceContributions,
+  SearchTraceFeatures,
 } from "../../types.js";
+import { DEFAULT_SEMANTIC_FEATURES } from "../../types.js";
 import { TimingCollector } from "../../utils/timing.js";
 import {
   hasPathGlob,
@@ -41,6 +49,7 @@ type SearchContext = {
   workspaceIndex: WorkspaceIndexInfo;
   storage: WorkspaceIndexStorage;
   embeddingModel?: EmbeddingModel;
+  indexDigest?: string | Promise<string | undefined>;
 };
 
 type StorageSearchFilter = NonNullable<
@@ -99,6 +108,10 @@ export async function searchWorkspaceIndex(
     const limit = normalized.limit ?? DEFAULT_LIMIT;
     const trace =
       normalized.trace === true || normalized.trackEntityId !== undefined;
+    const semanticTrace =
+      normalized.semanticFeatures && normalized.semanticFeatures.trace !== "off"
+        ? normalized.semanticFeatures
+        : undefined;
     const fileTypePatterns = await timings.time("search_file_types", () =>
       resolveFileTypePatterns(
         normalized.fileTypes,
@@ -160,16 +173,37 @@ export async function searchWorkspaceIndex(
     }
 
     const hits = timings.timeSync("materialize", () =>
-      visible.map((candidate) => candidateToHit(candidate, limit, trace)),
+      visible.map((candidate) =>
+        candidateToHit(
+          candidate,
+          limit,
+          trace,
+          normalized.semanticFeatures?.trace !== "off"
+            ? normalized.semanticFeatures
+            : undefined,
+        ),
+      ),
     );
     const trackedHit = normalized.trackEntityId
       ? hits.find((hit) => hit.entity.id === normalized.trackEntityId)
       : undefined;
 
+    const indexDigest = semanticTrace ? await ctx.indexDigest : undefined;
+
     return {
       plan: normalized,
       hits,
       trackedHit,
+      trace: semanticTrace
+        ? buildSemanticSearchTrace({
+            workspaceIndex: ctx.workspaceIndex,
+            indexDigest,
+            storage: ctx.storage,
+            features: semanticTrace,
+            candidates: fused,
+            primaryCandidates: visible,
+          })
+        : undefined,
     };
   });
 
@@ -274,6 +308,10 @@ function validateSearchPlan(plan: SearchPlan): ResolvedSearchPlan {
     plan.modifiedBefore,
     "modifiedBefore",
   );
+  const semanticFeatures = normalizeSemanticFeatures(
+    plan.semanticFeatures,
+    plan.trace,
+  );
 
   if (
     modifiedAfter !== undefined &&
@@ -292,6 +330,11 @@ function validateSearchPlan(plan: SearchPlan): ResolvedSearchPlan {
   return {
     ...plan,
     routes,
+    trace:
+      semanticFeatures !== undefined
+        ? semanticFeatures.trace !== "off"
+        : plan.trace,
+    semanticFeatures,
     includePaths: normalizePathFilters(plan.includePaths, "includePaths"),
     excludePaths: normalizePathFilters(plan.excludePaths, "excludePaths"),
     globs: normalizeStringFilters(plan.globs, "globs"),
@@ -307,6 +350,33 @@ function validateSearchPlan(plan: SearchPlan): ResolvedSearchPlan {
     modifiedAfter,
     modifiedBefore,
   };
+}
+
+function normalizeSemanticFeatures(
+  value: SemanticFeatures | undefined,
+  legacyTrace: boolean | undefined,
+): SemanticFeatures | undefined {
+  if (value === undefined) {
+    return legacyTrace === true
+      ? { ...DEFAULT_SEMANTIC_FEATURES, trace: "summary" }
+      : undefined;
+  }
+
+  if (value.semantic_features_version !== 1) {
+    throw new EngineError("Unsupported semantic features version", {
+      code: "ZVEC_GREP.ENGINE.SEARCH.INVALID_SEMANTIC_FEATURES_VERSION",
+      context: `semantic_features_version=${String(value.semantic_features_version)}`,
+    });
+  }
+
+  if (!["off", "summary", "full"].includes(value.trace)) {
+    throw new EngineError("Unsupported diagnostic trace value", {
+      code: "ZVEC_GREP.ENGINE.SEARCH.INVALID_SEMANTIC_TRACE",
+      context: `trace=${String(value.trace)}`,
+    });
+  }
+
+  return { ...value };
 }
 
 function makeDefaultRouteId(
@@ -1161,7 +1231,10 @@ function fuseCandidates(candidates: Map<string, Candidate>): Candidate[] {
       return right.score - left.score;
     }
 
-    return left.id.localeCompare(right.id);
+    const leftKey = candidateTieKey(left);
+    const rightKey = candidateTieKey(right);
+
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
   });
 
   for (const [index, candidate] of fused.entries()) {
@@ -1171,10 +1244,19 @@ function fuseCandidates(candidates: Map<string, Candidate>): Candidate[] {
   return fused;
 }
 
+function candidateTieKey(candidate: Candidate): string {
+  return JSON.stringify([
+    candidate.file.relativePath,
+    candidate.entity.range,
+    candidate.id,
+  ]);
+}
+
 function candidateToHit(
   candidate: Candidate,
   limit: number,
   trace: boolean,
+  semanticFeatures?: SemanticFeatures,
 ): SearchHit {
   return {
     entity: candidate.entity,
@@ -1183,7 +1265,9 @@ function candidateToHit(
     rank: candidate.rank,
     score: candidate.score,
     matchedBy: deriveMatchedBy(candidate.sources),
-    trace: trace ? candidateToTrace(candidate, limit) : undefined,
+    trace: trace
+      ? candidateToTrace(candidate, limit, semanticFeatures)
+      : undefined,
   };
 }
 
@@ -1223,13 +1307,17 @@ function sortEvidence(
   });
 }
 
-function candidateToTrace(candidate: Candidate, limit: number): SearchHitTrace {
+function candidateToTrace(
+  candidate: Candidate,
+  limit: number,
+  semanticFeatures?: SemanticFeatures,
+): SearchHitTrace {
   const final: SearchFinalTrace = {
     returnedByLimit: candidate.rank <= limit,
     cutoffRank: limit,
   };
 
-  return {
+  const trace: SearchHitTrace = {
     recall: candidate.recall,
     fusion: {
       rank: candidate.rank,
@@ -1238,6 +1326,239 @@ function candidateToTrace(candidate: Candidate, limit: number): SearchHitTrace {
     },
     final,
   };
+
+  if (semanticFeatures) {
+    const diagnostic = candidateDiagnostic(candidate);
+    trace.representation = diagnostic.representation;
+    trace.features = diagnostic.features;
+    trace.contributions = diagnostic.contributions;
+    trace.finalScore = candidate.score;
+  }
+
+  return trace;
+}
+
+type CandidateDiagnostic = {
+  representation: SemanticRepresentation;
+  features: SearchTraceFeatures;
+  contributions: SearchTraceContributions;
+};
+
+function candidateDiagnostic(candidate: Candidate): CandidateDiagnostic {
+  // E0 records the baseline signals without changing the baseline score.
+  const nameOverlap = nameOverlapForCandidate(candidate);
+  return {
+    representation: "all",
+    features: {
+      nameOverlap,
+      tokenSketch: 0,
+      graph: 0,
+    },
+    contributions: {
+      baseHybrid: candidate.score,
+      nameOverlap: 0,
+      tokenSketch: 0,
+      graph: 0,
+    },
+  };
+}
+
+function candidateToTraceCandidate(
+  candidate: Candidate,
+): SemanticSearchTraceCandidate {
+  const diagnostic = candidateDiagnostic(candidate);
+  const ftsRank = bestRecallRank(candidate, "fts");
+  const vectorRank = bestRecallRank(candidate, "vector");
+  return {
+    entity_id: candidate.id,
+    ...(candidate.forced ? { forced: true } : {}),
+    ...(ftsRank === undefined ? {} : { fts_rank: ftsRank }),
+    ...(vectorRank === undefined ? {} : { vector_rank: vectorRank }),
+    representation: diagnostic.representation,
+    features: {
+      name_overlap: diagnostic.features.nameOverlap,
+      token_sketch: diagnostic.features.tokenSketch,
+      graph: diagnostic.features.graph,
+    },
+    contributions: {
+      base_hybrid: diagnostic.contributions.baseHybrid,
+      name_overlap: diagnostic.contributions.nameOverlap,
+      token_sketch: diagnostic.contributions.tokenSketch,
+      graph: diagnostic.contributions.graph,
+    },
+    final_score: candidate.score,
+    graph_evidence: [],
+  };
+}
+
+function bestRecallRank(
+  candidate: Candidate,
+  path: SearchRecallTrace["path"],
+): number | undefined {
+  return candidate.recall
+    .filter((recall) => recall.path === path && recall.found)
+    .map((recall) => recall.rank)
+    .filter((rank): rank is number => rank !== undefined)
+    .sort((left, right) => left - right)[0];
+}
+
+function nameOverlapForCandidate(candidate: Candidate): number {
+  const queryTokens = new Set(
+    candidate.recall.flatMap((recall) => identifierTokens(recall.query ?? "")),
+  );
+  if (queryTokens.size === 0) {
+    return 0;
+  }
+
+  const metadata = candidate.entity.metadata;
+  const metadataValues =
+    metadata?.kind === "code"
+      ? [metadata.symbolName, metadata.scope, metadata.signature, metadata.doc]
+      : metadata
+        ? [metadata.heading, metadata.scope]
+        : [];
+  const candidateTokens = new Set(
+    metadataValues.flatMap((value) =>
+      typeof value === "string" ? identifierTokens(value) : [],
+    ),
+  );
+  let overlap = 0;
+  for (const token of queryTokens) {
+    if (candidateTokens.has(token)) {
+      overlap++;
+    }
+  }
+  return overlap / queryTokens.size;
+}
+
+function identifierTokens(value: string): string[] {
+  return (
+    value
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .match(/[A-Za-z0-9]+/g)
+      ?.map((token) => token.toLocaleLowerCase("en-US")) ?? []
+  );
+}
+
+function buildSemanticSearchTrace(input: {
+  workspaceIndex: WorkspaceIndexInfo;
+  indexDigest?: string;
+  storage: WorkspaceIndexStorage;
+  features: SemanticFeatures;
+  candidates: readonly Candidate[];
+  primaryCandidates: readonly Candidate[];
+}): SemanticSearchTrace {
+  const files = [...input.storage.listFiles()].sort(
+    (left, right) =>
+      compareStable(left.relativePath, right.relativePath) ||
+      compareStable(left.id, right.id),
+  );
+  const sourceRecords = files.map((file) => ({
+    path: file.relativePath,
+    size_bytes: file.sizeBytes,
+    content_hash: file.contentHash ?? null,
+    last_modified_time: file.lastModifiedTime,
+  }));
+  const sourceDigest = sha256Value(sourceRecords);
+  const sourceSelectionDigest = sha256Value(input.workspaceIndex.rootPaths);
+  const indexDigest =
+    input.indexDigest ??
+    sha256Value({
+      workspace_index_id: input.workspaceIndex.id,
+      index_version: input.workspaceIndex.indexVersion ?? null,
+      updated_time: input.workspaceIndex.updatedTime,
+    });
+  const embeddingModel = input.workspaceIndex.embedding
+    ? `${input.workspaceIndex.embedding.provider}/${input.workspaceIndex.embedding.model}`
+    : "unknown";
+  const embeddingSchema = sha256Value(input.workspaceIndex.embedding ?? null);
+  const artifacts = {
+    index_sha256: indexDigest,
+    graph_generation_id: null,
+    graph_artifact_sha256: null,
+    graph_publication_sha256: null,
+    embedding_model: embeddingModel,
+    embedding_schema: embeddingSchema,
+  };
+  const generationId = sha256Value({
+    workspace_index_id: input.workspaceIndex.id,
+    source_digest: sourceDigest,
+    source_selection_digest: sourceSelectionDigest,
+    artifacts,
+    feature_config: input.features,
+  });
+  const candidatePool = traceCandidatePool(
+    input.features.trace === "summary"
+      ? input.primaryCandidates
+      : input.candidates,
+  );
+
+  return {
+    schema_version: 1,
+    generation_id: generationId,
+    source_digest: sourceDigest,
+    source_selection_digest: sourceSelectionDigest,
+    source_files: files.length,
+    source_bytes: files.reduce((total, file) => total + file.sizeBytes, 0),
+    feature_config: input.features,
+    artifacts,
+    candidates: candidatePool.map((candidate) =>
+      candidateToTraceCandidate(candidate),
+    ),
+    candidate_count: input.candidates.length,
+    candidates_truncated: input.candidates.length > candidatePool.length,
+    graph: {
+      binding: "unbound",
+      generation_id: null,
+      artifact_sha256: null,
+      publication_sha256: null,
+      seed_ids: [],
+      eligible_edges: 0,
+      excluded_edges: {
+        unresolved: 0,
+        ambiguous: 0,
+        stale: 0,
+      },
+    },
+    expansion: {
+      enabled: false,
+      related_count: 0,
+      items: [],
+    },
+  };
+}
+
+function traceCandidatePool(source: readonly Candidate[]): Candidate[] {
+  const forced = source.filter((candidate) => candidate.forced);
+  const regular = source.filter((candidate) => !candidate.forced);
+  const regularLimit = Math.max(0, 100 - forced.length);
+  return [...regular.slice(0, regularLimit), ...forced.slice(0, 100)];
+}
+
+function sha256Value(value: unknown): string {
+  return sha256Bytes(Buffer.from(canonicalJson(value), "utf8"));
+}
+
+function sha256Bytes(bytes: Uint8Array): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(",")}}`;
+}
+
+function compareStable(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 async function chooseBestEntityInFile(
