@@ -76,12 +76,15 @@ fn modern_http_discovery_tools_errors_and_remote_continuation() -> Result<(), Bo
             assert_eq!(result["result"]["ttlMs"], 3_600_000, "{result}");
             assert_eq!(result["result"]["cacheScope"], "private", "{result}");
             if method == "tools/list" {
+                // Union toolsets: the agent profile exposes search plus the
+                // codegraph/callgraph tools; the full profile adds the
+                // lifecycle and rg tools.
                 assert_eq!(
                     result["result"]["tools"]
                         .as_array()
                         .expect("valid test fixture")
                         .len(),
-                    if toolset == "agent" { 1 } else { 6 }
+                    if toolset == "agent" { 11 } else { 16 }
                 );
             }
         }

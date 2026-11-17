@@ -1,0 +1,96 @@
+{
+  "schema": "zvec-grep.codegraph-real-qrels-v1",
+  "repository": "jordigilh/kubernaut-console",
+  "revision": "a5755470a5588d20b53bf641829a22721a55a2d3",
+  "scope": "packages/ui-core",
+  "source_sha256": {
+    "packages/ui-core/src/index.ts": "eaad89246f0971bf2905f8cf7565a3ca684a69cdf024bb721b39d03790bdf64e",
+    "packages/ui-core/src/components/KubernautChat.tsx": "4d587df4f88b80f03607f70aa91c9f637dd2a064ca1ddd233495058a1f6510ea",
+    "packages/ui-core/src/components/ChatContainer.tsx": "b739283208c356f89e2ef33768b0f5be46877c8898350a9075102f3d8e8d383a",
+    "packages/ui-core/src/hooks/useChat.ts": "247ca6224e4bd13c2a5be3db505e7c5d7a19f2c8998dcd4797dd281e4ecde5e5",
+    "packages/ui-core/src/lib/a2a-client.ts": "2356ad782bb5cfa7826744dfb66032ee36ec21405d927d3d5e84d688cb8bfa9b",
+    "packages/ui-core/src/lib/sse-reader.ts": "26b3fe10819e374aeb8b330abfcf90b5afa9d785f97fa8eed6d094bec0d4d968",
+    "packages/ui-core/src/lib/a2a-types.ts": "a84ebf5a5e63aa987ceec4c4d70376b3e8c10ab5d8de638bf2e7ad16b69624e2",
+    "packages/ui-core/src/lib/session-state.ts": "8726d036d5fbdad79bb6cdc377c0fdc7a3c3de743e57a397ffd1c9afab0414c3",
+    "packages/ui-core/src/lib/mcp-client.ts": "9340c073d44cf63a22a2a1a6592006e4a2d663c107967b0370ef99697989907c"
+  },
+  "relations": [
+    {
+      "category": "structural",
+      "kind": "re_exports",
+      "source": "packages/ui-core/src/index.ts::packages/ui-core/src/index.ts",
+      "target": "packages/ui-core/src/components/KubernautChat.tsx::KubernautChat",
+      "target_name": "KubernautChat",
+      "evidence": "the package entry point exports KubernautChat"
+    },
+    {
+      "category": "structural",
+      "kind": "re_exports",
+      "source": "packages/ui-core/src/index.ts::packages/ui-core/src/index.ts",
+      "target": "packages/ui-core/src/hooks/useChat.ts::useChat",
+      "target_name": "useChat",
+      "evidence": "the package entry point exports useChat"
+    },
+    {
+      "category": "structural",
+      "kind": "imports_from",
+      "source": "packages/ui-core/src/components/KubernautChat.tsx::packages/ui-core/src/components/KubernautChat.tsx",
+      "target": "packages/ui-core/src/components/ChatContainer.tsx::packages/ui-core/src/components/ChatContainer.tsx",
+      "evidence": "KubernautChat imports the ChatContainer shell"
+    },
+    {
+      "category": "calls",
+      "kind": "calls",
+      "source": "packages/ui-core/src/components/KubernautChat.tsx::KubernautChat",
+      "target": "packages/ui-core/src/lib/session-state.ts::clearConsoleSessionState",
+      "target_name": "clearConsoleSessionState",
+      "evidence": "the root chat component clears persisted session state"
+    },
+    {
+      "category": "calls",
+      "kind": "calls",
+      "source": "packages/ui-core/src/components/ChatContainer.tsx::ChatContainer",
+      "target": "packages/ui-core/src/lib/mcp-client.ts::callMcpTool",
+      "target_name": "callMcpTool",
+      "evidence": "the chat shell invokes MCP tools for workflow actions"
+    },
+    {
+      "category": "calls",
+      "kind": "calls",
+      "source": "packages/ui-core/src/lib/a2a-client.ts::streamResult",
+      "target": "packages/ui-core/src/lib/sse-reader.ts::readSSEStream",
+      "target_name": "readSSEStream",
+      "evidence": "the A2A client consumes the SSE reader"
+    },
+    {
+      "category": "references",
+      "kind": "references",
+      "source": "packages/ui-core/src/hooks/useChat.ts::useChat",
+      "target": "packages/ui-core/src/lib/a2a-types.ts::A2AEvent",
+      "target_name": "A2AEvent",
+      "evidence": "useChat handles typed A2A events"
+    }
+  ],
+  "absent_relations": [
+    {
+      "kind": "re_exports",
+      "source": "packages/ui-core/src/components/KubernautChat.tsx::packages/ui-core/src/components/KubernautChat.tsx",
+      "target": "packages/ui-core/src/lib/a2a-client.ts::streamA2A",
+      "evidence": "the component imports the transport through hooks rather than re-exporting it"
+    }
+  ],
+  "community_pairs": [
+    {
+      "left": "packages/ui-core/src/components/ChatContainer.tsx::ChatContainer",
+      "right": "packages/ui-core/src/lib/mcp-client.ts::callMcpTool",
+      "expected": "same",
+      "evidence": "the chat shell and MCP client form the workflow-action path"
+    },
+    {
+      "left": "packages/ui-core/src/components/ChatContainer.tsx::ChatContainer",
+      "right": "packages/ui-core/src/lib/a2a-client.ts::streamA2A",
+      "expected": "different",
+      "evidence": "workflow UI orchestration and transport streaming are separate clusters"
+    }
+  ]
+}

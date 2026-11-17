@@ -1,0 +1,9195 @@
+//! Deterministic multi-language codegraph sidecar generation.
+
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::UNIX_EPOCH,
+};
+
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
+use rayon::prelude::*;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use thiserror::Error;
+use tree_sitter::{Language, Node, Parser};
+
+mod graph_queries;
+
+pub use graph_queries::{
+    CallGraphAssignment, CallGraphBlastRadius, CallGraphCluster, CallGraphClustering,
+    CallGraphIndex, CallGraphPath, CodeGraphAffected, CodeGraphCapabilities, CodeGraphDirection,
+    CodeGraphExplanation, CodeGraphNeighbor, CodeGraphNeighbors, CodeGraphNodeResult,
+    CodeGraphQueryMetadata, CodeGraphRelationCapability, CodeGraphRelationKind,
+    CodeGraphRelationPath, CodeGraphRelationSupport, DEFAULT_AFFECTED_RELATIONS,
+};
+
+pub const CODEGRAPH_SCHEMA: &str = "zvec-grep.codegraph";
+pub const CODEGRAPH_VERSION: u32 = 2;
+/// The default compressed codegraph sidecar written beside a workspace.
+pub const CODEGRAPH_FILE: &str = "codegraph-v2.json.zst";
+/// The uncompressed filename retained for backwards-compatible reads and
+/// explicit `--output ...json` callers.
+pub const CODEGRAPH_JSON_FILE: &str = "codegraph-v2.json";
+/// Schema for the commit-marker manifest that binds a graph to accepted facts.
+pub const CODEGRAPH_PUBLICATION_SCHEMA: &str = "zvec-grep.codegraph-publication";
+pub const CODEGRAPH_PUBLICATION_VERSION: u32 = 1;
+/// The default publication manifest written beside the graph artifact.
+pub const CODEGRAPH_PUBLICATION_FILE: &str = "codegraph-publication-v1.json";
+const CODEGRAPH_COMPRESSION_LEVEL: i32 = 3;
+const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
+pub const CODEGRAPH_RELATION_SCHEMA: &str = "zvec-grep.codegraph.relations";
+pub const CODEGRAPH_RELATION_VERSION: u32 = 2;
+/// Generation of the relation extractor serialized into codegraph artifacts.
+///
+/// This is intentionally separate from the artifact schema version so future
+/// relation-extractor changes can require regeneration without changing the
+/// relation vocabulary itself.
+pub const CODEGRAPH_RELATION_GENERATION: u32 = 4;
+pub const GO_CALLFACTS_SCHEMA: &str = "zvec-grep.go-callfacts";
+pub const GO_CALLFACTS_VERSION: u32 = 2;
+pub const GO_CALLFACTS_FILE: &str = "go-callfacts-v2.json";
+pub const RUST_CALLFACTS_SCHEMA: &str = "zvec-grep.rust-callfacts";
+pub const RUST_CALLFACTS_VERSION: u32 = 1;
+pub const RUST_CALLFACTS_FILE: &str = "rust-callfacts-v1.json";
+pub const TYPESCRIPT_CALLFACTS_SCHEMA: &str = "zvec-grep.typescript-callfacts";
+pub const TYPESCRIPT_CALLFACTS_VERSION: u32 = 1;
+pub const TYPESCRIPT_CALLFACTS_FILE: &str = "typescript-callfacts-v1.json";
+pub const PYTHON_CALLFACTS_SCHEMA: &str = "zvec-grep.python-callfacts";
+pub const PYTHON_CALLFACTS_VERSION: u32 = 1;
+pub const PYTHON_CALLFACTS_FILE: &str = "python-callfacts-v1.json";
+
+#[derive(Debug, Error)]
+pub enum CodeGraphError {
+    #[error("codegraph I/O while {operation} {path}: {source}")]
+    Io {
+        operation: String,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("source file is not UTF-8: {path}: {source}")]
+    Utf8 {
+        path: PathBuf,
+        #[source]
+        source: std::string::FromUtf8Error,
+    },
+    #[error("configure Go parser: {0}")]
+    Parser(String),
+    #[error("unsupported codegraph source language: {0}")]
+    UnsupportedLanguage(PathBuf),
+    #[error("parse Go source: {0}")]
+    Parse(String),
+    #[error("invalid codegraph change path: {0}")]
+    InvalidChangePath(PathBuf),
+    #[error("base codegraph schema/version is unsupported: {schema} v{version}")]
+    IncompatibleArtifact { schema: String, version: u32 },
+    #[error("invalid codegraph publication {path}: {reason}")]
+    CodeGraphPublication { path: PathBuf, reason: String },
+    #[error("invalid Go call-facts artifact {path}: {reason}")]
+    GoCallFacts { path: PathBuf, reason: String },
+    #[error("invalid Rust call-facts artifact {path}: {reason}")]
+    RustCallFacts { path: PathBuf, reason: String },
+    #[error("invalid TypeScript call-facts artifact {path}: {reason}")]
+    TypeScriptCallFacts { path: PathBuf, reason: String },
+    #[error("invalid Python call-facts artifact {path}: {reason}")]
+    PythonCallFacts { path: PathBuf, reason: String },
+    #[error("codegraph node was not found: {query}")]
+    GraphNodeNotFound { query: String },
+    #[error("codegraph node is ambiguous: {query}; candidates: {candidates:?}")]
+    GraphNodeAmbiguous {
+        query: String,
+        candidates: Vec<String>,
+    },
+    #[error("Leiden clustering failed: {0}")]
+    Clustering(String),
+    #[error("serialize codegraph: {0}")]
+    Serialize(#[from] serde_json::Error),
+}
+
+pub type CodeGraphResult<T> = Result<T, CodeGraphError>;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CodeGraphArtifact {
+    pub schema: String,
+    pub version: u32,
+    pub manifest_key: String,
+    /// Relation-extraction generation that produced this snapshot.
+    pub relation_generation: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typescript_callfacts_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_callfacts_context_sha256: Option<String>,
+    pub files: Vec<CodeGraphFile>,
+    pub nodes: Vec<CodeGraphNode>,
+    pub edges: Vec<CodeGraphEdge>,
+}
+
+/// Commit metadata for one graph snapshot and the semantic sidecars accepted
+/// while producing it. The manifest is written last and acts as the
+/// publication boundary; graph consumers can reject an incomplete update by
+/// validating it before use.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CodeGraphPublication {
+    pub schema: String,
+    pub version: u32,
+    pub graph: CodeGraphPublicationGraph,
+    pub sidecars: Vec<CodeGraphPublicationSidecar>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CodeGraphPublicationGraph {
+    pub path: String,
+    pub sha256: String,
+    pub schema: String,
+    pub version: u32,
+    pub relation_generation: u32,
+    pub manifest_key: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CodeGraphPublicationSidecar {
+    pub language: String,
+    pub path: String,
+    pub sha256: String,
+    pub context_sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GoCallFactsArtifact {
+    pub schema: String,
+    pub version: u32,
+    pub context: GoCallFactsContext,
+    pub context_sha256: String,
+    pub files: Vec<GoCallFactsFile>,
+    pub calls: Vec<GoCallFact>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GoCallFactsContext {
+    pub go_version: String,
+    pub go_mod: String,
+    pub go_work: String,
+    pub settings: BTreeMap<String, String>,
+    pub context_files: Vec<GoCallFactsFile>,
+}
+
+impl GoCallFactsContext {
+    /// Returns the deterministic fingerprint for this recorded Go analysis context.
+    #[must_use]
+    pub fn fingerprint(&self) -> String {
+        go_callfacts_context_sha256(self)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GoCallFactsFile {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GoCallFact {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub start_column: usize,
+    pub end_column: usize,
+    pub caller: String,
+    pub target_name: String,
+    pub target: Option<String>,
+    pub possible_targets: Vec<String>,
+    pub resolution: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RustCallFactsArtifact {
+    pub schema: String,
+    pub version: u32,
+    pub context: RustCallFactsContext,
+    pub context_sha256: String,
+    pub files: Vec<RustCallFactsFile>,
+    pub calls: Vec<RustCallFact>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RustCallFactsContext {
+    pub rustc_version: String,
+    pub rustc_commit: String,
+    pub host: String,
+    pub target: String,
+    pub edition: String,
+    pub manifest_path: String,
+    pub lockfile_path: Option<String>,
+    pub toolchain_path: Option<String>,
+    pub settings: BTreeMap<String, String>,
+    pub context_files: Vec<RustCallFactsFile>,
+}
+
+impl RustCallFactsContext {
+    /// Returns the deterministic fingerprint for this recorded Rust analysis context.
+    #[must_use]
+    pub fn fingerprint(&self) -> String {
+        rust_callfacts_context_sha256(self)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RustCallFactsFile {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RustCallFactsSymbol {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TypeScriptCallFactsArtifact {
+    pub schema: String,
+    pub version: u32,
+    pub context: TypeScriptCallFactsContext,
+    pub context_sha256: String,
+    pub files: Vec<TypeScriptCallFactsFile>,
+    pub calls: Vec<TypeScriptCallFact>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TypeScriptCallFactsContext {
+    pub typescript_version: String,
+    pub node_version: String,
+    pub project_path: String,
+    pub target: String,
+    pub module: String,
+    pub jsx: String,
+    pub settings: BTreeMap<String, String>,
+    pub context_files: Vec<TypeScriptCallFactsFile>,
+}
+
+impl TypeScriptCallFactsContext {
+    /// Returns the deterministic fingerprint for the recorded TypeScript context.
+    #[must_use]
+    pub fn fingerprint(&self) -> String {
+        typescript_callfacts_context_sha256(self)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TypeScriptCallFactsFile {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TypeScriptCallFactsSymbol {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TypeScriptCallFact {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub start_column: usize,
+    pub end_column: usize,
+    pub caller: TypeScriptCallFactsSymbol,
+    pub target_name: String,
+    pub target: Option<TypeScriptCallFactsSymbol>,
+    pub possible_targets: Vec<TypeScriptCallFactsSymbol>,
+    pub resolution: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PythonCallFactsArtifact {
+    pub schema: String,
+    pub version: u32,
+    pub context: PythonCallFactsContext,
+    pub context_sha256: String,
+    pub files: Vec<PythonCallFactsFile>,
+    pub calls: Vec<PythonCallFact>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PythonCallFactsContext {
+    pub pyright_version: String,
+    pub python_version: String,
+    pub target_version: String,
+    pub project_path: String,
+    pub typeshed_sha256: String,
+    pub settings: BTreeMap<String, String>,
+    pub context_files: Vec<PythonCallFactsFile>,
+}
+
+impl PythonCallFactsContext {
+    /// Returns the deterministic fingerprint for the recorded Python context.
+    #[must_use]
+    pub fn fingerprint(&self) -> String {
+        python_callfacts_context_sha256(self)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PythonCallFactsFile {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PythonCallFactsSymbol {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PythonCallFact {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub start_column: usize,
+    pub end_column: usize,
+    pub caller: PythonCallFactsSymbol,
+    pub target_name: String,
+    pub target: Option<PythonCallFactsSymbol>,
+    pub possible_targets: Vec<PythonCallFactsSymbol>,
+    pub resolution: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RustCallFact {
+    pub path: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub start_column: usize,
+    pub end_column: usize,
+    pub caller: RustCallFactsSymbol,
+    pub target_name: String,
+    pub target: Option<RustCallFactsSymbol>,
+    pub possible_targets: Vec<RustCallFactsSymbol>,
+    pub resolution: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CodeGraphChange {
+    Upsert(PathBuf),
+    Delete(PathBuf),
+}
+
+/// Filesystem metadata used for cheap in-memory freshness checks between graph queries.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodeGraphSourceStamp {
+    byte_len: u64,
+    modified_unix_nanos: Option<u128>,
+    changed_unix_nanos: Option<i128>,
+    content_sha256: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CodeGraphFile {
+    pub path: String,
+    #[serde(default = "default_language")]
+    pub language: String,
+    pub sha256: String,
+    pub bytes: usize,
+    pub package: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SourceLanguage {
+    Go,
+    Rust,
+    TypeScript,
+    Tsx,
+    Python,
+}
+
+impl SourceLanguage {
+    fn from_path(path: &Path) -> Option<Self> {
+        match path.extension()?.to_str()? {
+            "go" => Some(Self::Go),
+            "rs" => Some(Self::Rust),
+            "ts" => Some(Self::TypeScript),
+            "tsx" => Some(Self::Tsx),
+            "py" => Some(Self::Python),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Go => "go",
+            Self::Rust => "rust",
+            Self::TypeScript => "typescript",
+            Self::Tsx => "tsx",
+            Self::Python => "python",
+        }
+    }
+
+    fn parser_language(self) -> Language {
+        match self {
+            Self::Go => tree_sitter_go::LANGUAGE.into(),
+            Self::Rust => tree_sitter_rust::LANGUAGE.into(),
+            Self::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            Self::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+            Self::Python => tree_sitter_python::LANGUAGE.into(),
+        }
+    }
+}
+
+fn default_language() -> String {
+    "go".to_owned()
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CodeGraphNode {
+    pub id: String,
+    pub kind: String,
+    pub path: Option<String>,
+    pub name: String,
+    pub qualified_name: Option<String>,
+    pub range: Option<CodeGraphRange>,
+    pub signature: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CodeGraphEdge {
+    pub kind: String,
+    pub source: String,
+    pub target: Option<String>,
+    pub target_name: Option<String>,
+    pub resolved: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ambiguous_candidates: Vec<String>,
+    /// Producer or syntax certainty label. It is optional for edge kinds that
+    /// do not carry a certainty classification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+    pub range: Option<CodeGraphRange>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CodeGraphRange {
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub start_column: usize,
+    pub end_column: usize,
+}
+
+#[derive(Clone, Debug)]
+struct ParsedFile {
+    file: CodeGraphFile,
+    file_node_id: String,
+    definitions: Vec<Definition>,
+    imports: Vec<String>,
+    import_sites: Vec<ImportSite>,
+    calls: Vec<CallSite>,
+    relations: Vec<StructuralRelation>,
+    /// Full UTF-8 source text. Empty for synthetic parsed files built from
+    /// already-persisted metadata; used by Go receiver disambiguation.
+    source: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ImportSite {
+    kind: String,
+    target_name: String,
+    /// Imported declaration names as written by the source construct. The
+    /// module/file edge remains represented by `target_name`; these names are
+    /// used only when the module resolves to a local source file.
+    symbol_names: Vec<String>,
+    range: CodeGraphRange,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PackageManifest {
+    path: String,
+    sha256: String,
+    ecosystem: String,
+    name: Option<String>,
+    dependencies: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct Definition {
+    node: CodeGraphNode,
+    start_byte: usize,
+    end_byte: usize,
+    simple_name: String,
+    qualified_name: String,
+}
+
+struct LanguageCollector<'source> {
+    source: &'source [u8],
+    language: SourceLanguage,
+    path: &'source str,
+    scopes: Vec<(String, bool)>,
+    definitions: Vec<Definition>,
+    imports: BTreeSet<String>,
+    import_sites: Vec<ImportSite>,
+    calls: Vec<CallSite>,
+    relations: Vec<StructuralRelation>,
+}
+
+impl<'source> LanguageCollector<'source> {
+    fn new(source: &'source [u8], language: SourceLanguage, path: &'source str) -> Self {
+        Self {
+            source,
+            language,
+            path,
+            scopes: Vec::new(),
+            definitions: Vec::new(),
+            imports: BTreeSet::new(),
+            import_sites: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+        }
+    }
+
+    fn collect(&mut self, node: Node<'_>) {
+        let definition =
+            language_definition(node, self.source, self.language, self.path, &self.scopes);
+        if let Some(definition) = definition.as_ref() {
+            self.definitions.push(definition.clone());
+        }
+        self.relations.extend(language_relations(
+            node,
+            self.source,
+            self.language,
+            self.path,
+            &self.scopes,
+            definition.as_ref(),
+        ));
+        for import in language_imports(node, self.source, self.language) {
+            self.imports.insert(import.target_name.clone());
+            self.import_sites.push(import);
+        }
+        if let Some(reexport) = language_reexport(node, self.source, self.language) {
+            self.imports.insert(reexport.target_name.clone());
+            self.import_sites.push(reexport);
+        }
+        if let Some(dynamic_import) = language_dynamic_import(node, self.source, self.language) {
+            self.imports.insert(dynamic_import.target_name.clone());
+            self.import_sites.push(dynamic_import);
+        }
+        if let Some(call) = language_call_site(node, self.source, self.language) {
+            if let Some(source_id) =
+                test_owner_id(node, &self.scopes, self.language, self.path, self.source)
+            {
+                self.relations.push(StructuralRelation {
+                    kind: "tests".to_owned(),
+                    source: source_id,
+                    target_name: call
+                        .qualified_target
+                        .clone()
+                        .unwrap_or_else(|| call.target_name.clone()),
+                    range: call.range.clone(),
+                });
+            }
+            self.calls.push(call);
+        }
+
+        let scope = language_scope(node, self.source, self.language);
+        if let Some(scope) = &scope {
+            self.scopes.push(scope.clone());
+        }
+        let mut cursor = node.walk();
+        let children = node.named_children(&mut cursor).collect::<Vec<_>>();
+        for child in children {
+            self.collect(child);
+        }
+        if scope.is_some() {
+            self.scopes.pop();
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CallSite {
+    start_byte: usize,
+    end_byte: usize,
+    target_name: String,
+    qualified_target: Option<String>,
+    range: CodeGraphRange,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StructuralRelation {
+    kind: String,
+    source: String,
+    target_name: String,
+    range: CodeGraphRange,
+}
+
+/// Builds a complete multi-language graph for supported source files below `root`.
+///
+/// # Errors
+///
+/// Returns an error if the root cannot be scanned, a supported source file cannot be
+/// read or parsed, or the resulting artifact cannot be represented.
+pub fn build_codegraph(root: &Path) -> CodeGraphResult<CodeGraphArtifact> {
+    let root = resolve_root(root)?;
+    let mut paths = Vec::new();
+    collect_code_files(&root, &mut paths)?;
+    paths.sort();
+    let parsed = parse_files(&root, &paths)?;
+    let package_manifests = collect_package_manifests(&root)?;
+    let mut artifact = build_artifact(&parsed, &package_manifests);
+    apply_semantic_callfacts(&root, &mut artifact)?;
+    Ok(artifact)
+}
+
+/// Builds a Go-only graph for existing callers that need the original scope.
+///
+/// # Errors
+///
+/// Returns an error if the root cannot be scanned or a Go source file cannot be
+/// read or parsed.
+pub fn build_go_codegraph(root: &Path) -> CodeGraphResult<CodeGraphArtifact> {
+    let root = resolve_root(root)?;
+    let mut paths = Vec::new();
+    collect_code_files(&root, &mut paths)?;
+    paths.retain(|path| SourceLanguage::from_path(path) == Some(SourceLanguage::Go));
+    paths.sort();
+    let parsed = parse_files(&root, &paths)?;
+    let package_manifests = collect_package_manifests(&root)?;
+    let package_manifests = package_manifests
+        .iter()
+        .filter(|manifest| manifest.ecosystem == "go")
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut artifact = build_artifact(&parsed, &package_manifests);
+    apply_semantic_callfacts(&root, &mut artifact)?;
+    Ok(artifact)
+}
+
+/// Applies changed, deleted, and renamed files to a previous graph snapshot.
+/// Only upserted files are parsed; existing call edges are re-resolved against
+/// the resulting definition set so deletions and renames cannot leave stale targets.
+///
+/// # Errors
+///
+/// Returns an error if the base artifact has an unsupported schema/version, a
+/// changed path is invalid or escapes the root, or a source file cannot be read
+/// or parsed.
+pub fn update_codegraph(
+    base: &CodeGraphArtifact,
+    root: &Path,
+    changes: &[CodeGraphChange],
+) -> CodeGraphResult<CodeGraphArtifact> {
+    if base.schema != CODEGRAPH_SCHEMA || base.version != CODEGRAPH_VERSION {
+        return Err(CodeGraphError::IncompatibleArtifact {
+            schema: base.schema.clone(),
+            version: base.version,
+        });
+    }
+    let root = resolve_root(root)?;
+    if !has_current_relation_generation(base) {
+        return build_codegraph(&root);
+    }
+    let mut changed_paths = BTreeSet::new();
+    let mut upsert_paths = BTreeSet::new();
+    for change in changes {
+        let (path, upsert) = match change {
+            CodeGraphChange::Upsert(path) => (path, true),
+            CodeGraphChange::Delete(path) => (path, false),
+        };
+        let path = normalize_change_path(path)?;
+        changed_paths.insert(path.clone());
+        if upsert {
+            upsert_paths.insert(path);
+        } else {
+            upsert_paths.remove(&path);
+        }
+    }
+
+    let canonical_paths = upsert_paths
+        .into_iter()
+        .map(|relative| {
+            let path = root.join(&relative);
+            let canonical = path
+                .canonicalize()
+                .map_err(|error| io_failure("resolve changed source", &path, error))?;
+            if !canonical.starts_with(&root) || !canonical.is_file() {
+                return Err(CodeGraphError::InvalidChangePath(PathBuf::from(relative)));
+            }
+            Ok(canonical)
+        })
+        .collect::<CodeGraphResult<Vec<_>>>()?;
+    let parsed = parse_files(&root, &canonical_paths)?;
+    // The changed artifact contains only source-derived nodes. Manifest-derived
+    // package nodes and edges are retained from the base graph; refresh performs
+    // a full rebuild when a manifest input changes.
+    let changed_artifact = build_artifact(&parsed, &[]);
+    let package_manifests = collect_package_manifests(&root)?;
+    let mut artifact = merge_codegraph_delta(
+        base,
+        &changed_paths,
+        changed_artifact,
+        &parsed,
+        &package_manifests,
+    );
+    apply_semantic_callfacts(&root, &mut artifact)?;
+    Ok(artifact)
+}
+
+/// Applies a source-file delta to a previous graph snapshot.
+///
+/// Kept as a compatibility alias for early Go-sidecar callers.
+///
+/// # Errors
+///
+/// Returns an error if the artifact is incompatible, a changed path escapes
+/// the root, or a changed source file cannot be read or parsed.
+pub fn update_go_codegraph(
+    base: &CodeGraphArtifact,
+    root: &Path,
+    changes: &[CodeGraphChange],
+) -> CodeGraphResult<CodeGraphArtifact> {
+    update_codegraph(base, root, changes)
+}
+
+fn merge_codegraph_delta(
+    base: &CodeGraphArtifact,
+    changed_paths: &BTreeSet<String>,
+    changed_artifact: CodeGraphArtifact,
+    changed_files: &[ParsedFile],
+    package_manifests: &[PackageManifest],
+) -> CodeGraphArtifact {
+    let mut files = base
+        .files
+        .iter()
+        .filter(|file| !changed_paths.contains(&file.path))
+        .cloned()
+        .chain(changed_artifact.files)
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+
+    let mut nodes = BTreeMap::new();
+    for node in base
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.path
+                .as_ref()
+                .is_none_or(|path| !changed_paths.contains(path))
+        })
+        .chain(changed_artifact.nodes.iter())
+    {
+        nodes.insert(node.id.clone(), node.clone());
+    }
+    let mut nodes = nodes.into_values().collect::<Vec<_>>();
+    nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    let valid_node_ids = nodes
+        .iter()
+        .map(|node| node.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let changed_source_ids = base
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.path
+                .as_ref()
+                .is_some_and(|path| changed_paths.contains(path))
+        })
+        .map(|node| node.id.clone())
+        .collect::<BTreeSet<_>>();
+
+    let mut base_edges = base.edges.clone();
+    resolve_call_edges(&mut base_edges, &base.nodes, &parsed_sources(changed_files));
+    let mut edges = base_edges
+        .iter()
+        .filter(|edge| {
+            valid_node_ids.contains(edge.source.as_str())
+                && !changed_source_ids.contains(&edge.source)
+                && (matches!(
+                    edge.kind.as_str(),
+                    "calls" | "imports" | "imports_from" | "re_exports"
+                ) || edge
+                    .target
+                    .as_deref()
+                    .is_none_or(|target| valid_node_ids.contains(target)))
+        })
+        .cloned()
+        .chain(changed_artifact.edges)
+        .collect::<Vec<_>>();
+    refresh_import_edge_targets(&mut edges, &files, &nodes, package_manifests);
+    resolve_call_edges(&mut edges, &nodes, &parsed_sources(changed_files));
+    resolve_relation_edges(&mut edges, &nodes);
+    refresh_import_symbol_edges(&mut edges, changed_files, &files, &nodes, package_manifests);
+
+    let referenced_packages = edges
+        .iter()
+        .filter(|edge| {
+            matches!(
+                edge.kind.as_str(),
+                "imports" | "imports_from" | "re_exports" | "depends_on"
+            )
+        })
+        .flat_map(|edge| [Some(edge.source.as_str()), edge.target.as_deref()])
+        .flatten()
+        .collect::<BTreeSet<_>>();
+    nodes.retain(|node| {
+        node.kind != "package"
+            || node.path.is_some()
+            || referenced_packages.contains(node.id.as_str())
+    });
+    let valid_node_ids = nodes
+        .iter()
+        .map(|node| node.id.as_str())
+        .collect::<BTreeSet<_>>();
+    edges.retain(|edge| {
+        valid_node_ids.contains(edge.source.as_str())
+            && edge
+                .target
+                .as_deref()
+                .is_none_or(|target| valid_node_ids.contains(target))
+    });
+    sort_graph(&mut nodes, &mut edges);
+
+    CodeGraphArtifact {
+        schema: CODEGRAPH_SCHEMA.to_owned(),
+        version: CODEGRAPH_VERSION,
+        manifest_key: package_manifest_key(&files, package_manifests),
+        relation_generation: CODEGRAPH_RELATION_GENERATION,
+        go_callfacts_context_sha256: None,
+        rust_callfacts_context_sha256: None,
+        typescript_callfacts_context_sha256: None,
+        python_callfacts_context_sha256: None,
+        files,
+        nodes,
+        edges,
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn refresh_import_symbol_edges(
+    edges: &mut Vec<CodeGraphEdge>,
+    changed_files: &[ParsedFile],
+    files: &[CodeGraphFile],
+    nodes: &[CodeGraphNode],
+    package_manifests: &[PackageManifest],
+) {
+    let changed_source_ids = changed_files
+        .iter()
+        .map(|file| file.file_node_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let changed_file_paths = changed_files
+        .iter()
+        .map(|file| file.file.path.as_str())
+        .collect::<BTreeSet<_>>();
+    let nodes_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let symbol_edge_key = |edge: &CodeGraphEdge| {
+        (
+            edge.source.clone(),
+            edge.kind.clone(),
+            edge.target_name.clone().unwrap_or_default(),
+            edge.range.as_ref().map_or(0, |range| range.start_byte),
+            edge.range.as_ref().map_or(0, |range| range.end_byte),
+        )
+    };
+    let stale_symbol_edges = edges
+        .iter()
+        .filter_map(|edge| {
+            if changed_source_ids.contains(edge.source.as_str())
+                || !matches!(edge.kind.as_str(), "imports" | "re_exports")
+                || edge.resolution.as_deref() != Some("syntax")
+                || edge.range.is_none()
+            {
+                return None;
+            }
+            let module_kind = if edge.kind == "re_exports" {
+                "re_exports"
+            } else {
+                "imports_from"
+            };
+            let target_path = edges
+                .iter()
+                .find(|module| {
+                    module.source == edge.source
+                        && module.kind == module_kind
+                        && module.range == edge.range
+                })
+                .and_then(|module| module.target.as_deref())
+                .and_then(|target| nodes_by_id.get(target))
+                .filter(|node| node.kind == "file")
+                .and_then(|node| node.path.as_deref())?;
+            changed_file_paths
+                .contains(target_path)
+                .then(|| (symbol_edge_key(edge), edge.clone(), target_path.to_owned()))
+        })
+        .collect::<Vec<_>>();
+    let stale_symbol_keys = stale_symbol_edges
+        .iter()
+        .map(|(key, _, _)| key.clone())
+        .collect::<BTreeSet<_>>();
+    edges.retain(|edge| {
+        if stale_symbol_keys.contains(&symbol_edge_key(edge)) {
+            return false;
+        }
+        if !changed_source_ids.contains(edge.source.as_str())
+            || !matches!(edge.kind.as_str(), "imports" | "re_exports")
+            || edge.resolution.as_deref() != Some("syntax")
+            || edge.range.is_none()
+        {
+            return true;
+        }
+        edge.target
+            .as_deref()
+            .and_then(|target| nodes_by_id.get(target))
+            .is_none_or(|node| matches!(node.kind.as_str(), "file" | "package"))
+    });
+
+    let current_files = files
+        .iter()
+        .map(|file| ParsedFile {
+            file: file.clone(),
+            file_node_id: file_node_id(&file.path),
+            definitions: Vec::new(),
+            imports: Vec::new(),
+            import_sites: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+            source: String::new(),
+        })
+        .collect::<Vec<_>>();
+    for file in changed_files {
+        for import in &file.import_sites {
+            let Some(local_target) =
+                resolve_local_import_target(file, import, &current_files, package_manifests)
+            else {
+                continue;
+            };
+            for symbol_name in &import.symbol_names {
+                let Some(target) = resolve_imported_node_target(nodes, &local_target, symbol_name)
+                else {
+                    continue;
+                };
+                edges.push(CodeGraphEdge {
+                    kind: if import.kind == "re_exports" {
+                        "re_exports".to_owned()
+                    } else {
+                        "imports".to_owned()
+                    },
+                    source: file.file_node_id.clone(),
+                    target: Some(target.id.clone()),
+                    target_name: Some(symbol_name.clone()),
+                    resolved: true,
+                    ambiguous_candidates: Vec::new(),
+                    resolution: Some("syntax".to_owned()),
+                    range: Some(import.range.clone()),
+                });
+            }
+        }
+    }
+    for (_, mut edge, target_path) in stale_symbol_edges {
+        let Some(target_name) = edge.target_name.as_deref() else {
+            continue;
+        };
+        let Some(target) = resolve_imported_node_target(nodes, &target_path, target_name) else {
+            continue;
+        };
+        edge.target = Some(target.id.clone());
+        edge.resolved = true;
+        edge.ambiguous_candidates.clear();
+        edge.resolution = Some("syntax".to_owned());
+        edges.push(edge);
+    }
+    sort_edges(edges);
+}
+
+fn resolve_imported_node_target<'a>(
+    nodes: &'a [CodeGraphNode],
+    path: &str,
+    symbol_name: &str,
+) -> Option<&'a CodeGraphNode> {
+    let normalized = clean_relation_target(symbol_name);
+    let simple_name = normalized.rsplit('.').next().unwrap_or(normalized.as_str());
+    nodes.iter().find(|node| {
+        node.path.as_deref() == Some(path)
+            && !matches!(node.kind.as_str(), "file" | "package")
+            && (node.name == simple_name
+                || node.qualified_name.as_deref() == Some(normalized.as_str())
+                || node.qualified_name.as_deref().is_some_and(|qualified| {
+                    qualified.ends_with(format!(".{normalized}").as_str())
+                }))
+    })
+}
+
+fn has_current_relation_generation(artifact: &CodeGraphArtifact) -> bool {
+    artifact.relation_generation == CODEGRAPH_RELATION_GENERATION
+}
+
+fn resolve_root(root: &Path) -> CodeGraphResult<PathBuf> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| io_failure("resolve codegraph root", root, error))?;
+    if !root.is_dir() {
+        return Err(CodeGraphError::Io {
+            operation: "open codegraph root".to_owned(),
+            path: root,
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "codegraph root is not a directory",
+            ),
+        });
+    }
+    Ok(root)
+}
+
+fn normalize_change_path(path: &Path) -> CodeGraphResult<String> {
+    if path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+        || SourceLanguage::from_path(path).is_none()
+    {
+        return Err(CodeGraphError::InvalidChangePath(path.to_path_buf()));
+    }
+    let normalized = path
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    if normalized.is_empty() {
+        return Err(CodeGraphError::InvalidChangePath(path.to_path_buf()));
+    }
+    Ok(normalized)
+}
+
+fn build_artifact(
+    parsed: &[ParsedFile],
+    package_manifests: &[PackageManifest],
+) -> CodeGraphArtifact {
+    let files = parsed
+        .iter()
+        .map(|file| file.file.clone())
+        .collect::<Vec<_>>();
+    let manifest_key = package_manifest_key(&files, package_manifests);
+    let (mut nodes, mut edges) = structural_graph(parsed, package_manifests);
+    append_call_edges(parsed, &mut edges);
+
+    nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    resolve_call_edges(&mut edges, &nodes, &parsed_sources(parsed));
+    resolve_relation_edges(&mut edges, &nodes);
+    sort_graph(&mut nodes, &mut edges);
+
+    CodeGraphArtifact {
+        schema: CODEGRAPH_SCHEMA.to_owned(),
+        version: CODEGRAPH_VERSION,
+        manifest_key,
+        relation_generation: CODEGRAPH_RELATION_GENERATION,
+        go_callfacts_context_sha256: None,
+        rust_callfacts_context_sha256: None,
+        typescript_callfacts_context_sha256: None,
+        python_callfacts_context_sha256: None,
+        files,
+        nodes,
+        edges,
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn structural_graph(
+    parsed: &[ParsedFile],
+    package_manifests: &[PackageManifest],
+) -> (Vec<CodeGraphNode>, Vec<CodeGraphEdge>) {
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+    let mut package_nodes = BTreeMap::new();
+
+    for file in parsed {
+        nodes.push(CodeGraphNode {
+            id: file.file_node_id.clone(),
+            kind: "file".to_owned(),
+            path: Some(file.file.path.clone()),
+            name: file.file.path.clone(),
+            qualified_name: None,
+            range: None,
+            signature: None,
+        });
+        for definition in &file.definitions {
+            nodes.push(definition.node.clone());
+            edges.push(CodeGraphEdge {
+                kind: "defines".to_owned(),
+                source: file.file_node_id.clone(),
+                target: Some(definition.node.id.clone()),
+                target_name: Some(definition.qualified_name.clone()),
+                resolved: true,
+                ambiguous_candidates: Vec::new(),
+                resolution: Some("structural".to_owned()),
+                range: definition.node.range.clone(),
+            });
+        }
+        for import in &file.imports {
+            let package_id = package_node_id(import);
+            ensure_package_node(&mut package_nodes, import, None);
+            edges.push(CodeGraphEdge {
+                kind: "imports".to_owned(),
+                source: file.file_node_id.clone(),
+                target: Some(package_id),
+                target_name: Some(import.clone()),
+                resolved: true,
+                ambiguous_candidates: Vec::new(),
+                resolution: Some("structural".to_owned()),
+                range: None,
+            });
+        }
+        for import in &file.import_sites {
+            let package_id = package_node_id(&import.target_name);
+            let local_target = resolve_local_import_target(file, import, parsed, package_manifests);
+            ensure_package_node(&mut package_nodes, &import.target_name, None);
+            edges.push(CodeGraphEdge {
+                kind: import.kind.clone(),
+                source: file.file_node_id.clone(),
+                target: Some(local_target.as_deref().map_or(package_id, file_node_id)),
+                target_name: Some(import.target_name.clone()),
+                resolved: true,
+                ambiguous_candidates: Vec::new(),
+                resolution: Some("syntax".to_owned()),
+                range: Some(import.range.clone()),
+            });
+            if let Some(local_target) = local_target.as_deref() {
+                for symbol_name in &import.symbol_names {
+                    let Some(target) =
+                        resolve_imported_symbol_target(parsed, local_target, symbol_name)
+                    else {
+                        continue;
+                    };
+                    edges.push(CodeGraphEdge {
+                        kind: if import.kind == "re_exports" {
+                            "re_exports".to_owned()
+                        } else {
+                            "imports".to_owned()
+                        },
+                        source: file.file_node_id.clone(),
+                        target: Some(target.node.id.clone()),
+                        target_name: Some(symbol_name.clone()),
+                        resolved: true,
+                        ambiguous_candidates: Vec::new(),
+                        resolution: Some("syntax".to_owned()),
+                        range: Some(import.range.clone()),
+                    });
+                }
+            }
+        }
+        for relation in &file.relations {
+            edges.push(CodeGraphEdge {
+                kind: relation.kind.clone(),
+                source: relation.source.clone(),
+                target: None,
+                target_name: Some(relation.target_name.clone()),
+                resolved: false,
+                ambiguous_candidates: Vec::new(),
+                resolution: Some("syntax".to_owned()),
+                range: Some(relation.range.clone()),
+            });
+        }
+    }
+    append_containment_edges(parsed, &mut edges);
+
+    let mut seen_dependency_edges = BTreeSet::new();
+    for manifest in package_manifests {
+        let Some(name) = manifest.name.as_deref() else {
+            continue;
+        };
+        let package_id = package_node_id(name);
+        ensure_package_node(&mut package_nodes, name, Some(manifest.path.as_str()));
+        for dependency in &manifest.dependencies {
+            if dependency.is_empty()
+                || dependency == name
+                || !seen_dependency_edges.insert((name.to_owned(), dependency.clone()))
+            {
+                continue;
+            }
+            let dependency_id = package_node_id(dependency);
+            ensure_package_node(&mut package_nodes, dependency, None);
+            edges.push(CodeGraphEdge {
+                kind: "depends_on".to_owned(),
+                source: package_id.clone(),
+                target: Some(dependency_id),
+                target_name: Some(dependency.clone()),
+                resolved: true,
+                ambiguous_candidates: Vec::new(),
+                resolution: Some("manifest".to_owned()),
+                range: None,
+            });
+        }
+    }
+    nodes.extend(package_nodes.into_values());
+    (nodes, edges)
+}
+
+fn append_containment_edges(parsed: &[ParsedFile], edges: &mut Vec<CodeGraphEdge>) {
+    for file in parsed {
+        for definition in &file.definitions {
+            let container = definition_parent(definition, &file.definitions).map_or_else(
+                || file.file_node_id.clone(),
+                |parent| parent.node.id.clone(),
+            );
+            edges.push(CodeGraphEdge {
+                kind: "contains".to_owned(),
+                source: container,
+                target: Some(definition.node.id.clone()),
+                target_name: Some(definition.qualified_name.clone()),
+                resolved: true,
+                ambiguous_candidates: Vec::new(),
+                resolution: Some("structural".to_owned()),
+                range: definition.node.range.clone(),
+            });
+        }
+    }
+}
+
+fn definition_parent<'a>(
+    definition: &Definition,
+    definitions: &'a [Definition],
+) -> Option<&'a Definition> {
+    let mut candidates = definitions
+        .iter()
+        .filter(|candidate| {
+            candidate.node.id != definition.node.id
+                && candidate.start_byte <= definition.start_byte
+                && definition.end_byte <= candidate.end_byte
+                && candidate.end_byte - candidate.start_byte
+                    > definition.end_byte - definition.start_byte
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|candidate| candidate.end_byte - candidate.start_byte);
+    if let Some(parent) = candidates.into_iter().next() {
+        return Some(parent);
+    }
+
+    // Go receiver methods and Rust `impl` methods are lexical children of a
+    // type in the source model even though the method body is outside the
+    // type declaration's byte range. The qualified name carries that
+    // source-attested receiver relationship without inventing an impl node.
+    if definition.node.kind != "method" {
+        return None;
+    }
+    let receiver = definition
+        .qualified_name
+        .rsplit_once('.')
+        .and_then(|(parent, _)| parent.rsplit('.').next())?;
+    definitions.iter().find(|candidate| {
+        matches!(
+            candidate.node.kind.as_str(),
+            "class" | "interface" | "type" | "alias" | "enum"
+        ) && candidate.simple_name == receiver
+    })
+}
+
+fn resolve_imported_symbol_target<'a>(
+    parsed: &'a [ParsedFile],
+    path: &str,
+    symbol_name: &str,
+) -> Option<&'a Definition> {
+    let normalized = clean_relation_target(symbol_name);
+    let simple_name = normalized.rsplit('.').next().unwrap_or(normalized.as_str());
+    parsed
+        .iter()
+        .find(|file| file.file.path == path)
+        .and_then(|file| {
+            file.definitions.iter().find(|definition| {
+                definition.simple_name == simple_name
+                    || definition.qualified_name == normalized
+                    || definition
+                        .qualified_name
+                        .ends_with(format!(".{normalized}").as_str())
+            })
+        })
+}
+
+fn ensure_package_node(
+    package_nodes: &mut BTreeMap<String, CodeGraphNode>,
+    name: &str,
+    path: Option<&str>,
+) {
+    let id = package_node_id(name);
+    let node = package_nodes
+        .entry(name.to_owned())
+        .or_insert_with(|| CodeGraphNode {
+            id,
+            kind: "package".to_owned(),
+            path: None,
+            name: name.to_owned(),
+            qualified_name: Some(name.to_owned()),
+            range: None,
+            signature: None,
+        });
+    if node.path.is_none() {
+        node.path = path.map(str::to_owned);
+    }
+}
+
+fn resolve_local_import_target(
+    file: &ParsedFile,
+    import: &ImportSite,
+    parsed: &[ParsedFile],
+    package_manifests: &[PackageManifest],
+) -> Option<String> {
+    let candidate = match file.file.language.as_str() {
+        "go" => resolve_go_import(file, &import.target_name, parsed, package_manifests),
+        "rust" => resolve_rust_import(file, &import.target_name, parsed, package_manifests),
+        "typescript" | "tsx" => resolve_typescript_import(file, &import.target_name, parsed),
+        "python" => resolve_python_import(file, &import.target_name, parsed),
+        _ => None,
+    }?;
+    parsed
+        .iter()
+        .find(|candidate_file| candidate_file.file.path == candidate)
+        .map(|candidate_file| candidate_file.file.path.clone())
+}
+
+fn resolve_typescript_import(
+    file: &ParsedFile,
+    target: &str,
+    parsed: &[ParsedFile],
+) -> Option<String> {
+    if !target.starts_with('.') {
+        return None;
+    }
+    let base = join_graph_path(&graph_parent(&file.file.path), target);
+    let base_without_runtime_extension = [".js", ".jsx", ".mjs", ".cjs"]
+        .iter()
+        .find_map(|extension| base.strip_suffix(extension))
+        .unwrap_or(base.as_str());
+    let candidates = [
+        base.clone(),
+        format!("{base_without_runtime_extension}.ts"),
+        format!("{base_without_runtime_extension}.tsx"),
+        format!("{base_without_runtime_extension}/index.ts"),
+        format!("{base_without_runtime_extension}/index.tsx"),
+    ];
+    candidates.into_iter().find(|candidate| {
+        parsed.iter().any(|candidate_file| {
+            matches!(candidate_file.file.language.as_str(), "typescript" | "tsx")
+                && candidate_file.file.path == *candidate
+        })
+    })
+}
+
+fn resolve_python_import(file: &ParsedFile, target: &str, parsed: &[ParsedFile]) -> Option<String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return None;
+    }
+    let leading_dots = target.bytes().take_while(|byte| *byte == b'.').count();
+    let module = target.trim_start_matches('.').replace('.', "/");
+    let mut base_directory = if leading_dots == 0 {
+        String::new()
+    } else {
+        graph_parent(&file.file.path)
+    };
+    for _ in 1..leading_dots {
+        base_directory = graph_parent(&base_directory);
+    }
+    let base = join_graph_path(&base_directory, &module);
+    let candidates = if module.is_empty() {
+        vec![format!("{base}/__init__.py")]
+    } else {
+        vec![format!("{base}.py"), format!("{base}/__init__.py")]
+    };
+    candidates.into_iter().find(|candidate| {
+        parsed.iter().any(|candidate_file| {
+            candidate_file.file.language == "python" && candidate_file.file.path == *candidate
+        })
+    })
+}
+
+fn resolve_rust_import(
+    file: &ParsedFile,
+    target: &str,
+    parsed: &[ParsedFile],
+    package_manifests: &[PackageManifest],
+) -> Option<String> {
+    let mut segments = target
+        .trim()
+        .trim_end_matches(';')
+        .split("::")
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if segments.is_empty() {
+        return None;
+    }
+    let module_directory = rust_module_directory(&file.file.path);
+    let crate_directory = package_manifests
+        .iter()
+        .filter(|manifest| manifest.ecosystem == "rust")
+        .filter(|manifest| {
+            let manifest_directory = graph_parent(&manifest.path);
+            manifest_directory.is_empty()
+                || file.file.path == manifest_directory
+                || file
+                    .file
+                    .path
+                    .starts_with(&format!("{manifest_directory}/"))
+        })
+        .max_by_key(|manifest| graph_parent(&manifest.path).len())
+        .map(|manifest| join_graph_path(&graph_parent(&manifest.path), "src"))
+        .or_else(|| {
+            parsed
+                .iter()
+                .filter(|candidate| candidate.file.language == "rust")
+                .find(|candidate| {
+                    candidate.file.path.ends_with("/src/lib.rs")
+                        || candidate.file.path.ends_with("/src/main.rs")
+                        || matches!(candidate.file.path.as_str(), "src/lib.rs" | "src/main.rs")
+                })
+                .map(|root| graph_parent(&root.file.path))
+        })
+        .unwrap_or_else(|| {
+            file.file.path.find("/src/").map_or_else(
+                || "src".to_owned(),
+                |index| file.file.path[..index + 5].to_owned(),
+            )
+        });
+
+    let base_directory = match segments.first().copied() {
+        Some("crate") => {
+            segments.remove(0);
+            crate_directory
+        }
+        Some("self") => {
+            segments.remove(0);
+            module_directory
+        }
+        Some("super") => {
+            segments.remove(0);
+            graph_parent(&module_directory)
+        }
+        _ => crate_directory,
+    };
+    if segments.is_empty() {
+        return None;
+    }
+
+    // `use crate::module::Item` and `use crate::module::{Item}` both describe
+    // the module edge. Try the longest path first, then progressively remove
+    // leaf names that may be declarations inside that module.
+    for length in (1..=segments.len()).rev() {
+        let module_path = segments[..length].join("/");
+        let base = join_graph_path(&base_directory, &module_path);
+        for candidate in [format!("{base}.rs"), format!("{base}/mod.rs")] {
+            if parsed.iter().any(|candidate_file| {
+                candidate_file.file.language == "rust" && candidate_file.file.path == candidate
+            }) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn resolve_go_import(
+    file: &ParsedFile,
+    target: &str,
+    parsed: &[ParsedFile],
+    package_manifests: &[PackageManifest],
+) -> Option<String> {
+    let manifest = package_manifests
+        .iter()
+        .filter(|manifest| manifest.ecosystem == "go")
+        .filter(|manifest| {
+            let manifest_directory = graph_parent(&manifest.path);
+            manifest_directory.is_empty()
+                || file.file.path == manifest_directory
+                || file
+                    .file
+                    .path
+                    .starts_with(&format!("{manifest_directory}/"))
+        })
+        .filter(|manifest| {
+            target == manifest.name.as_deref().unwrap_or_default()
+                || target.starts_with(&format!(
+                    "{}/",
+                    manifest.name.as_deref().unwrap_or_default()
+                ))
+        })
+        .max_by_key(|manifest| manifest.name.as_deref().map_or(0, str::len))?;
+    let module_name = manifest.name.as_deref()?;
+    let relative = target.strip_prefix(module_name)?.trim_start_matches('/');
+    let directory = join_graph_path(&graph_parent(&manifest.path), relative);
+    let matches = parsed
+        .iter()
+        .filter(|candidate| candidate.file.language == "go")
+        .filter(|candidate| graph_parent(&candidate.file.path) == directory)
+        .map(|candidate| candidate.file.path.clone())
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [path] => Some(path.clone()),
+        _ => None,
+    }
+}
+
+fn rust_module_directory(path: &str) -> String {
+    graph_parent(path)
+}
+
+fn graph_parent(path: &str) -> String {
+    path.rsplit_once('/')
+        .map_or_else(String::new, |(parent, _)| parent.to_owned())
+}
+
+fn join_graph_path(parent: &str, child: &str) -> String {
+    let mut components = parent
+        .split('/')
+        .chain(child.split('/'))
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect::<Vec<_>>();
+    let mut normalized = Vec::with_capacity(components.len());
+    for component in components.drain(..) {
+        if component == ".." {
+            normalized.pop();
+        } else {
+            normalized.push(component);
+        }
+    }
+    normalized.join("/")
+}
+
+fn refresh_import_edge_targets(
+    edges: &mut [CodeGraphEdge],
+    files: &[CodeGraphFile],
+    nodes: &[CodeGraphNode],
+    package_manifests: &[PackageManifest],
+) {
+    let parsed = files
+        .iter()
+        .map(|file| ParsedFile {
+            file: file.clone(),
+            file_node_id: file_node_id(&file.path),
+            definitions: Vec::new(),
+            imports: Vec::new(),
+            import_sites: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+            source: String::new(),
+        })
+        .collect::<Vec<_>>();
+    let nodes_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    for edge in edges
+        .iter_mut()
+        .filter(|edge| matches!(edge.kind.as_str(), "imports_from" | "re_exports"))
+    {
+        if edge
+            .target
+            .as_deref()
+            .and_then(|target| nodes_by_id.get(target))
+            .is_some_and(|node| !matches!(node.kind.as_str(), "file" | "package"))
+        {
+            continue;
+        }
+        let Some(source) = nodes_by_id.get(edge.source.as_str()) else {
+            continue;
+        };
+        let Some(source_file) = source
+            .path
+            .as_deref()
+            .and_then(|path| parsed.iter().find(|file| file.file.path == path))
+        else {
+            continue;
+        };
+        let Some(target_name) = edge.target_name.as_deref() else {
+            edge.target = None;
+            edge.resolved = false;
+            edge.resolution = Some("unresolved".to_owned());
+            continue;
+        };
+        let import = ImportSite {
+            kind: edge.kind.clone(),
+            target_name: target_name.to_owned(),
+            symbol_names: Vec::new(),
+            range: edge.range.clone().unwrap_or(CodeGraphRange {
+                start_byte: 0,
+                end_byte: 0,
+                start_line: 0,
+                end_line: 0,
+                start_column: 0,
+                end_column: 0,
+            }),
+        };
+        let target = resolve_local_import_target(source_file, &import, &parsed, package_manifests)
+            .map_or_else(|| package_node_id(target_name), |path| file_node_id(&path));
+        edge.target = Some(target);
+        edge.resolved = true;
+        edge.ambiguous_candidates.clear();
+        edge.resolution = Some("syntax".to_owned());
+    }
+}
+
+fn append_call_edges(parsed: &[ParsedFile], edges: &mut Vec<CodeGraphEdge>) {
+    for file in parsed {
+        for call in &file.calls {
+            let owner = file
+                .definitions
+                .iter()
+                .filter(|definition| {
+                    definition.start_byte <= call.start_byte && call.end_byte <= definition.end_byte
+                })
+                .min_by_key(|definition| definition.end_byte - definition.start_byte)
+                .map_or_else(
+                    || file.file_node_id.clone(),
+                    |definition| definition.node.id.clone(),
+                );
+            let owner_definition = file
+                .definitions
+                .iter()
+                .filter(|definition| {
+                    definition.start_byte <= call.start_byte && call.end_byte <= definition.end_byte
+                })
+                .min_by_key(|definition| definition.end_byte - definition.start_byte);
+            edges.push(CodeGraphEdge {
+                kind: "calls".to_owned(),
+                source: owner.clone(),
+                target: None,
+                target_name: Some(
+                    call.qualified_target
+                        .clone()
+                        .unwrap_or_else(|| call.target_name.clone()),
+                ),
+                resolved: false,
+                ambiguous_candidates: Vec::new(),
+                resolution: Some("syntax".to_owned()),
+                range: Some(call.range.clone()),
+            });
+            if owner_definition.is_some_and(|definition| is_test_name(&definition.simple_name)) {
+                edges.push(CodeGraphEdge {
+                    kind: "tests".to_owned(),
+                    source: owner,
+                    target: None,
+                    target_name: Some(
+                        call.qualified_target
+                            .clone()
+                            .unwrap_or_else(|| call.target_name.clone()),
+                    ),
+                    resolved: false,
+                    ambiguous_candidates: Vec::new(),
+                    resolution: Some("syntax".to_owned()),
+                    range: Some(call.range.clone()),
+                });
+            }
+        }
+    }
+}
+
+fn sort_graph(nodes: &mut Vec<CodeGraphNode>, edges: &mut [CodeGraphEdge]) {
+    nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    nodes.dedup_by(|left, right| left.id == right.id);
+    sort_edges(edges);
+}
+
+fn sort_edges(edges: &mut [CodeGraphEdge]) {
+    edges.sort_by(|left, right| {
+        (
+            left.source.as_str(),
+            left.kind.as_str(),
+            left.target.as_deref().unwrap_or_default(),
+            left.target_name.as_deref().unwrap_or_default(),
+            left.resolution.as_deref().unwrap_or_default(),
+            left.range.as_ref().map_or(0, |range| range.start_byte),
+            left.range.as_ref().map_or(0, |range| range.end_byte),
+        )
+            .cmp(&(
+                right.source.as_str(),
+                right.kind.as_str(),
+                right.target.as_deref().unwrap_or_default(),
+                right.target_name.as_deref().unwrap_or_default(),
+                right.resolution.as_deref().unwrap_or_default(),
+                right.range.as_ref().map_or(0, |range| range.start_byte),
+                right.range.as_ref().map_or(0, |range| range.end_byte),
+            ))
+    });
+}
+
+fn resolve_call_edges(
+    edges: &mut [CodeGraphEdge],
+    nodes: &[CodeGraphNode],
+    sources: &HashMap<String, String>,
+) {
+    let definitions = nodes
+        .iter()
+        .filter(|node| matches!(node.kind.as_str(), "function" | "method"))
+        .filter_map(|node| {
+            let qualified_name = node.qualified_name.clone()?;
+            Some(Definition {
+                node: node.clone(),
+                start_byte: 0,
+                end_byte: 0,
+                simple_name: node.name.clone(),
+                qualified_name,
+            })
+        })
+        .collect::<Vec<_>>();
+    let nodes_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let mut by_name: HashMap<&str, Vec<&Definition>> = HashMap::new();
+    for definition in &definitions {
+        by_name
+            .entry(definition.simple_name.as_str())
+            .or_default()
+            .push(definition);
+    }
+    let sources: HashMap<&str, &str> = sources
+        .iter()
+        .map(|(path, source)| (path.as_str(), source.as_str()))
+        .collect();
+
+    for edge in edges.iter_mut().filter(|edge| edge.kind == "calls") {
+        let Some(target_name) = edge.target_name.as_deref() else {
+            edge.target = None;
+            edge.resolved = false;
+            edge.ambiguous_candidates.clear();
+            continue;
+        };
+        let simple_name = target_name
+            .rsplit("::")
+            .next()
+            .unwrap_or(target_name)
+            .rsplit('.')
+            .next()
+            .unwrap_or(target_name);
+        let call = CallSite {
+            start_byte: edge.range.as_ref().map_or(0, |range| range.start_byte),
+            end_byte: edge.range.as_ref().map_or(0, |range| range.end_byte),
+            target_name: simple_name.to_owned(),
+            qualified_target: target_name.contains('.').then(|| target_name.to_owned()),
+            range: edge.range.clone().unwrap_or(CodeGraphRange {
+                start_byte: 0,
+                end_byte: 0,
+                start_line: 0,
+                end_line: 0,
+                start_column: 0,
+                end_column: 0,
+            }),
+        };
+        let caller_path = nodes_by_id
+            .get(edge.source.as_str())
+            .and_then(|node| node.path.as_deref());
+        let caller_node = nodes_by_id.get(edge.source.as_str()).copied();
+        let caller_function_text = caller_node.and_then(|node| {
+            let path = node.path.as_deref()?;
+            let source = sources.get(path)?;
+            let range = node.range.as_ref()?;
+            source
+                .get(range.start_byte..range.end_byte)
+                .map(str::to_owned)
+        });
+        let (target, ambiguous_candidates) = resolve_call(
+            &call,
+            caller_path,
+            &by_name,
+            caller_node,
+            caller_function_text.as_deref(),
+        );
+        edge.target = target.map(|definition| definition.node.id.clone());
+        edge.resolved = edge.target.is_some();
+        edge.ambiguous_candidates = ambiguous_candidates;
+        edge.resolution = Some(
+            if edge.resolved {
+                "syntax"
+            } else if edge.ambiguous_candidates.is_empty() {
+                "unresolved"
+            } else {
+                "ambiguous"
+            }
+            .to_owned(),
+        );
+    }
+}
+
+struct RelationCandidateIndex<'a> {
+    names: HashMap<&'a str, Vec<&'a CodeGraphNode>>,
+    qualified_names: HashMap<&'a str, Vec<&'a CodeGraphNode>>,
+    qualified_suffixes: HashMap<&'a str, Vec<&'a CodeGraphNode>>,
+}
+
+impl<'a> RelationCandidateIndex<'a> {
+    fn new(nodes: &'a [CodeGraphNode]) -> Self {
+        let mut names = HashMap::new();
+        let mut qualified_names = HashMap::new();
+        let mut qualified_suffixes = HashMap::new();
+
+        for node in nodes {
+            names
+                .entry(node.name.as_str())
+                .or_insert_with(Vec::new)
+                .push(node);
+            let Some(qualified_name) = node.qualified_name.as_deref() else {
+                continue;
+            };
+            qualified_names
+                .entry(qualified_name)
+                .or_insert_with(Vec::new)
+                .push(node);
+            for (dot, _) in qualified_name.match_indices('.') {
+                let suffix_start = dot + 1;
+                if suffix_start < qualified_name.len() {
+                    qualified_suffixes
+                        .entry(&qualified_name[suffix_start..])
+                        .or_insert_with(Vec::new)
+                        .push(node);
+                }
+            }
+        }
+
+        Self {
+            names,
+            qualified_names,
+            qualified_suffixes,
+        }
+    }
+
+    fn candidate_ids(
+        &self,
+        relation: &str,
+        normalized_name: &str,
+        simple_name: &str,
+    ) -> Vec<String> {
+        let mut matching_nodes = Vec::new();
+        if let Some(nodes) = self.qualified_names.get(normalized_name) {
+            matching_nodes.extend(nodes.iter().copied());
+        }
+        if normalized_name.contains('.')
+            && let Some(nodes) = self.qualified_suffixes.get(normalized_name)
+        {
+            matching_nodes.extend(nodes.iter().copied());
+        }
+        if let Some(nodes) = self.names.get(simple_name) {
+            matching_nodes.extend(nodes.iter().copied());
+        }
+
+        let mut candidates = matching_nodes
+            .into_iter()
+            .filter(|node| relation_target_kind(relation, node.kind.as_str()))
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
+        candidates.sort_unstable();
+        candidates.dedup();
+        candidates
+    }
+}
+
+fn resolve_relation_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) {
+    let nodes_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let relation_index = RelationCandidateIndex::new(nodes);
+
+    for edge in edges.iter_mut().filter(|edge| {
+        matches!(
+            edge.kind.as_str(),
+            "inherits"
+                | "implements"
+                | "embeds"
+                | "overrides"
+                | "mixes_in"
+                | "references"
+                | "tests"
+        )
+    }) {
+        let Some(target_name) = edge.target_name.as_deref() else {
+            edge.target = None;
+            edge.resolved = false;
+            edge.ambiguous_candidates.clear();
+            edge.resolution = Some("unresolved".to_owned());
+            continue;
+        };
+
+        let normalized_name = clean_relation_target(target_name);
+        let simple_name = normalized_name
+            .rsplit('.')
+            .next()
+            .unwrap_or(normalized_name.as_str());
+        let source_path = nodes_by_id
+            .get(edge.source.as_str())
+            .and_then(|node| node.path.as_deref());
+
+        let mut candidates =
+            relation_index.candidate_ids(edge.kind.as_str(), &normalized_name, simple_name);
+
+        if let Some(source_path) = source_path {
+            let same_file = candidates
+                .iter()
+                .filter(|candidate| {
+                    nodes_by_id
+                        .get(candidate.as_str())
+                        .and_then(|node| node.path.as_deref())
+                        == Some(source_path)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if !same_file.is_empty() {
+                candidates = same_file;
+            }
+        }
+
+        edge.target = (candidates.len() == 1).then(|| candidates[0].clone());
+        edge.resolved = edge.target.is_some();
+        edge.ambiguous_candidates = if edge.resolved {
+            Vec::new()
+        } else {
+            candidates
+        };
+        edge.resolution = Some(
+            if edge.resolved {
+                "syntax"
+            } else if edge.ambiguous_candidates.is_empty() {
+                "unresolved"
+            } else {
+                "ambiguous"
+            }
+            .to_owned(),
+        );
+    }
+}
+
+fn relation_target_kind(relation: &str, node_kind: &str) -> bool {
+    match relation {
+        "tests" => matches!(node_kind, "function" | "method" | "class"),
+        "overrides" => matches!(node_kind, "method" | "function"),
+        "depends_on" => node_kind == "package",
+        "inherits" | "implements" | "embeds" | "mixes_in" => {
+            matches!(node_kind, "class" | "interface" | "type" | "alias" | "enum")
+        }
+        "references" => matches!(
+            node_kind,
+            "class"
+                | "interface"
+                | "type"
+                | "alias"
+                | "enum"
+                | "package"
+                | "function"
+                | "method"
+                | "variable"
+                | "constant"
+                | "module"
+        ),
+        _ => false,
+    }
+}
+
+fn apply_semantic_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> CodeGraphResult<()> {
+    // Start from parser-derived names so replacing/removing a prior overlay
+    // cannot leave semantic edges behind.
+    restore_syntax_call_edges(artifact, root);
+    artifact.manifest_key = package_manifest_key_for_root(root, &artifact.files)?;
+    if let Err(error) = try_apply_go_callfacts(root, artifact) {
+        // Semantic facts are an optional enhancement. Invalid, unsupported, or
+        // internally inconsistent facts must not prevent the syntax graph from
+        // remaining queryable. A Rust sidecar may still be valid when the Go
+        // sidecar is not, so restore only the syntax overlay before continuing.
+        match error {
+            CodeGraphError::GoCallFacts { .. } => restore_syntax_call_edges(artifact, root),
+            error => return Err(error),
+        }
+    }
+    if let Err(error) = try_apply_rust_callfacts(root, artifact) {
+        match error {
+            CodeGraphError::RustCallFacts { .. } => {
+                // Rust validation is completed before its edges are committed;
+                // preserve any valid Go overlay already applied.
+            }
+            error => return Err(error),
+        }
+    }
+    if let Err(error) = try_apply_typescript_callfacts(root, artifact) {
+        match error {
+            CodeGraphError::TypeScriptCallFacts { .. } => {
+                // TypeScript facts are optional and independently scoped.
+            }
+            error => return Err(error),
+        }
+    }
+    if let Err(error) = try_apply_python_callfacts(root, artifact) {
+        match error {
+            CodeGraphError::PythonCallFacts { .. } => {
+                // Python facts are optional and independently scoped.
+            }
+            error => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn try_apply_go_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> CodeGraphResult<()> {
+    let Some((path, _bytes, facts)) = read_go_callfacts(root)? else {
+        return Ok(());
+    };
+    if facts.schema != GO_CALLFACTS_SCHEMA || facts.version != GO_CALLFACTS_VERSION {
+        return Err(go_callfacts_error(
+            &path,
+            format!(
+                "unsupported schema/version: {} v{}",
+                facts.schema, facts.version
+            ),
+        ));
+    }
+    if !validate_go_callfacts_context(root, &facts.context, &facts.context_sha256, &path)? {
+        return Ok(());
+    }
+    let Some(go_paths) = validate_go_callfacts_sources(root, artifact, &facts, &path)? else {
+        return Ok(());
+    };
+    let (symbols, nodes_by_id) = graph_callfact_indexes(artifact, &path)?;
+    let (semantic_edges, covered_call_sites) = go_callfact_edges(
+        &facts.calls,
+        &go_paths,
+        &symbols,
+        &nodes_by_id,
+        &artifact.edges,
+        &path,
+    )?;
+    let node_paths = artifact
+        .nodes
+        .iter()
+        .filter_map(|node| Some((node.id.clone(), node.path.clone()?)))
+        .collect::<HashMap<_, _>>();
+    drop(nodes_by_id);
+    artifact.edges.retain(|edge| {
+        if edge.kind != "calls" {
+            return true;
+        }
+        let Some(path) = node_paths.get(edge.source.as_str()) else {
+            return true;
+        };
+        let Some(range) = edge.range.as_ref() else {
+            return true;
+        };
+        !covered_call_sites.contains(&(
+            path.clone(),
+            range.start_byte,
+            range.end_byte,
+            edge.source.clone(),
+        ))
+    });
+    artifact.edges.extend(semantic_edges);
+    sort_graph(&mut artifact.nodes, &mut artifact.edges);
+
+    artifact.go_callfacts_context_sha256 = Some(facts.context_sha256);
+    update_callfacts_manifest(root, artifact)?;
+    Ok(())
+}
+
+fn read_go_callfacts(
+    root: &Path,
+) -> CodeGraphResult<Option<(PathBuf, Vec<u8>, GoCallFactsArtifact)>> {
+    let path = root.join(".zvec-grep").join(GO_CALLFACTS_FILE);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(io_failure("read Go call-facts artifact", &path, error)),
+    };
+    let facts = serde_json::from_slice(&bytes)
+        .map_err(|error| go_callfacts_error(&path, format!("decode JSON: {error}")))?;
+    Ok(Some((path, bytes, facts)))
+}
+
+fn read_rust_callfacts(
+    root: &Path,
+) -> CodeGraphResult<Option<(PathBuf, Vec<u8>, RustCallFactsArtifact)>> {
+    let path = root.join(".zvec-grep").join(RUST_CALLFACTS_FILE);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(io_failure("read Rust call-facts artifact", &path, error)),
+    };
+    let facts = serde_json::from_slice(&bytes)
+        .map_err(|error| rust_callfacts_error(&path, format!("decode JSON: {error}")))?;
+    Ok(Some((path, bytes, facts)))
+}
+
+fn try_apply_rust_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> CodeGraphResult<()> {
+    let Some((path, _bytes, facts)) = read_rust_callfacts(root)? else {
+        return Ok(());
+    };
+    if facts.schema != RUST_CALLFACTS_SCHEMA || facts.version != RUST_CALLFACTS_VERSION {
+        return Err(rust_callfacts_error(
+            &path,
+            format!(
+                "unsupported schema/version: {} v{}",
+                facts.schema, facts.version
+            ),
+        ));
+    }
+    if !validate_rust_callfacts_context(root, &facts.context, &facts.context_sha256, &path)? {
+        return Ok(());
+    }
+    let Some(rust_paths) = validate_rust_callfacts_sources(root, artifact, &facts, &path)? else {
+        return Ok(());
+    };
+    let (semantic_edges, covered_call_sites) = rust_callfact_edges(
+        &facts.calls,
+        &rust_paths,
+        &artifact.edges,
+        &artifact.nodes,
+        &path,
+    )?;
+    let node_paths = artifact
+        .nodes
+        .iter()
+        .filter_map(|node| Some((node.id.clone(), node.path.clone()?)))
+        .collect::<HashMap<_, _>>();
+    artifact.edges.retain(|edge| {
+        if edge.kind != "calls" {
+            return true;
+        }
+        let Some(path) = node_paths.get(edge.source.as_str()) else {
+            return true;
+        };
+        if !rust_paths.contains(path) {
+            return true;
+        }
+        let Some(range) = edge.range.as_ref() else {
+            return true;
+        };
+        !covered_call_sites.contains(&(
+            path.clone(),
+            range.start_byte,
+            range.end_byte,
+            edge.source.clone(),
+        ))
+    });
+    artifact.edges.extend(semantic_edges);
+    sort_graph(&mut artifact.nodes, &mut artifact.edges);
+    artifact.rust_callfacts_context_sha256 = Some(facts.context_sha256);
+    update_callfacts_manifest(root, artifact)?;
+    Ok(())
+}
+
+fn try_apply_typescript_callfacts(
+    root: &Path,
+    artifact: &mut CodeGraphArtifact,
+) -> CodeGraphResult<()> {
+    let Some((path, _bytes, facts)) = read_typescript_callfacts(root)? else {
+        return Ok(());
+    };
+    if facts.schema != TYPESCRIPT_CALLFACTS_SCHEMA || facts.version != TYPESCRIPT_CALLFACTS_VERSION
+    {
+        return Err(typescript_callfacts_error(
+            &path,
+            format!(
+                "unsupported schema/version: {} v{}",
+                facts.schema, facts.version
+            ),
+        ));
+    }
+    if !validate_typescript_callfacts_context(root, &facts.context, &facts.context_sha256, &path)? {
+        return Ok(());
+    }
+    let Some(source_paths) = validate_typescript_callfacts_sources(root, artifact, &facts, &path)?
+    else {
+        return Ok(());
+    };
+    let external_facts = facts.calls.iter().map(Into::into).collect::<Vec<_>>();
+    let (semantic_edges, covered_call_sites) = external_callfact_edges(
+        &external_facts,
+        &source_paths,
+        &artifact.edges,
+        &artifact.nodes,
+        &path,
+        "TypeScript",
+    )?;
+    let node_paths = artifact
+        .nodes
+        .iter()
+        .filter_map(|node| Some((node.id.clone(), node.path.clone()?)))
+        .collect::<HashMap<_, _>>();
+    artifact.edges.retain(|edge| {
+        if edge.kind != "calls" {
+            return true;
+        }
+        let Some(path) = node_paths.get(edge.source.as_str()) else {
+            return true;
+        };
+        if !source_paths.contains(path) {
+            return true;
+        }
+        let Some(range) = edge.range.as_ref() else {
+            return true;
+        };
+        !covered_call_sites.contains(&(
+            path.clone(),
+            range.start_byte,
+            range.end_byte,
+            edge.source.clone(),
+        ))
+    });
+    artifact.edges.extend(semantic_edges);
+    sort_graph(&mut artifact.nodes, &mut artifact.edges);
+    artifact.typescript_callfacts_context_sha256 = Some(facts.context_sha256);
+    update_callfacts_manifest(root, artifact)?;
+    Ok(())
+}
+
+fn try_apply_python_callfacts(
+    root: &Path,
+    artifact: &mut CodeGraphArtifact,
+) -> CodeGraphResult<()> {
+    let Some((path, _bytes, facts)) = read_python_callfacts(root)? else {
+        return Ok(());
+    };
+    if facts.schema != PYTHON_CALLFACTS_SCHEMA || facts.version != PYTHON_CALLFACTS_VERSION {
+        return Err(python_callfacts_error(
+            &path,
+            format!(
+                "unsupported schema/version: {} v{}",
+                facts.schema, facts.version
+            ),
+        ));
+    }
+    if !validate_python_callfacts_context(root, &facts.context, &facts.context_sha256, &path)? {
+        return Ok(());
+    }
+    let Some(source_paths) = validate_python_callfacts_sources(root, artifact, &facts, &path)?
+    else {
+        return Ok(());
+    };
+    let external_facts = facts.calls.iter().map(Into::into).collect::<Vec<_>>();
+    let (semantic_edges, covered_call_sites) = external_callfact_edges(
+        &external_facts,
+        &source_paths,
+        &artifact.edges,
+        &artifact.nodes,
+        &path,
+        "Python",
+    )?;
+    let node_paths = artifact
+        .nodes
+        .iter()
+        .filter_map(|node| Some((node.id.clone(), node.path.clone()?)))
+        .collect::<HashMap<_, _>>();
+    artifact.edges.retain(|edge| {
+        if edge.kind != "calls" {
+            return true;
+        }
+        let Some(path) = node_paths.get(edge.source.as_str()) else {
+            return true;
+        };
+        if !source_paths.contains(path) {
+            return true;
+        }
+        let Some(range) = edge.range.as_ref() else {
+            return true;
+        };
+        !covered_call_sites.contains(&(
+            path.clone(),
+            range.start_byte,
+            range.end_byte,
+            edge.source.clone(),
+        ))
+    });
+    artifact.edges.extend(semantic_edges);
+    sort_graph(&mut artifact.nodes, &mut artifact.edges);
+    artifact.python_callfacts_context_sha256 = Some(facts.context_sha256);
+    update_callfacts_manifest(root, artifact)?;
+    Ok(())
+}
+
+fn read_typescript_callfacts(
+    root: &Path,
+) -> CodeGraphResult<Option<(PathBuf, Vec<u8>, TypeScriptCallFactsArtifact)>> {
+    let path = root.join(".zvec-grep").join(TYPESCRIPT_CALLFACTS_FILE);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(io_failure(
+                "read TypeScript call-facts artifact",
+                &path,
+                error,
+            ));
+        }
+    };
+    let facts = serde_json::from_slice(&bytes)
+        .map_err(|error| typescript_callfacts_error(&path, format!("decode JSON: {error}")))?;
+    Ok(Some((path, bytes, facts)))
+}
+
+fn read_python_callfacts(
+    root: &Path,
+) -> CodeGraphResult<Option<(PathBuf, Vec<u8>, PythonCallFactsArtifact)>> {
+    let path = root.join(".zvec-grep").join(PYTHON_CALLFACTS_FILE);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(io_failure("read Python call-facts artifact", &path, error));
+        }
+    };
+    let facts = serde_json::from_slice(&bytes)
+        .map_err(|error| python_callfacts_error(&path, format!("decode JSON: {error}")))?;
+    Ok(Some((path, bytes, facts)))
+}
+
+fn validate_typescript_callfacts_sources(
+    root: &Path,
+    artifact: &CodeGraphArtifact,
+    facts: &TypeScriptCallFactsArtifact,
+    facts_path: &Path,
+) -> CodeGraphResult<Option<BTreeSet<String>>> {
+    let expected = artifact
+        .files
+        .iter()
+        .filter(|file| matches!(file.language.as_str(), "typescript" | "tsx"))
+        .map(|file| (file.path.as_str(), file.sha256.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut actual = BTreeMap::new();
+    for file in &facts.files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| typescript_callfacts_error(facts_path, reason))?;
+        if actual
+            .insert(file.path.as_str(), file.sha256.as_str())
+            .is_some()
+        {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("duplicate source file: {}", file.path),
+            ));
+        }
+    }
+    if expected != actual {
+        return Ok(None);
+    }
+    for (relative_path, expected_digest) in &expected {
+        let path = root.join(relative_path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(io_failure(
+                    "verify TypeScript call-facts source",
+                    &path,
+                    error,
+                ));
+            }
+        };
+        if sha256_hex(&bytes) != *expected_digest {
+            return Ok(None);
+        }
+    }
+    Ok(Some(
+        expected.keys().map(|path| (*path).to_owned()).collect(),
+    ))
+}
+
+fn validate_python_callfacts_sources(
+    root: &Path,
+    artifact: &CodeGraphArtifact,
+    facts: &PythonCallFactsArtifact,
+    facts_path: &Path,
+) -> CodeGraphResult<Option<BTreeSet<String>>> {
+    let expected = artifact
+        .files
+        .iter()
+        .filter(|file| file.language == "python")
+        .map(|file| (file.path.as_str(), file.sha256.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut actual = BTreeMap::new();
+    for file in &facts.files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| python_callfacts_error(facts_path, reason))?;
+        if actual
+            .insert(file.path.as_str(), file.sha256.as_str())
+            .is_some()
+        {
+            return Err(python_callfacts_error(
+                facts_path,
+                format!("duplicate source file: {}", file.path),
+            ));
+        }
+    }
+    if expected != actual {
+        return Ok(None);
+    }
+    for (relative_path, expected_digest) in &expected {
+        let path = root.join(relative_path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(io_failure("verify Python call-facts source", &path, error));
+            }
+        };
+        if sha256_hex(&bytes) != *expected_digest {
+            return Ok(None);
+        }
+    }
+    Ok(Some(
+        expected.keys().map(|path| (*path).to_owned()).collect(),
+    ))
+}
+
+fn validate_typescript_callfacts_context(
+    root: &Path,
+    context: &TypeScriptCallFactsContext,
+    expected_fingerprint: &str,
+    facts_path: &Path,
+) -> CodeGraphResult<bool> {
+    if context.typescript_version.is_empty()
+        || context.node_version.is_empty()
+        || context.target.is_empty()
+        || context.module.is_empty()
+        || context.jsx.is_empty()
+    {
+        return Err(typescript_callfacts_error(
+            facts_path,
+            "analysis context is missing TypeScript, Node, or compiler-option attestation"
+                .to_owned(),
+        ));
+    }
+    if typescript_callfacts_context_sha256(context) != expected_fingerprint {
+        return Err(typescript_callfacts_error(
+            facts_path,
+            "analysis context fingerprint does not match its contents".to_owned(),
+        ));
+    }
+    if !context.project_path.is_empty() {
+        validate_relative_source_path(&context.project_path)
+            .map_err(|reason| typescript_callfacts_error(facts_path, reason))?;
+        if !context
+            .context_files
+            .iter()
+            .any(|file| file.path == context.project_path)
+        {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                "selected TypeScript project is absent from context_files".to_owned(),
+            ));
+        }
+    }
+    validate_typescript_context_file_list(context, facts_path)?;
+    if !validate_typescript_context_file_digests(root, context)? {
+        return Ok(false);
+    }
+    validate_typescript_context_extends(root, context, facts_path)?;
+    let current_files = collect_typescript_context_files(root)?;
+    Ok(current_files == context.context_files)
+}
+
+fn validate_python_callfacts_context(
+    root: &Path,
+    context: &PythonCallFactsContext,
+    expected_fingerprint: &str,
+    facts_path: &Path,
+) -> CodeGraphResult<bool> {
+    if context.pyright_version.is_empty()
+        || context.python_version.is_empty()
+        || context.target_version.is_empty()
+        || context.typeshed_sha256.is_empty()
+        || context.typeshed_sha256 == "unknown"
+    {
+        return Err(python_callfacts_error(
+            facts_path,
+            "analysis context is missing Pyright, Python, target, or typeshed attestation"
+                .to_owned(),
+        ));
+    }
+    if python_callfacts_context_sha256(context) != expected_fingerprint {
+        return Err(python_callfacts_error(
+            facts_path,
+            "analysis context fingerprint does not match its contents".to_owned(),
+        ));
+    }
+    if !context.project_path.is_empty() {
+        validate_relative_source_path(&context.project_path)
+            .map_err(|reason| python_callfacts_error(facts_path, reason))?;
+        if !context
+            .context_files
+            .iter()
+            .any(|file| file.path == context.project_path)
+        {
+            return Err(python_callfacts_error(
+                facts_path,
+                "selected Python project is absent from context_files".to_owned(),
+            ));
+        }
+    }
+    validate_python_context_file_list(context, facts_path)?;
+    if !validate_python_context_file_digests(root, context)? {
+        return Ok(false);
+    }
+    let current_files = collect_python_context_files(root)?;
+    Ok(current_files == context.context_files)
+}
+
+fn validate_typescript_context_file_list(
+    context: &TypeScriptCallFactsContext,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    let mut seen = BTreeSet::new();
+    for file in &context.context_files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| typescript_callfacts_error(facts_path, reason))?;
+        if !is_typescript_context_file_path(Path::new(&file.path)) {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("unsupported TypeScript context input: {}", file.path),
+            ));
+        }
+        if !seen.insert(file.path.as_str()) {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("duplicate TypeScript context input: {}", file.path),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_python_context_file_list(
+    context: &PythonCallFactsContext,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    let mut seen = BTreeSet::new();
+    for file in &context.context_files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| python_callfacts_error(facts_path, reason))?;
+        if !is_python_context_input_path(Path::new(&file.path)) {
+            return Err(python_callfacts_error(
+                facts_path,
+                format!("unsupported Python context input: {}", file.path),
+            ));
+        }
+        if !seen.insert(file.path.as_str()) {
+            return Err(python_callfacts_error(
+                facts_path,
+                format!("duplicate Python context input: {}", file.path),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_typescript_context_file_digests(
+    root: &Path,
+    context: &TypeScriptCallFactsContext,
+) -> CodeGraphResult<bool> {
+    for file in &context.context_files {
+        let path = root.join(&file.path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(io_failure("verify TypeScript context input", &path, error)),
+        };
+        if sha256_hex(&bytes) != file.sha256 {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn validate_python_context_file_digests(
+    root: &Path,
+    context: &PythonCallFactsContext,
+) -> CodeGraphResult<bool> {
+    for file in &context.context_files {
+        let path = root.join(&file.path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(io_failure("verify Python context input", &path, error)),
+        };
+        if sha256_hex(&bytes) != file.sha256 {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn validate_typescript_context_extends(
+    root: &Path,
+    context: &TypeScriptCallFactsContext,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    let context_paths = context
+        .context_files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut pending = context
+        .context_files
+        .iter()
+        .filter(|file| is_typescript_context_input_path(Path::new(&file.path)))
+        .map(|file| root.join(&file.path))
+        .collect::<Vec<_>>();
+    let mut seen = BTreeSet::new();
+    while let Some(config_path) = pending.pop() {
+        if !seen.insert(config_path.clone()) {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&config_path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        let Some(extends) = value.get("extends").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if !extends.starts_with('.') {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("external TypeScript config extends is not attested: {extends}"),
+            ));
+        }
+        let Some(parent) = config_path.parent() else {
+            continue;
+        };
+        let base = parent.join(extends);
+        let candidates = [
+            base.clone(),
+            base.with_extension("json"),
+            base.join("tsconfig.json"),
+        ];
+        let Some(extended) = candidates
+            .iter()
+            .find(|candidate| candidate.is_file())
+            .and_then(|candidate| candidate.canonicalize().ok())
+        else {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("TypeScript config extends file does not exist: {extends}"),
+            ));
+        };
+        if !extended.starts_with(root) {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("TypeScript config extends outside root: {extends}"),
+            ));
+        }
+        let relative = relative_path(root, &extended);
+        if !context_paths.contains(relative.as_str()) {
+            return Err(typescript_callfacts_error(
+                facts_path,
+                format!("extended TypeScript config is absent from context_files: {relative}"),
+            ));
+        }
+        pending.push(extended);
+    }
+    Ok(())
+}
+
+fn validate_rust_callfacts_sources(
+    root: &Path,
+    artifact: &CodeGraphArtifact,
+    facts: &RustCallFactsArtifact,
+    facts_path: &Path,
+) -> CodeGraphResult<Option<BTreeSet<String>>> {
+    let expected = artifact
+        .files
+        .iter()
+        .filter(|file| file.language == "rust")
+        .map(|file| (file.path.as_str(), file.sha256.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut actual = BTreeMap::new();
+    for file in &facts.files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+        if actual
+            .insert(file.path.as_str(), file.sha256.as_str())
+            .is_some()
+        {
+            return Err(rust_callfacts_error(
+                facts_path,
+                format!("duplicate source file: {}", file.path),
+            ));
+        }
+    }
+    if expected != actual {
+        return Ok(None);
+    }
+    for (relative_path, expected_digest) in &expected {
+        let path = root.join(relative_path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(io_failure("verify Rust call-facts source", &path, error)),
+        };
+        if sha256_hex(&bytes) != *expected_digest {
+            return Ok(None);
+        }
+    }
+    Ok(Some(
+        expected.keys().map(|path| (*path).to_owned()).collect(),
+    ))
+}
+
+fn validate_rust_callfacts_context(
+    root: &Path,
+    context: &RustCallFactsContext,
+    expected_fingerprint: &str,
+    facts_path: &Path,
+) -> CodeGraphResult<bool> {
+    if context.rustc_version.is_empty()
+        || context.rustc_commit.is_empty()
+        || context.host.is_empty()
+        || context.target.is_empty()
+        || context.edition.is_empty()
+    {
+        return Err(rust_callfacts_error(
+            facts_path,
+            "analysis context is missing compiler, host, target, or edition attestation".to_owned(),
+        ));
+    }
+    if rust_callfacts_context_sha256(context) != expected_fingerprint {
+        return Err(rust_callfacts_error(
+            facts_path,
+            "analysis context fingerprint does not match its contents".to_owned(),
+        ));
+    }
+    validate_relative_source_path(&context.manifest_path)
+        .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+    if Path::new(&context.manifest_path)
+        .file_name()
+        .is_none_or(|name| name != "Cargo.toml")
+    {
+        return Err(rust_callfacts_error(
+            facts_path,
+            "analysis context manifest_path must name Cargo.toml".to_owned(),
+        ));
+    }
+    if let Some(path) = &context.lockfile_path {
+        validate_relative_source_path(path)
+            .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+        if Path::new(path)
+            .file_name()
+            .is_none_or(|name| name != "Cargo.lock")
+        {
+            return Err(rust_callfacts_error(
+                facts_path,
+                "analysis context lockfile_path must name Cargo.lock".to_owned(),
+            ));
+        }
+    }
+    if let Some(path) = &context.toolchain_path {
+        validate_relative_source_path(path)
+            .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+        if !matches!(
+            Path::new(path).file_name().and_then(|name| name.to_str()),
+            Some("rust-toolchain" | "rust-toolchain.toml")
+        ) {
+            return Err(rust_callfacts_error(
+                facts_path,
+                "analysis context toolchain_path must name rust-toolchain.toml or rust-toolchain"
+                    .to_owned(),
+            ));
+        }
+    }
+
+    let mut seen = BTreeSet::new();
+    for file in &context.context_files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+        if !seen.insert(file.path.as_str()) {
+            return Err(rust_callfacts_error(
+                facts_path,
+                format!("duplicate Rust context input: {}", file.path),
+            ));
+        }
+        let path = root.join(&file.path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(io_failure("verify Rust context input", &path, error)),
+        };
+        if sha256_hex(&bytes) != file.sha256 {
+            return Ok(false);
+        }
+    }
+    if !seen.contains(context.manifest_path.as_str())
+        || context
+            .lockfile_path
+            .as_deref()
+            .is_some_and(|path| !seen.contains(path))
+        || context
+            .toolchain_path
+            .as_deref()
+            .is_some_and(|path| !seen.contains(path))
+    {
+        return Err(rust_callfacts_error(
+            facts_path,
+            "selected Rust context input is absent from context_files".to_owned(),
+        ));
+    }
+    Ok(collect_rust_context_files(root)? == context.context_files)
+}
+
+fn rust_callfact_edges(
+    facts: &[RustCallFact],
+    rust_paths: &BTreeSet<String>,
+    graph_edges: &[CodeGraphEdge],
+    nodes: &[CodeGraphNode],
+    facts_path: &Path,
+) -> CodeGraphResult<(Vec<CodeGraphEdge>, BTreeSet<CallSiteKey>)> {
+    let nodes_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let syntax_sites = graph_edges
+        .iter()
+        .filter(|edge| edge.kind == "calls")
+        .filter_map(|edge| {
+            let caller = nodes_by_id.get(edge.source.as_str())?;
+            let path = caller.path.as_deref()?;
+            if !rust_paths.contains(path) {
+                return None;
+            }
+            let range = edge.range.as_ref()?;
+            Some((
+                (
+                    path.to_owned(),
+                    range.start_byte,
+                    range.end_byte,
+                    edge.source.clone(),
+                ),
+                range.clone(),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut fact_sites = BTreeSet::new();
+    let mut covered_sites = BTreeSet::new();
+    let mut edges = Vec::with_capacity(facts.len());
+    for fact in facts {
+        let (edge, site) = rust_callfact_edge(
+            fact,
+            rust_paths,
+            nodes,
+            &nodes_by_id,
+            &syntax_sites,
+            facts_path,
+        )?;
+        if !fact_sites.insert((fact.path.as_str(), fact.start_byte, fact.end_byte)) {
+            return Err(rust_callfacts_error(
+                facts_path,
+                format!(
+                    "duplicate call-site fact: {}:{}-{}",
+                    fact.path, fact.start_byte, fact.end_byte
+                ),
+            ));
+        }
+        covered_sites.insert(site);
+        edges.push(edge);
+    }
+    Ok((edges, covered_sites))
+}
+
+fn rust_callfact_edge(
+    fact: &RustCallFact,
+    rust_paths: &BTreeSet<String>,
+    nodes: &[CodeGraphNode],
+    nodes_by_id: &HashMap<&str, &CodeGraphNode>,
+    syntax_sites: &BTreeMap<CallSiteKey, CodeGraphRange>,
+    facts_path: &Path,
+) -> CodeGraphResult<(CodeGraphEdge, CallSiteKey)> {
+    validate_relative_source_path(&fact.path)
+        .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+    if !rust_paths.contains(&fact.path)
+        || fact.start_byte >= fact.end_byte
+        || fact.start_line == 0
+        || fact.end_line < fact.start_line
+        || fact.target_name.is_empty()
+    {
+        return Err(rust_callfacts_error(
+            facts_path,
+            format!(
+                "invalid call-site range or non-Rust source: {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let caller_id = rust_symbol_id(&fact.caller, rust_paths, nodes, facts_path)?;
+    let Some(caller) = nodes_by_id.get(caller_id.as_str()) else {
+        return Err(rust_callfacts_error(
+            facts_path,
+            format!("missing caller node for {}", fact.path),
+        ));
+    };
+    if caller.path.as_deref() != Some(fact.path.as_str())
+        || !caller.range.as_ref().is_some_and(|range| {
+            range.start_byte <= fact.start_byte && fact.end_byte <= range.end_byte
+        })
+        || fact.caller.start_byte > fact.start_byte
+        || fact.end_byte > fact.caller.end_byte
+    {
+        return Err(rust_callfacts_error(
+            facts_path,
+            format!(
+                "caller/range does not match source node at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let site = (
+        fact.path.clone(),
+        fact.start_byte,
+        fact.end_byte,
+        caller_id.clone(),
+    );
+    let Some(syntax_range) = syntax_sites.get(&site) else {
+        return Err(rust_callfacts_error(
+            facts_path,
+            format!(
+                "call-site range does not match parsed Rust syntax at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    };
+    let fact_range = CodeGraphRange {
+        start_byte: fact.start_byte,
+        end_byte: fact.end_byte,
+        start_line: fact.start_line,
+        end_line: fact.end_line,
+        start_column: fact.start_column,
+        end_column: fact.end_column,
+    };
+    if syntax_range != &fact_range {
+        return Err(rust_callfacts_error(
+            facts_path,
+            format!(
+                "call-site coordinates do not match parsed syntax at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let (target, candidates, resolved) = rust_fact_target(fact, rust_paths, nodes, facts_path)?;
+    Ok((
+        CodeGraphEdge {
+            kind: "calls".to_owned(),
+            source: caller_id,
+            target,
+            target_name: Some(fact.target_name.clone()),
+            resolved,
+            ambiguous_candidates: candidates,
+            resolution: Some(fact.resolution.clone()),
+            range: Some(fact_range),
+        },
+        site,
+    ))
+}
+
+fn rust_symbol_id(
+    symbol: &RustCallFactsSymbol,
+    rust_paths: &BTreeSet<String>,
+    nodes: &[CodeGraphNode],
+    facts_path: &Path,
+) -> CodeGraphResult<String> {
+    validate_relative_source_path(&symbol.path)
+        .map_err(|reason| rust_callfacts_error(facts_path, reason))?;
+    if !rust_paths.contains(&symbol.path) || symbol.start_byte >= symbol.end_byte {
+        return Err(rust_callfacts_error(
+            facts_path,
+            format!("invalid Rust symbol range: {}", symbol.path),
+        ));
+    }
+    let mut candidates = nodes
+        .iter()
+        .filter(|node| matches!(node.kind.as_str(), "function" | "method"))
+        .filter(|node| node.path.as_deref() == Some(symbol.path.as_str()))
+        .filter(|node| {
+            node.range.as_ref().is_some_and(|range| {
+                range.start_byte < symbol.end_byte && symbol.start_byte < range.end_byte
+            })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|node| {
+        node.range
+            .as_ref()
+            .map_or(usize::MAX, |range| range.end_byte - range.start_byte)
+    });
+    match candidates.as_slice() {
+        [node, ..] => Ok(node.id.clone()),
+        [] => Err(rust_callfacts_error(
+            facts_path,
+            format!("Rust symbol is absent from graph snapshot: {}", symbol.path),
+        )),
+    }
+}
+
+fn rust_fact_target(
+    fact: &RustCallFact,
+    rust_paths: &BTreeSet<String>,
+    nodes: &[CodeGraphNode],
+    facts_path: &Path,
+) -> CodeGraphResult<(Option<String>, Vec<String>, bool)> {
+    let location = format!("{}:{}", fact.path, fact.start_line);
+    match fact.resolution.as_str() {
+        "static" => {
+            let target = fact.target.as_ref().ok_or_else(|| {
+                rust_callfacts_error(
+                    facts_path,
+                    format!("static Rust call has no target at {location}"),
+                )
+            })?;
+            if !fact.possible_targets.is_empty() {
+                return Err(rust_callfacts_error(
+                    facts_path,
+                    format!("static Rust call has possible targets at {location}"),
+                ));
+            }
+            Ok((
+                Some(rust_symbol_id(target, rust_paths, nodes, facts_path)?),
+                Vec::new(),
+                true,
+            ))
+        }
+        "possible" | "trait-dispatch" | "ambiguous" => {
+            if fact.target.is_some() {
+                return Err(rust_callfacts_error(
+                    facts_path,
+                    format!("uncertain Rust call claims a definite target at {location}"),
+                ));
+            }
+            let mut candidates = fact
+                .possible_targets
+                .iter()
+                .map(|target| rust_symbol_id(target, rust_paths, nodes, facts_path))
+                .collect::<CodeGraphResult<Vec<_>>>()?;
+            candidates.sort();
+            candidates.dedup();
+            Ok((None, candidates, false))
+        }
+        "external" | "function-value" | "unresolved" => {
+            if fact.target.is_some() || !fact.possible_targets.is_empty() {
+                return Err(rust_callfacts_error(
+                    facts_path,
+                    format!(
+                        "{} Rust call has an invalid target at {location}",
+                        fact.resolution
+                    ),
+                ));
+            }
+            Ok((None, Vec::new(), false))
+        }
+        resolution => Err(rust_callfacts_error(
+            facts_path,
+            format!("unsupported Rust call resolution `{resolution}` at {location}"),
+        )),
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ExternalCallFactsSymbol {
+    path: String,
+    start_byte: usize,
+    end_byte: usize,
+}
+
+#[derive(Clone, Debug)]
+struct ExternalCallFact {
+    path: String,
+    start_byte: usize,
+    end_byte: usize,
+    start_line: usize,
+    end_line: usize,
+    start_column: usize,
+    end_column: usize,
+    caller: ExternalCallFactsSymbol,
+    target_name: String,
+    target: Option<ExternalCallFactsSymbol>,
+    possible_targets: Vec<ExternalCallFactsSymbol>,
+    resolution: String,
+}
+
+impl From<&TypeScriptCallFactsSymbol> for ExternalCallFactsSymbol {
+    fn from(symbol: &TypeScriptCallFactsSymbol) -> Self {
+        Self {
+            path: symbol.path.clone(),
+            start_byte: symbol.start_byte,
+            end_byte: symbol.end_byte,
+        }
+    }
+}
+
+impl From<&PythonCallFactsSymbol> for ExternalCallFactsSymbol {
+    fn from(symbol: &PythonCallFactsSymbol) -> Self {
+        Self {
+            path: symbol.path.clone(),
+            start_byte: symbol.start_byte,
+            end_byte: symbol.end_byte,
+        }
+    }
+}
+
+impl From<&TypeScriptCallFact> for ExternalCallFact {
+    fn from(fact: &TypeScriptCallFact) -> Self {
+        Self {
+            path: fact.path.clone(),
+            start_byte: fact.start_byte,
+            end_byte: fact.end_byte,
+            start_line: fact.start_line,
+            end_line: fact.end_line,
+            start_column: fact.start_column,
+            end_column: fact.end_column,
+            caller: (&fact.caller).into(),
+            target_name: fact.target_name.clone(),
+            target: fact.target.as_ref().map(Into::into),
+            possible_targets: fact.possible_targets.iter().map(Into::into).collect(),
+            resolution: fact.resolution.clone(),
+        }
+    }
+}
+
+impl From<&PythonCallFact> for ExternalCallFact {
+    fn from(fact: &PythonCallFact) -> Self {
+        Self {
+            path: fact.path.clone(),
+            start_byte: fact.start_byte,
+            end_byte: fact.end_byte,
+            start_line: fact.start_line,
+            end_line: fact.end_line,
+            start_column: fact.start_column,
+            end_column: fact.end_column,
+            caller: (&fact.caller).into(),
+            target_name: fact.target_name.clone(),
+            target: fact.target.as_ref().map(Into::into),
+            possible_targets: fact.possible_targets.iter().map(Into::into).collect(),
+            resolution: fact.resolution.clone(),
+        }
+    }
+}
+
+fn external_callfact_edges(
+    facts: &[ExternalCallFact],
+    source_paths: &BTreeSet<String>,
+    graph_edges: &[CodeGraphEdge],
+    nodes: &[CodeGraphNode],
+    facts_path: &Path,
+    language: &str,
+) -> CodeGraphResult<(Vec<CodeGraphEdge>, BTreeSet<CallSiteKey>)> {
+    let nodes_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let syntax_sites = graph_edges
+        .iter()
+        .filter(|edge| edge.kind == "calls")
+        .filter_map(|edge| {
+            let caller = nodes_by_id.get(edge.source.as_str())?;
+            let path = caller.path.as_deref()?;
+            if !source_paths.contains(path) {
+                return None;
+            }
+            let range = edge.range.as_ref()?;
+            Some((
+                (
+                    path.to_owned(),
+                    range.start_byte,
+                    range.end_byte,
+                    edge.source.clone(),
+                ),
+                range.clone(),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut fact_sites = BTreeSet::new();
+    let mut covered_sites = BTreeSet::new();
+    let mut edges = Vec::with_capacity(facts.len());
+    for fact in facts {
+        let (edge, site) = external_callfact_edge(
+            fact,
+            source_paths,
+            nodes,
+            &nodes_by_id,
+            &syntax_sites,
+            facts_path,
+            language,
+        )?;
+        if !fact_sites.insert((fact.path.as_str(), fact.start_byte, fact.end_byte)) {
+            return Err(external_callfacts_error(
+                facts_path,
+                language,
+                format!(
+                    "duplicate call-site fact: {}:{}-{}",
+                    fact.path, fact.start_byte, fact.end_byte
+                ),
+            ));
+        }
+        covered_sites.insert(site);
+        edges.push(edge);
+    }
+    Ok((edges, covered_sites))
+}
+
+fn external_callfact_edge(
+    fact: &ExternalCallFact,
+    source_paths: &BTreeSet<String>,
+    nodes: &[CodeGraphNode],
+    nodes_by_id: &HashMap<&str, &CodeGraphNode>,
+    syntax_sites: &BTreeMap<CallSiteKey, CodeGraphRange>,
+    facts_path: &Path,
+    language: &str,
+) -> CodeGraphResult<(CodeGraphEdge, CallSiteKey)> {
+    validate_relative_source_path(&fact.path)
+        .map_err(|reason| external_callfacts_error(facts_path, language, reason))?;
+    if !source_paths.contains(&fact.path)
+        || fact.start_byte >= fact.end_byte
+        || fact.start_line == 0
+        || fact.end_line < fact.start_line
+        || fact.target_name.is_empty()
+    {
+        return Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!(
+                "invalid call-site range or target name: {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let caller_id = external_symbol_id(&fact.caller, source_paths, nodes, facts_path, language)?;
+    let Some(caller) = nodes_by_id.get(caller_id.as_str()) else {
+        return Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!("missing caller node for {}", fact.path),
+        ));
+    };
+    if caller.path.as_deref() != Some(fact.path.as_str())
+        || !caller.range.as_ref().is_some_and(|range| {
+            range.start_byte <= fact.start_byte && fact.end_byte <= range.end_byte
+        })
+        || fact.caller.start_byte > fact.start_byte
+        || fact.end_byte > fact.caller.end_byte
+    {
+        return Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!(
+                "caller/range does not match source node at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let site = (
+        fact.path.clone(),
+        fact.start_byte,
+        fact.end_byte,
+        caller_id.clone(),
+    );
+    let Some(syntax_range) = syntax_sites.get(&site) else {
+        return Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!(
+                "call-site range does not match parsed syntax at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    };
+    let fact_range = CodeGraphRange {
+        start_byte: fact.start_byte,
+        end_byte: fact.end_byte,
+        start_line: fact.start_line,
+        end_line: fact.end_line,
+        start_column: fact.start_column,
+        end_column: fact.end_column,
+    };
+    if syntax_range != &fact_range {
+        return Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!(
+                "call-site coordinates do not match parsed syntax at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let (target, candidates, resolved) =
+        external_fact_target(fact, source_paths, nodes, facts_path, language)?;
+    Ok((
+        CodeGraphEdge {
+            kind: "calls".to_owned(),
+            source: caller_id,
+            target,
+            target_name: Some(fact.target_name.clone()),
+            resolved,
+            ambiguous_candidates: candidates,
+            resolution: Some(fact.resolution.clone()),
+            range: Some(fact_range),
+        },
+        site,
+    ))
+}
+
+fn external_symbol_id(
+    symbol: &ExternalCallFactsSymbol,
+    source_paths: &BTreeSet<String>,
+    nodes: &[CodeGraphNode],
+    facts_path: &Path,
+    language: &str,
+) -> CodeGraphResult<String> {
+    validate_relative_source_path(&symbol.path)
+        .map_err(|reason| external_callfacts_error(facts_path, language, reason))?;
+    if !source_paths.contains(&symbol.path) || symbol.start_byte >= symbol.end_byte {
+        return Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!("invalid symbol range: {}", symbol.path),
+        ));
+    }
+    let mut candidates = nodes
+        .iter()
+        .filter(|node| matches!(node.kind.as_str(), "function" | "method"))
+        .filter(|node| node.path.as_deref() == Some(symbol.path.as_str()))
+        .filter(|node| {
+            node.range.as_ref().is_some_and(|range| {
+                range.start_byte < symbol.end_byte && symbol.start_byte < range.end_byte
+            })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|node| {
+        node.range
+            .as_ref()
+            .map_or(usize::MAX, |range| range.end_byte - range.start_byte)
+    });
+    match candidates.as_slice() {
+        [node, ..] => Ok(node.id.clone()),
+        [] => Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!("symbol is absent from graph snapshot: {}", symbol.path),
+        )),
+    }
+}
+
+fn external_fact_target(
+    fact: &ExternalCallFact,
+    source_paths: &BTreeSet<String>,
+    nodes: &[CodeGraphNode],
+    facts_path: &Path,
+    language: &str,
+) -> CodeGraphResult<(Option<String>, Vec<String>, bool)> {
+    let location = format!("{}:{}", fact.path, fact.start_line);
+    match fact.resolution.as_str() {
+        "static" => {
+            let target = fact.target.as_ref().ok_or_else(|| {
+                external_callfacts_error(
+                    facts_path,
+                    language,
+                    format!("static call has no target at {location}"),
+                )
+            })?;
+            if !fact.possible_targets.is_empty() {
+                return Err(external_callfacts_error(
+                    facts_path,
+                    language,
+                    format!("static call has possible targets at {location}"),
+                ));
+            }
+            Ok((
+                Some(external_symbol_id(
+                    target,
+                    source_paths,
+                    nodes,
+                    facts_path,
+                    language,
+                )?),
+                Vec::new(),
+                true,
+            ))
+        }
+        "possible" | "ambiguous" | "interface-dispatch" | "trait-dispatch" => {
+            if fact.target.is_some() {
+                return Err(external_callfacts_error(
+                    facts_path,
+                    language,
+                    format!("uncertain call claims a definite target at {location}"),
+                ));
+            }
+            let mut candidates = fact
+                .possible_targets
+                .iter()
+                .map(|target| external_symbol_id(target, source_paths, nodes, facts_path, language))
+                .collect::<CodeGraphResult<Vec<_>>>()?;
+            candidates.sort();
+            candidates.dedup();
+            Ok((None, candidates, false))
+        }
+        "external" | "function-value" | "unresolved" => {
+            if fact.target.is_some() || !fact.possible_targets.is_empty() {
+                return Err(external_callfacts_error(
+                    facts_path,
+                    language,
+                    format!(
+                        "{} call has an invalid target at {location}",
+                        fact.resolution
+                    ),
+                ));
+            }
+            Ok((None, Vec::new(), false))
+        }
+        resolution => Err(external_callfacts_error(
+            facts_path,
+            language,
+            format!("unsupported call resolution `{resolution}` at {location}"),
+        )),
+    }
+}
+
+fn validate_go_callfacts_sources(
+    root: &Path,
+    artifact: &CodeGraphArtifact,
+    facts: &GoCallFactsArtifact,
+    facts_path: &Path,
+) -> CodeGraphResult<Option<BTreeSet<String>>> {
+    let expected = artifact
+        .files
+        .iter()
+        .filter(|file| file.language == "go")
+        .map(|file| (file.path.as_str(), file.sha256.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut actual = BTreeMap::new();
+    for file in &facts.files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| go_callfacts_error(facts_path, reason))?;
+        if actual
+            .insert(file.path.as_str(), file.sha256.as_str())
+            .is_some()
+        {
+            return Err(go_callfacts_error(
+                facts_path,
+                format!("duplicate source file: {}", file.path),
+            ));
+        }
+    }
+    if expected != actual {
+        return Ok(None);
+    }
+    for (relative_path, expected_digest) in &expected {
+        let path = root.join(relative_path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(io_failure("verify Go call-facts source", &path, error)),
+        };
+        if sha256_hex(&bytes) != *expected_digest {
+            return Ok(None);
+        }
+    }
+    Ok(Some(
+        expected.keys().map(|path| (*path).to_owned()).collect(),
+    ))
+}
+
+fn validate_go_callfacts_context(
+    root: &Path,
+    context: &GoCallFactsContext,
+    expected_fingerprint: &str,
+    facts_path: &Path,
+) -> CodeGraphResult<bool> {
+    validate_context_settings(context, facts_path)?;
+    validate_context_selections(context, facts_path)?;
+    validate_context_file_list(context, facts_path)?;
+    if go_callfacts_context_sha256(context) != expected_fingerprint {
+        return Err(go_callfacts_error(
+            facts_path,
+            "analysis context fingerprint does not match its contents".to_owned(),
+        ));
+    }
+
+    let current_files = collect_go_context_files(root)?;
+    Ok(current_files == context.context_files)
+}
+
+fn validate_context_settings(
+    context: &GoCallFactsContext,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    if context.go_version.is_empty()
+        || context.settings.get("GOOS").is_none_or(String::is_empty)
+        || context.settings.get("GOARCH").is_none_or(String::is_empty)
+        || context
+            .settings
+            .get("CGO_ENABLED")
+            .is_none_or(String::is_empty)
+    {
+        return Err(go_callfacts_error(
+            facts_path,
+            "analysis context is missing its Go version or target settings".to_owned(),
+        ));
+    }
+    let expected_settings = [
+        "GO111MODULE",
+        "GO386",
+        "GOAMD64",
+        "GOARCH",
+        "GOARM",
+        "GOARM64",
+        "CGO_ENABLED",
+        "GOEXPERIMENT",
+        "GOFLAGS",
+        "GOMIPS",
+        "GOMIPS64",
+        "GOOS",
+        "GOPPC64",
+        "GORISCV64",
+        "GOTOOLCHAIN",
+        "GOWASM",
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    if context
+        .settings
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>()
+        != expected_settings
+    {
+        return Err(go_callfacts_error(
+            facts_path,
+            "analysis context has an unsupported Go setting set".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_context_selections(
+    context: &GoCallFactsContext,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    if context.go_mod.is_empty() {
+        return Err(go_callfacts_error(
+            facts_path,
+            "analysis context must select an in-root go.mod".to_owned(),
+        ));
+    }
+    validate_context_selected_file(&context.go_mod, "go.mod", facts_path)?;
+    if !context.go_work.is_empty() && context.go_work != "off" {
+        validate_context_selected_file(&context.go_work, "go.work", facts_path)?;
+    }
+    Ok(())
+}
+
+fn validate_context_selected_file(
+    path: &str,
+    expected_name: &str,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    validate_relative_source_path(path).map_err(|reason| go_callfacts_error(facts_path, reason))?;
+    if Path::new(path)
+        .file_name()
+        .is_none_or(|name| name != expected_name)
+    {
+        return Err(go_callfacts_error(
+            facts_path,
+            format!("active context input must name a {expected_name} file"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_context_file_list(
+    context: &GoCallFactsContext,
+    facts_path: &Path,
+) -> CodeGraphResult<()> {
+    let mut seen = BTreeSet::new();
+    for file in &context.context_files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| go_callfacts_error(facts_path, reason))?;
+        if !is_go_context_input_path(Path::new(&file.path)) {
+            return Err(go_callfacts_error(
+                facts_path,
+                format!("unsupported Go context input: {}", file.path),
+            ));
+        }
+        if !seen.insert(file.path.as_str()) {
+            return Err(go_callfacts_error(
+                facts_path,
+                format!("duplicate Go context input: {}", file.path),
+            ));
+        }
+    }
+    if !seen.contains(context.go_mod.as_str()) {
+        return Err(go_callfacts_error(
+            facts_path,
+            "active go.mod is absent from analysis context inputs".to_owned(),
+        ));
+    }
+    if !context.go_work.is_empty()
+        && context.go_work != "off"
+        && !seen.contains(context.go_work.as_str())
+    {
+        return Err(go_callfacts_error(
+            facts_path,
+            "active go.work is absent from analysis context inputs".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn go_callfacts_context_sha256(context: &GoCallFactsContext) -> String {
+    let mut hasher = Sha256::new();
+    hash_context_part(&mut hasher, "zvec-grep.go-callfacts-context-v1");
+    hash_context_part(&mut hasher, &context.go_version);
+    hash_context_part(&mut hasher, &context.go_mod);
+    hash_context_part(&mut hasher, &context.go_work);
+    for (name, value) in &context.settings {
+        hash_context_part(&mut hasher, name);
+        hash_context_part(&mut hasher, value);
+    }
+    let mut context_files = context.context_files.clone();
+    context_files.sort_by(|left, right| left.path.cmp(&right.path));
+    for file in &context_files {
+        hash_context_part(&mut hasher, &file.path);
+        hash_context_part(&mut hasher, &file.sha256);
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn hash_context_part(hasher: &mut Sha256, value: &str) {
+    hasher.update(value.as_bytes());
+    hasher.update([0]);
+}
+
+fn rust_callfacts_context_sha256(context: &RustCallFactsContext) -> String {
+    let mut hasher = Sha256::new();
+    hash_context_part(&mut hasher, "zvec-grep.rust-callfacts-context-v1");
+    hash_context_part(&mut hasher, &context.rustc_version);
+    hash_context_part(&mut hasher, &context.rustc_commit);
+    hash_context_part(&mut hasher, &context.host);
+    hash_context_part(&mut hasher, &context.target);
+    hash_context_part(&mut hasher, &context.edition);
+    hash_context_part(&mut hasher, &context.manifest_path);
+    hash_context_part(
+        &mut hasher,
+        context.lockfile_path.as_deref().unwrap_or_default(),
+    );
+    hash_context_part(
+        &mut hasher,
+        context.toolchain_path.as_deref().unwrap_or_default(),
+    );
+    for (name, value) in &context.settings {
+        hash_context_part(&mut hasher, name);
+        hash_context_part(&mut hasher, value);
+    }
+    let mut context_files = context.context_files.clone();
+    context_files.sort_by(|left, right| left.path.cmp(&right.path));
+    for file in &context_files {
+        hash_context_part(&mut hasher, &file.path);
+        hash_context_part(&mut hasher, &file.sha256);
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn typescript_callfacts_context_sha256(context: &TypeScriptCallFactsContext) -> String {
+    let mut hasher = Sha256::new();
+    hash_context_part(&mut hasher, "zvec-grep.typescript-callfacts-context-v1");
+    hash_context_part(&mut hasher, &context.typescript_version);
+    hash_context_part(&mut hasher, &context.node_version);
+    hash_context_part(&mut hasher, &context.project_path);
+    hash_context_part(&mut hasher, &context.target);
+    hash_context_part(&mut hasher, &context.module);
+    hash_context_part(&mut hasher, &context.jsx);
+    for (name, value) in &context.settings {
+        hash_context_part(&mut hasher, name);
+        hash_context_part(&mut hasher, value);
+    }
+    let mut context_files = context.context_files.clone();
+    context_files.sort_by(|left, right| left.path.cmp(&right.path));
+    for file in &context_files {
+        hash_context_part(&mut hasher, &file.path);
+        hash_context_part(&mut hasher, &file.sha256);
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn python_callfacts_context_sha256(context: &PythonCallFactsContext) -> String {
+    let mut hasher = Sha256::new();
+    hash_context_part(&mut hasher, "zvec-grep.python-callfacts-context-v1");
+    hash_context_part(&mut hasher, &context.pyright_version);
+    hash_context_part(&mut hasher, &context.python_version);
+    hash_context_part(&mut hasher, &context.target_version);
+    hash_context_part(&mut hasher, &context.project_path);
+    hash_context_part(&mut hasher, &context.typeshed_sha256);
+    for (name, value) in &context.settings {
+        hash_context_part(&mut hasher, name);
+        hash_context_part(&mut hasher, value);
+    }
+    let mut context_files = context.context_files.clone();
+    context_files.sort_by(|left, right| left.path.cmp(&right.path));
+    for file in &context_files {
+        hash_context_part(&mut hasher, &file.path);
+        hash_context_part(&mut hasher, &file.sha256);
+    }
+    hex::encode(hasher.finalize())
+}
+
+type GoSymbolIndex = HashMap<String, Vec<String>>;
+type GraphNodeIndex<'a> = HashMap<&'a str, &'a CodeGraphNode>;
+type CallSiteKey = (String, usize, usize, String);
+
+fn graph_callfact_indexes<'a>(
+    artifact: &'a CodeGraphArtifact,
+    facts_path: &Path,
+) -> CodeGraphResult<(GoSymbolIndex, GraphNodeIndex<'a>)> {
+    let mut symbols: HashMap<String, Vec<String>> = HashMap::new();
+    let mut nodes_by_id = HashMap::new();
+    for node in &artifact.nodes {
+        nodes_by_id.insert(node.id.as_str(), node);
+        if matches!(node.kind.as_str(), "function" | "method")
+            && let (Some(source_path), Some(qualified_name)) =
+                (node.path.as_deref(), node.qualified_name.as_deref())
+        {
+            symbols
+                .entry(format!("{source_path}::{qualified_name}"))
+                .or_default()
+                .push(node.id.clone());
+        }
+    }
+    for (symbol, ids) in &symbols {
+        if ids.len() != 1 {
+            return Err(go_callfacts_error(
+                facts_path,
+                format!("symbol identity is not unique in graph snapshot: {symbol}"),
+            ));
+        }
+    }
+    Ok((symbols, nodes_by_id))
+}
+
+fn go_callfact_edges(
+    facts: &[GoCallFact],
+    go_paths: &BTreeSet<String>,
+    symbols: &GoSymbolIndex,
+    nodes_by_id: &GraphNodeIndex<'_>,
+    graph_edges: &[CodeGraphEdge],
+    facts_path: &Path,
+) -> CodeGraphResult<(Vec<CodeGraphEdge>, BTreeSet<CallSiteKey>)> {
+    let syntax_sites = graph_edges
+        .iter()
+        .filter(|edge| edge.kind == "calls")
+        .filter_map(|edge| {
+            let caller = nodes_by_id.get(edge.source.as_str())?;
+            let path = caller.path.as_deref()?;
+            let range = edge.range.as_ref()?;
+            Some((
+                (
+                    path.to_owned(),
+                    range.start_byte,
+                    range.end_byte,
+                    edge.source.clone(),
+                ),
+                range.clone(),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut fact_sites = BTreeSet::new();
+    let mut covered_sites = BTreeSet::new();
+    let mut edges = Vec::with_capacity(facts.len());
+    for fact in facts {
+        let (edge, site) = go_callfact_edge(
+            fact,
+            go_paths,
+            symbols,
+            nodes_by_id,
+            &syntax_sites,
+            facts_path,
+        )?;
+        if !fact_sites.insert((fact.path.as_str(), fact.start_byte, fact.end_byte)) {
+            return Err(go_callfacts_error(
+                facts_path,
+                format!(
+                    "duplicate call-site fact: {}:{}-{}",
+                    fact.path, fact.start_byte, fact.end_byte
+                ),
+            ));
+        }
+        covered_sites.insert(site);
+        edges.push(edge);
+    }
+    Ok((edges, covered_sites))
+}
+
+fn go_callfact_edge(
+    fact: &GoCallFact,
+    go_paths: &BTreeSet<String>,
+    symbols: &GoSymbolIndex,
+    nodes_by_id: &GraphNodeIndex<'_>,
+    syntax_sites: &BTreeMap<CallSiteKey, CodeGraphRange>,
+    facts_path: &Path,
+) -> CodeGraphResult<(CodeGraphEdge, CallSiteKey)> {
+    validate_relative_source_path(&fact.path)
+        .map_err(|reason| go_callfacts_error(facts_path, reason))?;
+    if !go_paths.contains(&fact.path)
+        || fact.start_byte >= fact.end_byte
+        || fact.start_line == 0
+        || fact.end_line < fact.start_line
+    {
+        return Err(go_callfacts_error(
+            facts_path,
+            format!(
+                "invalid call-site range or non-Go source: {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let caller_id = unique_symbol_id(symbols, &fact.caller).map_err(|reason| {
+        go_callfacts_error(
+            facts_path,
+            format!("{reason} at {}:{}", fact.path, fact.start_line),
+        )
+    })?;
+    let Some(caller) = nodes_by_id.get(caller_id.as_str()) else {
+        return Err(go_callfacts_error(
+            facts_path,
+            format!("missing caller node: {}", fact.caller),
+        ));
+    };
+    if caller.path.as_deref() != Some(fact.path.as_str())
+        || !caller.range.as_ref().is_some_and(|range| {
+            range.start_byte <= fact.start_byte && fact.end_byte <= range.end_byte
+        })
+    {
+        return Err(go_callfacts_error(
+            facts_path,
+            format!(
+                "caller/range does not match source node at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let site = (
+        fact.path.clone(),
+        fact.start_byte,
+        fact.end_byte,
+        caller_id.clone(),
+    );
+    let Some(syntax_range) = syntax_sites.get(&site) else {
+        return Err(go_callfacts_error(
+            facts_path,
+            format!(
+                "call-site range does not match parsed syntax at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    };
+    let fact_range = CodeGraphRange {
+        start_byte: fact.start_byte,
+        end_byte: fact.end_byte,
+        start_line: fact.start_line,
+        end_line: fact.end_line,
+        start_column: fact.start_column,
+        end_column: fact.end_column,
+    };
+    if syntax_range != &fact_range {
+        return Err(go_callfacts_error(
+            facts_path,
+            format!(
+                "call-site coordinates do not match parsed syntax at {}:{}",
+                fact.path, fact.start_line
+            ),
+        ));
+    }
+    let (target, candidates, resolved) = go_fact_target(fact, go_paths, symbols, facts_path)?;
+    Ok((
+        CodeGraphEdge {
+            kind: "calls".to_owned(),
+            source: caller_id,
+            target,
+            target_name: Some(fact.target_name.clone()),
+            resolved,
+            ambiguous_candidates: candidates,
+            resolution: Some(fact.resolution.clone()),
+            range: Some(CodeGraphRange {
+                start_byte: fact.start_byte,
+                end_byte: fact.end_byte,
+                start_line: fact.start_line,
+                end_line: fact.end_line,
+                start_column: fact.start_column,
+                end_column: fact.end_column,
+            }),
+        },
+        site,
+    ))
+}
+
+fn go_fact_target(
+    fact: &GoCallFact,
+    go_paths: &BTreeSet<String>,
+    symbols: &GoSymbolIndex,
+    facts_path: &Path,
+) -> CodeGraphResult<(Option<String>, Vec<String>, bool)> {
+    let location = format!("{}:{}", fact.path, fact.start_line);
+    match fact.resolution.as_str() {
+        "static" => {
+            let target = fact.target.as_deref().ok_or_else(|| {
+                go_callfacts_error(
+                    facts_path,
+                    format!("static call has no target at {location}"),
+                )
+            })?;
+            if !fact.possible_targets.is_empty() {
+                return Err(go_callfacts_error(
+                    facts_path,
+                    format!("static call has possible targets at {location}"),
+                ));
+            }
+            Ok((
+                Some(
+                    unique_go_symbol_id(symbols, go_paths, target).map_err(|reason| {
+                        go_callfacts_error(facts_path, format!("{reason} at {location}"))
+                    })?,
+                ),
+                Vec::new(),
+                true,
+            ))
+        }
+        "interface-dispatch" => {
+            if fact.target.is_some() {
+                return Err(go_callfacts_error(
+                    facts_path,
+                    format!("interface call claims a definite target at {location}"),
+                ));
+            }
+            let mut candidates = fact
+                .possible_targets
+                .iter()
+                .map(|candidate| {
+                    unique_go_symbol_id(symbols, go_paths, candidate).map_err(|reason| {
+                        go_callfacts_error(facts_path, format!("{reason} at {location}"))
+                    })
+                })
+                .collect::<CodeGraphResult<Vec<_>>>()?;
+            candidates.sort();
+            candidates.dedup();
+            Ok((None, candidates, false))
+        }
+        "external" | "function-value" | "unresolved" => {
+            if fact.target.is_some() || !fact.possible_targets.is_empty() {
+                return Err(go_callfacts_error(
+                    facts_path,
+                    format!(
+                        "{} call has an invalid target at {location}",
+                        fact.resolution
+                    ),
+                ));
+            }
+            Ok((None, Vec::new(), false))
+        }
+        resolution => Err(go_callfacts_error(
+            facts_path,
+            format!("unsupported call resolution `{resolution}` at {location}"),
+        )),
+    }
+}
+
+fn unique_go_symbol_id(
+    symbols: &GoSymbolIndex,
+    go_paths: &BTreeSet<String>,
+    key: &str,
+) -> Result<String, String> {
+    let Some((path, _)) = key.rsplit_once("::") else {
+        return Err(format!("invalid Go symbol identity: {key}"));
+    };
+    if !go_paths.contains(path) {
+        return Err(format!("Go symbol is outside the source snapshot: {key}"));
+    }
+    unique_symbol_id(symbols, key)
+}
+
+fn go_callfacts_error(path: &Path, reason: String) -> CodeGraphError {
+    CodeGraphError::GoCallFacts {
+        path: path.to_path_buf(),
+        reason,
+    }
+}
+
+fn rust_callfacts_error(path: &Path, reason: String) -> CodeGraphError {
+    CodeGraphError::RustCallFacts {
+        path: path.to_path_buf(),
+        reason,
+    }
+}
+
+fn external_callfacts_error(path: &Path, language: &str, reason: String) -> CodeGraphError {
+    match language {
+        "TypeScript" => typescript_callfacts_error(path, reason),
+        "Python" => python_callfacts_error(path, reason),
+        _ => CodeGraphError::Io {
+            operation: format!("validate {language} call-facts artifact"),
+            path: path.to_path_buf(),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidData, reason),
+        },
+    }
+}
+
+fn typescript_callfacts_error(path: &Path, reason: String) -> CodeGraphError {
+    CodeGraphError::TypeScriptCallFacts {
+        path: path.to_path_buf(),
+        reason,
+    }
+}
+
+fn python_callfacts_error(path: &Path, reason: String) -> CodeGraphError {
+    CodeGraphError::PythonCallFacts {
+        path: path.to_path_buf(),
+        reason,
+    }
+}
+
+fn restore_syntax_call_edges(artifact: &mut CodeGraphArtifact, root: &Path) {
+    let sources = read_graph_sources(root, artifact);
+    resolve_call_edges(&mut artifact.edges, &artifact.nodes, &sources);
+    artifact.go_callfacts_context_sha256 = None;
+    artifact.rust_callfacts_context_sha256 = None;
+    artifact.typescript_callfacts_context_sha256 = None;
+    artifact.python_callfacts_context_sha256 = None;
+}
+
+/// Parse-time source text keyed by fixture-relative path.
+fn parsed_sources(parsed: &[ParsedFile]) -> HashMap<String, String> {
+    parsed
+        .iter()
+        .filter(|file| !file.source.is_empty())
+        .map(|file| (file.file.path.clone(), file.source.clone()))
+        .collect()
+}
+
+/// Re-read artifact file sources from disk so call re-resolution keeps
+/// receiver-type context. Missing or non-UTF-8 files are skipped.
+fn read_graph_sources(root: &Path, artifact: &CodeGraphArtifact) -> HashMap<String, String> {
+    artifact
+        .files
+        .iter()
+        .filter_map(|file| {
+            let bytes = fs::read(root.join(&file.path)).ok()?;
+            let source = String::from_utf8(bytes).ok()?;
+            Some((file.path.clone(), source))
+        })
+        .collect()
+}
+
+fn manifest_key_with_callfacts(
+    base_manifest: String,
+    go_digest: Option<&str>,
+    rust_digest: Option<&str>,
+    typescript_digest: Option<&str>,
+    python_digest: Option<&str>,
+) -> String {
+    let mut manifest = base_manifest.into_bytes();
+    if let Some(digest) = go_digest {
+        manifest.extend_from_slice(b"\0go-callfacts\0");
+        manifest.extend_from_slice(digest.as_bytes());
+    }
+    if let Some(digest) = rust_digest {
+        manifest.extend_from_slice(b"\0rust-callfacts\0");
+        manifest.extend_from_slice(digest.as_bytes());
+    }
+    if let Some(digest) = typescript_digest {
+        manifest.extend_from_slice(b"\0typescript-callfacts\0");
+        manifest.extend_from_slice(digest.as_bytes());
+    }
+    if let Some(digest) = python_digest {
+        manifest.extend_from_slice(b"\0python-callfacts\0");
+        manifest.extend_from_slice(digest.as_bytes());
+    }
+    if go_digest.is_none()
+        && rust_digest.is_none()
+        && typescript_digest.is_none()
+        && python_digest.is_none()
+    {
+        return String::from_utf8(manifest).expect("base manifest is UTF-8");
+    }
+    sha256_hex(&manifest)
+}
+
+fn update_callfacts_manifest(root: &Path, artifact: &mut CodeGraphArtifact) -> CodeGraphResult<()> {
+    let go_digest = if artifact.go_callfacts_context_sha256.is_some() {
+        Some(read_callfacts_digest(root, GO_CALLFACTS_FILE, "Go")?)
+    } else {
+        None
+    };
+    let rust_digest = if artifact.rust_callfacts_context_sha256.is_some() {
+        Some(read_callfacts_digest(root, RUST_CALLFACTS_FILE, "Rust")?)
+    } else {
+        None
+    };
+    let typescript_digest = if artifact.typescript_callfacts_context_sha256.is_some() {
+        Some(read_callfacts_digest(
+            root,
+            TYPESCRIPT_CALLFACTS_FILE,
+            "TypeScript",
+        )?)
+    } else {
+        None
+    };
+    let python_digest = if artifact.python_callfacts_context_sha256.is_some() {
+        Some(read_callfacts_digest(
+            root,
+            PYTHON_CALLFACTS_FILE,
+            "Python",
+        )?)
+    } else {
+        None
+    };
+    let base_manifest = package_manifest_key_for_root(root, &artifact.files)?;
+    artifact.manifest_key = manifest_key_with_callfacts(
+        base_manifest,
+        go_digest.as_deref(),
+        rust_digest.as_deref(),
+        typescript_digest.as_deref(),
+        python_digest.as_deref(),
+    );
+    Ok(())
+}
+
+fn package_manifest_key_for_root(root: &Path, files: &[CodeGraphFile]) -> CodeGraphResult<String> {
+    Ok(package_manifest_key(
+        files,
+        &collect_package_manifests(root)?,
+    ))
+}
+
+fn read_callfacts_digest(root: &Path, filename: &str, language: &str) -> CodeGraphResult<String> {
+    let path = root.join(".zvec-grep").join(filename);
+    let bytes = fs::read(&path).map_err(|error| {
+        io_failure(
+            &format!("read {language} call-facts artifact"),
+            &path,
+            error,
+        )
+    })?;
+    Ok(sha256_hex(&bytes))
+}
+
+fn validate_relative_source_path(path: &str) -> Result<(), String> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path.to_string_lossy().contains('\\')
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+                    | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err(format!("invalid relative source path: {}", path.display()));
+    }
+    Ok(())
+}
+
+fn unique_symbol_id(symbols: &HashMap<String, Vec<String>>, key: &str) -> Result<String, String> {
+    match symbols.get(key).map(Vec::as_slice) {
+        Some([id]) => Ok(id.clone()),
+        Some(_) => Err(format!("symbol identity is ambiguous: {key}")),
+        None => Err(format!("symbol is absent from graph snapshot: {key}")),
+    }
+}
+
+/// Writes a graph beside the semantic index and returns the artifact and path.
+///
+/// # Errors
+///
+/// Returns an error if scanning, parsing, serialization, or writing fails.
+pub fn write_codegraph(
+    root: &Path,
+    output: Option<&Path>,
+) -> CodeGraphResult<(PathBuf, CodeGraphArtifact)> {
+    let artifact = build_codegraph(root)?;
+    write_artifact(root, output, artifact)
+}
+
+/// Reads either the default compressed graph sidecar or a legacy/plain JSON
+/// graph artifact.
+///
+/// # Errors
+///
+/// Returns an error if the artifact cannot be read, decompressed, or decoded.
+pub fn read_codegraph(path: &Path) -> CodeGraphResult<CodeGraphArtifact> {
+    let bytes =
+        fs::read(path).map_err(|error| io_failure("read codegraph artifact", path, error))?;
+    decode_codegraph_bytes(path, &bytes)
+}
+
+/// Reads a graph publication manifest without validating the files it names.
+/// Use [`validate_codegraph_publication`] before trusting the referenced
+/// snapshot.
+///
+/// # Errors
+///
+/// Returns an error if the manifest cannot be read or decoded.
+pub fn read_codegraph_publication(path: &Path) -> CodeGraphResult<CodeGraphPublication> {
+    let bytes =
+        fs::read(path).map_err(|error| io_failure("read codegraph publication", path, error))?;
+    serde_json::from_slice(&bytes).map_err(|error| publication_error(path, error.to_string()))
+}
+
+/// Validates the committed graph publication and returns its graph artifact.
+///
+/// Validation checks the graph digest, artifact identity, current source and
+/// package-manifest snapshot, and every accepted semantic sidecar digest and
+/// context fingerprint. A missing or mismatched publication is an error rather
+/// than a reason to silently use an older graph.
+///
+/// # Errors
+///
+/// Returns an error if the publication, graph, source snapshot, package
+/// manifests, or accepted sidecars do not match.
+pub fn validate_codegraph_publication(root: &Path) -> CodeGraphResult<CodeGraphArtifact> {
+    let root = resolve_root(root)?;
+    let publication_path = root.join(".zvec-grep").join(CODEGRAPH_PUBLICATION_FILE);
+    let publication = read_codegraph_publication(&publication_path)?;
+    validate_publication_shape(&publication, &publication_path)?;
+
+    let graph_path = root.join(&publication.graph.path);
+    let graph_bytes = fs::read(&graph_path)
+        .map_err(|error| io_failure("read published codegraph", &graph_path, error))?;
+    if sha256_hex(&graph_bytes) != publication.graph.sha256 {
+        return Err(publication_error(
+            &publication_path,
+            "published graph digest does not match the graph bytes".to_owned(),
+        ));
+    }
+    let artifact = decode_codegraph_bytes(&graph_path, &graph_bytes)?;
+    validate_published_artifact(&artifact, &publication, &publication_path)?;
+    validate_published_source_snapshot(&root, &artifact, &publication_path)?;
+
+    let expected_sidecars = accepted_callfacts_sidecars(&root, &artifact)?;
+    if sorted_publication_sidecars(&publication.sidecars)
+        != sorted_publication_sidecars(&expected_sidecars)
+    {
+        return Err(publication_error(
+            &publication_path,
+            "accepted semantic sidecars do not match the publication".to_owned(),
+        ));
+    }
+    let expected_manifest = manifest_key_with_publication_sidecars(
+        package_manifest_key_for_root(&root, &artifact.files)?,
+        &expected_sidecars,
+    );
+    if artifact.manifest_key != expected_manifest {
+        return Err(publication_error(
+            &publication_path,
+            "published artifact manifest key is stale for the current inputs".to_owned(),
+        ));
+    }
+    Ok(artifact)
+}
+
+/// Writes a Go-only graph for existing callers that need the original scope.
+///
+/// # Errors
+///
+/// Returns an error if scanning, parsing, serialization, or writing fails.
+pub fn write_go_codegraph(
+    root: &Path,
+    output: Option<&Path>,
+) -> CodeGraphResult<(PathBuf, CodeGraphArtifact)> {
+    let artifact = build_go_codegraph(root)?;
+    write_artifact(root, output, artifact)
+}
+
+/// Applies a file delta to a base artifact and writes the updated snapshot.
+///
+/// # Errors
+///
+/// Returns an error if applying the update, serialization, or writing fails.
+pub fn write_go_codegraph_update(
+    base: &CodeGraphArtifact,
+    root: &Path,
+    output: Option<&Path>,
+    changes: &[CodeGraphChange],
+) -> CodeGraphResult<(PathBuf, CodeGraphArtifact)> {
+    let artifact = update_go_codegraph(base, root, changes)?;
+    write_artifact(root, output, artifact)
+}
+
+/// Applies a source-file delta to a base artifact and writes the updated snapshot.
+///
+/// # Errors
+///
+/// Returns an error if applying the update, serialization, or writing fails.
+pub fn write_codegraph_update(
+    base: &CodeGraphArtifact,
+    root: &Path,
+    output: Option<&Path>,
+    changes: &[CodeGraphChange],
+) -> CodeGraphResult<(PathBuf, CodeGraphArtifact)> {
+    let artifact = update_codegraph(base, root, changes)?;
+    write_artifact(root, output, artifact)
+}
+
+fn current_callfacts_digest(
+    root: &Path,
+    filename: &str,
+    language: &str,
+) -> CodeGraphResult<Option<String>> {
+    let path = root.join(".zvec-grep").join(filename);
+    match fs::read(&path) {
+        Ok(bytes) => Ok(Some(sha256_hex(&bytes))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(io_failure(
+            &format!("read {language} call-facts artifact"),
+            &path,
+            error,
+        )),
+    }
+}
+
+fn decode_codegraph_bytes(path: &Path, bytes: &[u8]) -> CodeGraphResult<CodeGraphArtifact> {
+    let decoded = if path.extension().is_some_and(|extension| extension == "zst")
+        || bytes.starts_with(&ZSTD_MAGIC)
+    {
+        zstd::stream::decode_all(bytes)
+            .map_err(|error| io_failure("decompress codegraph artifact", path, error))?
+    } else {
+        bytes.to_vec()
+    };
+    Ok(serde_json::from_slice(&decoded)?)
+}
+
+fn read_existing_codegraph(root: &Path) -> CodeGraphResult<Option<(PathBuf, CodeGraphArtifact)>> {
+    for filename in [CODEGRAPH_FILE, CODEGRAPH_JSON_FILE] {
+        let path = root.join(".zvec-grep").join(filename);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(io_failure("read existing codegraph", &path, error)),
+        };
+        let Ok(artifact) = decode_codegraph_bytes(&path, &bytes) else {
+            continue;
+        };
+        if artifact.schema == CODEGRAPH_SCHEMA
+            && artifact.version == CODEGRAPH_VERSION
+            && has_current_relation_generation(&artifact)
+        {
+            return Ok(Some((path, artifact)));
+        }
+    }
+    Ok(None)
+}
+
+/// Refreshes the persisted graph snapshot against all supported source files.
+/// Existing artifacts are updated only for added, changed, or deleted files.
+///
+/// # Errors
+///
+/// Returns an error if the workspace cannot be scanned, a changed source cannot
+/// be parsed, or the refreshed artifact cannot be persisted.
+pub fn refresh_codegraph(root: &Path) -> CodeGraphResult<(PathBuf, CodeGraphArtifact)> {
+    let root = resolve_root(root)?;
+    let existing = read_existing_codegraph(&root)?;
+    let existing_path = existing.as_ref().map(|(path, _)| path.clone());
+    let base = existing.map(|(_, artifact)| artifact);
+    let default_artifact_path = root.join(".zvec-grep").join(CODEGRAPH_FILE);
+
+    let mut paths = Vec::new();
+    collect_code_files(&root, &mut paths)?;
+    paths.sort();
+    let current = paths
+        .par_iter()
+        .map(|path| {
+            let bytes = fs::read(path).map_err(|error| io_failure("hash source", path, error))?;
+            Ok((relative_path(&root, path), sha256_hex(&bytes)))
+        })
+        .collect::<CodeGraphResult<Vec<_>>>()?
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    let package_manifests = collect_package_manifests(&root)?;
+    let current_go_callfacts_digest = current_callfacts_digest(&root, GO_CALLFACTS_FILE, "Go")?;
+    let current_rust_callfacts_digest =
+        current_callfacts_digest(&root, RUST_CALLFACTS_FILE, "Rust")?;
+    let current_typescript_callfacts_digest =
+        current_callfacts_digest(&root, TYPESCRIPT_CALLFACTS_FILE, "TypeScript")?;
+    let current_python_callfacts_digest =
+        current_callfacts_digest(&root, PYTHON_CALLFACTS_FILE, "Python")?;
+
+    let artifact = if let Some(base) = base {
+        let previous = base
+            .files
+            .iter()
+            .map(|file| (file.path.as_str(), file.sha256.as_str()))
+            .collect::<HashMap<_, _>>();
+        let changes = current
+            .iter()
+            .filter(|(path, hash)| previous.get(path.as_str()) != Some(&hash.as_str()))
+            .map(|(path, _)| CodeGraphChange::Upsert(PathBuf::from(path)))
+            .chain(
+                base.files
+                    .iter()
+                    .filter(|file| !current.contains_key(&file.path))
+                    .map(|file| CodeGraphChange::Delete(PathBuf::from(&file.path))),
+            )
+            .collect::<Vec<_>>();
+        let expected_manifest = manifest_key_with_callfacts(
+            package_manifest_key(&base.files, &package_manifests),
+            current_go_callfacts_digest.as_deref(),
+            current_rust_callfacts_digest.as_deref(),
+            current_typescript_callfacts_digest.as_deref(),
+            current_python_callfacts_digest.as_deref(),
+        );
+        // Package manifests and call-facts sidecars are not graph files, but
+        // both can change the graph. Their digests are part of the expected
+        // manifest so a context-only change cannot return a stale snapshot.
+        let has_callfacts = current_go_callfacts_digest.is_some()
+            || current_rust_callfacts_digest.is_some()
+            || current_typescript_callfacts_digest.is_some()
+            || current_python_callfacts_digest.is_some();
+        if changes.is_empty()
+            && !has_callfacts
+            && base.manifest_key == expected_manifest
+            && existing_path.as_deref() == Some(default_artifact_path.as_path())
+            && publication_committed_for_artifact(&root, &default_artifact_path, &base)
+        {
+            return Ok((default_artifact_path, base));
+        }
+        if base.manifest_key != expected_manifest {
+            build_codegraph(&root)?
+        } else if changes.is_empty() {
+            let mut refreshed = base;
+            apply_semantic_callfacts(&root, &mut refreshed)?;
+            refreshed
+        } else {
+            update_codegraph(&base, &root, &changes)?
+        }
+    } else {
+        build_codegraph(&root)?
+    };
+    write_artifact(&root, None, artifact)
+}
+
+fn write_artifact(
+    root: &Path,
+    output: Option<&Path>,
+    artifact: CodeGraphArtifact,
+) -> CodeGraphResult<(PathBuf, CodeGraphArtifact)> {
+    let use_default_output = output.is_none();
+    let output = output.map_or_else(
+        || root.join(".zvec-grep").join(CODEGRAPH_FILE),
+        Path::to_path_buf,
+    );
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| io_failure("create codegraph output directory", parent, error))?;
+    }
+    let encoded = serde_json::to_vec(&artifact)?;
+    let encoded = if output
+        .extension()
+        .is_some_and(|extension| extension == "zst")
+    {
+        zstd::stream::encode_all(encoded.as_slice(), CODEGRAPH_COMPRESSION_LEVEL)
+            .map_err(|error| io_failure("compress codegraph artifact", &output, error))?
+    } else {
+        encoded
+    };
+    let publication = if use_default_output {
+        Some(build_codegraph_publication(root, &artifact, &encoded)?)
+    } else {
+        None
+    };
+    atomic_write(&output, &encoded, "write codegraph artifact")?;
+    if use_default_output {
+        let legacy = root.join(".zvec-grep").join(CODEGRAPH_JSON_FILE);
+        match fs::remove_file(&legacy) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_failure("remove legacy codegraph", &legacy, error)),
+        }
+        let publication_path = root.join(".zvec-grep").join(CODEGRAPH_PUBLICATION_FILE);
+        let publication = publication.expect("default output builds publication");
+        let publication_bytes = serde_json::to_vec(&publication)?;
+        atomic_write(
+            &publication_path,
+            &publication_bytes,
+            "write codegraph publication",
+        )?;
+    }
+    Ok((output, artifact))
+}
+
+static NEXT_ATOMIC_TEMP: AtomicU64 = AtomicU64::new(0);
+
+fn publication_error(path: &Path, reason: String) -> CodeGraphError {
+    CodeGraphError::CodeGraphPublication {
+        path: path.to_path_buf(),
+        reason,
+    }
+}
+
+fn publication_sidecar_filename(language: &str) -> Option<&'static str> {
+    match language {
+        "go" => Some(GO_CALLFACTS_FILE),
+        "rust" => Some(RUST_CALLFACTS_FILE),
+        "typescript" => Some(TYPESCRIPT_CALLFACTS_FILE),
+        "python" => Some(PYTHON_CALLFACTS_FILE),
+        _ => None,
+    }
+}
+
+fn validate_publication_shape(
+    publication: &CodeGraphPublication,
+    publication_path: &Path,
+) -> CodeGraphResult<()> {
+    if publication.schema != CODEGRAPH_PUBLICATION_SCHEMA
+        || publication.version != CODEGRAPH_PUBLICATION_VERSION
+    {
+        return Err(publication_error(
+            publication_path,
+            format!(
+                "unsupported schema/version: {} v{}",
+                publication.schema, publication.version
+            ),
+        ));
+    }
+    validate_relative_source_path(&publication.graph.path)
+        .map_err(|reason| publication_error(publication_path, reason))?;
+    if publication.graph.sha256.is_empty() || publication.graph.manifest_key.is_empty() {
+        return Err(publication_error(
+            publication_path,
+            "graph digest and manifest key must be non-empty".to_owned(),
+        ));
+    }
+
+    let mut languages = BTreeSet::new();
+    for sidecar in &publication.sidecars {
+        let Some(filename) = publication_sidecar_filename(&sidecar.language) else {
+            return Err(publication_error(
+                publication_path,
+                format!("unsupported sidecar language: {}", sidecar.language),
+            ));
+        };
+        if !languages.insert(sidecar.language.as_str()) {
+            return Err(publication_error(
+                publication_path,
+                format!("duplicate sidecar language: {}", sidecar.language),
+            ));
+        }
+        validate_relative_source_path(&sidecar.path)
+            .map_err(|reason| publication_error(publication_path, reason))?;
+        let expected_path = format!(".zvec-grep/{filename}");
+        if sidecar.path != expected_path {
+            return Err(publication_error(
+                publication_path,
+                format!(
+                    "sidecar path for {} is {}, expected {expected_path}",
+                    sidecar.language, sidecar.path
+                ),
+            ));
+        }
+        if sidecar.sha256.is_empty() || sidecar.context_sha256.is_empty() {
+            return Err(publication_error(
+                publication_path,
+                format!(
+                    "sidecar digest and context fingerprint must be non-empty: {}",
+                    sidecar.path
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_published_artifact(
+    artifact: &CodeGraphArtifact,
+    publication: &CodeGraphPublication,
+    publication_path: &Path,
+) -> CodeGraphResult<()> {
+    if artifact.schema != CODEGRAPH_SCHEMA
+        || artifact.version != CODEGRAPH_VERSION
+        || !has_current_relation_generation(artifact)
+    {
+        return Err(publication_error(
+            publication_path,
+            format!(
+                "graph artifact identity is unsupported: {} v{} relation generation {}",
+                artifact.schema, artifact.version, artifact.relation_generation
+            ),
+        ));
+    }
+    let graph = &publication.graph;
+    if graph.schema != artifact.schema
+        || graph.version != artifact.version
+        || graph.relation_generation != artifact.relation_generation
+        || graph.manifest_key != artifact.manifest_key
+    {
+        return Err(publication_error(
+            publication_path,
+            "publication metadata does not match the graph artifact".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_published_source_snapshot(
+    root: &Path,
+    artifact: &CodeGraphArtifact,
+    publication_path: &Path,
+) -> CodeGraphResult<()> {
+    let languages = artifact
+        .files
+        .iter()
+        .map(|file| file.language.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut expected = BTreeMap::new();
+    for file in &artifact.files {
+        validate_relative_source_path(&file.path)
+            .map_err(|reason| publication_error(publication_path, reason))?;
+        if expected
+            .insert(file.path.clone(), file.sha256.clone())
+            .is_some()
+        {
+            return Err(publication_error(
+                publication_path,
+                format!("duplicate graph source file: {}", file.path),
+            ));
+        }
+        let bytes = fs::read(root.join(&file.path)).map_err(|error| {
+            io_failure(
+                "verify published graph source",
+                &root.join(&file.path),
+                error,
+            )
+        })?;
+        if bytes.len() != file.bytes || sha256_hex(&bytes) != file.sha256 {
+            return Err(publication_error(
+                publication_path,
+                format!("published graph source changed: {}", file.path),
+            ));
+        }
+    }
+
+    let mut paths = Vec::new();
+    collect_code_files(root, &mut paths)?;
+    let mut current = BTreeMap::new();
+    for path in paths {
+        let Some(language) = SourceLanguage::from_path(&path) else {
+            continue;
+        };
+        if !languages.contains(language.name()) {
+            continue;
+        }
+        let relative = relative_path(root, &path);
+        let bytes =
+            fs::read(&path).map_err(|error| io_failure("hash published source", &path, error))?;
+        current.insert(relative, sha256_hex(&bytes));
+    }
+    if current != expected {
+        return Err(publication_error(
+            publication_path,
+            "published graph source set differs from the current source snapshot".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn accepted_callfacts_sidecars(
+    root: &Path,
+    artifact: &CodeGraphArtifact,
+) -> CodeGraphResult<Vec<CodeGraphPublicationSidecar>> {
+    let accepted = [
+        (
+            "go",
+            GO_CALLFACTS_FILE,
+            artifact.go_callfacts_context_sha256.as_deref(),
+        ),
+        (
+            "rust",
+            RUST_CALLFACTS_FILE,
+            artifact.rust_callfacts_context_sha256.as_deref(),
+        ),
+        (
+            "typescript",
+            TYPESCRIPT_CALLFACTS_FILE,
+            artifact.typescript_callfacts_context_sha256.as_deref(),
+        ),
+        (
+            "python",
+            PYTHON_CALLFACTS_FILE,
+            artifact.python_callfacts_context_sha256.as_deref(),
+        ),
+    ];
+    accepted
+        .into_iter()
+        .filter_map(|(language, filename, context_sha256)| {
+            context_sha256.map(|context_sha256| (language, filename, context_sha256))
+        })
+        .map(|(language, filename, context_sha256)| {
+            let path = root.join(".zvec-grep").join(filename);
+            let bytes = fs::read(&path).map_err(|error| {
+                io_failure(
+                    &format!("read accepted {language} call-facts artifact"),
+                    &path,
+                    error,
+                )
+            })?;
+            Ok(CodeGraphPublicationSidecar {
+                language: language.to_owned(),
+                path: format!(".zvec-grep/{filename}"),
+                sha256: sha256_hex(&bytes),
+                context_sha256: context_sha256.to_owned(),
+            })
+        })
+        .collect()
+}
+
+fn sorted_publication_sidecars(
+    sidecars: &[CodeGraphPublicationSidecar],
+) -> Vec<CodeGraphPublicationSidecar> {
+    let mut sorted = sidecars.to_vec();
+    sorted.sort_by(|left, right| {
+        left.language
+            .cmp(&right.language)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    sorted
+}
+
+fn publication_sidecar_digest<'a>(
+    sidecars: &'a [CodeGraphPublicationSidecar],
+    language: &str,
+) -> Option<&'a str> {
+    sidecars
+        .iter()
+        .find(|sidecar| sidecar.language == language)
+        .map(|sidecar| sidecar.sha256.as_str())
+}
+
+fn manifest_key_with_publication_sidecars(
+    base_manifest: String,
+    sidecars: &[CodeGraphPublicationSidecar],
+) -> String {
+    manifest_key_with_callfacts(
+        base_manifest,
+        publication_sidecar_digest(sidecars, "go"),
+        publication_sidecar_digest(sidecars, "rust"),
+        publication_sidecar_digest(sidecars, "typescript"),
+        publication_sidecar_digest(sidecars, "python"),
+    )
+}
+
+fn build_codegraph_publication(
+    root: &Path,
+    artifact: &CodeGraphArtifact,
+    graph_bytes: &[u8],
+) -> CodeGraphResult<CodeGraphPublication> {
+    let publication_path = root.join(".zvec-grep").join(CODEGRAPH_PUBLICATION_FILE);
+    let sidecars = accepted_callfacts_sidecars(root, artifact)?;
+    // The build/refresh path has already scanned and hashed the source set.
+    // Rechecking every source here would double large-repository I/O; the
+    // public validator performs that stronger check before a reader trusts the
+    // committed snapshot.
+    let expected_manifest = manifest_key_with_publication_sidecars(
+        package_manifest_key_for_root(root, &artifact.files)?,
+        &sidecars,
+    );
+    if artifact.manifest_key != expected_manifest {
+        return Err(publication_error(
+            &publication_path,
+            "graph artifact changed while its publication was being prepared".to_owned(),
+        ));
+    }
+    Ok(CodeGraphPublication {
+        schema: CODEGRAPH_PUBLICATION_SCHEMA.to_owned(),
+        version: CODEGRAPH_PUBLICATION_VERSION,
+        graph: CodeGraphPublicationGraph {
+            path: format!(".zvec-grep/{CODEGRAPH_FILE}"),
+            sha256: sha256_hex(graph_bytes),
+            schema: artifact.schema.clone(),
+            version: artifact.version,
+            relation_generation: artifact.relation_generation,
+            manifest_key: artifact.manifest_key.clone(),
+        },
+        sidecars,
+    })
+}
+
+fn publication_committed_for_artifact(
+    root: &Path,
+    graph_path: &Path,
+    artifact: &CodeGraphArtifact,
+) -> bool {
+    let publication_path = root.join(".zvec-grep").join(CODEGRAPH_PUBLICATION_FILE);
+    let Ok(publication) = read_codegraph_publication(&publication_path) else {
+        return false;
+    };
+    if validate_publication_shape(&publication, &publication_path).is_err()
+        || publication.graph.path != format!(".zvec-grep/{CODEGRAPH_FILE}")
+        || !publication.sidecars.is_empty()
+        || publication.graph.schema != artifact.schema
+        || publication.graph.version != artifact.version
+        || publication.graph.relation_generation != artifact.relation_generation
+        || publication.graph.manifest_key != artifact.manifest_key
+    {
+        return false;
+    }
+    let Ok(bytes) = fs::read(graph_path) else {
+        return false;
+    };
+    publication.graph.sha256 == sha256_hex(&bytes)
+}
+
+fn atomic_write(path: &Path, bytes: &[u8], operation: &str) -> CodeGraphResult<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)
+        .map_err(|error| io_failure("create atomic output directory", parent, error))?;
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("codegraph");
+    let sequence = NEXT_ATOMIC_TEMP.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(".{filename}.tmp-{}-{sequence}", std::process::id()));
+
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| io_failure(operation, path, error))?;
+        file.write_all(bytes)
+            .map_err(|error| io_failure(operation, path, error))?;
+        file.sync_all()
+            .map_err(|error| io_failure(operation, path, error))?;
+        fs::rename(&temporary, path).map_err(|error| io_failure(operation, path, error))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+const IGNORED_CODEGRAPH_DIRECTORIES: &[&str] = &[
+    ".git",
+    ".zvec-grep",
+    "node_modules",
+    "target",
+    "dist",
+    ".venv",
+    "venv",
+    "__pycache__",
+];
+
+fn is_ignored_codegraph_directory(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| IGNORED_CODEGRAPH_DIRECTORIES.contains(&name))
+}
+
+fn collect_code_files(root: &Path, output: &mut Vec<PathBuf>) -> CodeGraphResult<()> {
+    let entries =
+        fs::read_dir(root).map_err(|error| io_failure("scan codegraph root", root, error))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| io_failure("read codegraph directory entry", root, error))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| io_failure("inspect codegraph path", &path, error))?;
+        if file_type.is_dir() {
+            if is_ignored_codegraph_directory(&path) {
+                continue;
+            }
+            collect_code_files(&path, output)?;
+        } else if file_type.is_file() && SourceLanguage::from_path(&path).is_some() {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+const MAX_PACKAGE_MANIFEST_BYTES: usize = 2_000_000;
+
+fn collect_package_manifests(root: &Path) -> CodeGraphResult<Vec<PackageManifest>> {
+    let mut paths = Vec::new();
+    collect_package_manifest_paths(root, &mut paths)?;
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(&path)
+                .map_err(|error| io_failure("read package manifest", &path, error))?;
+            let ecosystem = package_manifest_ecosystem(&path)
+                .expect("package manifest path was filtered before parsing")
+                .to_owned();
+            let (name, dependencies) = if bytes.len() <= MAX_PACKAGE_MANIFEST_BYTES {
+                parse_package_manifest(&ecosystem, &bytes)
+            } else {
+                (None, Vec::new())
+            };
+            Ok(PackageManifest {
+                path: relative_path(root, &path),
+                sha256: sha256_hex(&bytes),
+                ecosystem,
+                name,
+                dependencies,
+            })
+        })
+        .collect()
+}
+
+fn collect_package_manifest_paths(root: &Path, output: &mut Vec<PathBuf>) -> CodeGraphResult<()> {
+    let entries =
+        fs::read_dir(root).map_err(|error| io_failure("scan package manifests", root, error))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| io_failure("read package manifest directory entry", root, error))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| io_failure("inspect package manifest path", &path, error))?;
+        if file_type.is_dir() {
+            if is_ignored_codegraph_directory(&path) {
+                continue;
+            }
+            collect_package_manifest_paths(&path, output)?;
+        } else if file_type.is_file() && package_manifest_ecosystem(&path).is_some() {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn package_manifest_ecosystem(path: &Path) -> Option<&'static str> {
+    match path.file_name()?.to_str()?.to_ascii_lowercase().as_str() {
+        "go.mod" => Some("go"),
+        "cargo.toml" => Some("rust"),
+        "pyproject.toml" => Some("python"),
+        "package.json" => Some("typescript"),
+        _ => None,
+    }
+}
+
+fn parse_package_manifest(ecosystem: &str, bytes: &[u8]) -> (Option<String>, Vec<String>) {
+    let (name, dependencies) = match ecosystem {
+        "go" => match std::str::from_utf8(bytes) {
+            Ok(text) => parse_go_manifest(text),
+            Err(_) => return (None, Vec::new()),
+        },
+        "rust" => match std::str::from_utf8(bytes) {
+            Ok(text) => parse_cargo_manifest(text),
+            Err(_) => return (None, Vec::new()),
+        },
+        "python" => match std::str::from_utf8(bytes) {
+            Ok(text) => parse_pyproject_manifest(text),
+            Err(_) => return (None, Vec::new()),
+        },
+        "typescript" => parse_package_json_manifest(bytes),
+        _ => (None, Vec::new()),
+    };
+    let dependencies = dependencies
+        .into_iter()
+        .filter(|dependency| !dependency.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    (name.filter(|name| !name.is_empty()), dependencies)
+}
+
+fn parse_go_manifest(text: &str) -> (Option<String>, Vec<String>) {
+    let mut name = None;
+    let mut dependencies = Vec::new();
+    let mut in_require_block = false;
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        if name.is_none()
+            && let Some(module) = line.strip_prefix("module")
+            && module.chars().next().is_some_and(char::is_whitespace)
+            && let Some(module) = module.split_whitespace().next()
+        {
+            name = Some(module.to_owned());
+            continue;
+        }
+        if in_require_block {
+            if line == ")" {
+                in_require_block = false;
+            } else if let Some(dependency) = go_require_name(line) {
+                dependencies.push(dependency);
+            }
+            continue;
+        }
+        if let Some(requirement) = line.strip_prefix("require") {
+            let requirement = requirement.trim_start();
+            if requirement.starts_with('(') {
+                in_require_block = true;
+            } else if let Some(dependency) = go_require_name(requirement) {
+                dependencies.push(dependency);
+            }
+        }
+    }
+    if in_require_block {
+        return (None, Vec::new());
+    }
+    (name, dependencies)
+}
+
+fn go_require_name(line: &str) -> Option<String> {
+    let mut fields = line.split_whitespace();
+    let dependency = fields.next()?;
+    let version = fields.next()?;
+    version.starts_with('v').then(|| dependency.to_owned())
+}
+
+fn parse_cargo_manifest(text: &str) -> (Option<String>, Vec<String>) {
+    let mut name = None;
+    let mut dependencies = Vec::new();
+    let Some(assignments) = toml_assignments(text) else {
+        return (None, Vec::new());
+    };
+    for (section, key, value) in assignments {
+        if section == "package" && key == "name" {
+            name = toml_string_value(&value);
+        }
+        let dependency_section = section == "dependencies"
+            || (section.starts_with("target.") && section.ends_with(".dependencies"));
+        if dependency_section {
+            dependencies.push(key);
+        }
+    }
+    (name, dependencies)
+}
+
+fn parse_pyproject_manifest(text: &str) -> (Option<String>, Vec<String>) {
+    let mut name = None;
+    let mut dependencies = Vec::new();
+    let Some(assignments) = toml_assignments(text) else {
+        return (None, Vec::new());
+    };
+    for (section, key, value) in assignments {
+        match (section.as_str(), key.as_str()) {
+            ("project", "name") => name = toml_string_value(&value),
+            ("project", "dependencies") => {
+                let Some(specifications) = toml_array_strings(&value) else {
+                    return (None, Vec::new());
+                };
+                dependencies.extend(specifications.into_iter().map(|spec| pep508_name(&spec)));
+            }
+            ("tool.poetry", "name") if name.is_none() => {
+                name = toml_string_value(&value);
+            }
+            ("tool.poetry.dependencies", "python") => {}
+            ("tool.poetry.dependencies", _) => dependencies.push(key),
+            _ => {}
+        }
+    }
+    (name, dependencies)
+}
+
+fn parse_package_json_manifest(bytes: &[u8]) -> (Option<String>, Vec<String>) {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return (None, Vec::new());
+    };
+    let Some(object) = value.as_object() else {
+        return (None, Vec::new());
+    };
+    let name = object
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    let dependencies = object
+        .get("dependencies")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flat_map(|dependencies| dependencies.keys().cloned())
+        .collect();
+    (name, dependencies)
+}
+
+fn toml_assignments(text: &str) -> Option<Vec<(String, String, String)>> {
+    let mut section = String::new();
+    let mut assignments = Vec::new();
+    let mut pending: Option<(String, String, String, usize)> = None;
+
+    for raw_line in text.lines() {
+        let line = strip_toml_comment(raw_line).trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some((pending_section, pending_key, pending_value, depth)) = pending.as_mut() {
+            pending_value.push(' ');
+            pending_value.push_str(line);
+            *depth = toml_container_balance(pending_value)?;
+            if *depth == 0 {
+                assignments.push((
+                    pending_section.clone(),
+                    pending_key.clone(),
+                    pending_value.clone(),
+                ));
+                pending = None;
+            }
+            continue;
+        }
+        if let Some(header) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
+            if header.starts_with('[') {
+                // Array-of-table headers such as [[bin]] are not dependency
+                // tables. Clear the previous section so following keys cannot
+                // be misclassified as dependencies.
+                section.clear();
+            } else {
+                header.trim().clone_into(&mut section);
+            }
+            continue;
+        }
+        let (key, value) = line.split_once('=')?;
+        let key = toml_key(key);
+        let value = value.trim().to_owned();
+        if key.is_empty() || value.is_empty() {
+            return None;
+        }
+        let depth = toml_container_balance(&value)?;
+        if depth > 0 {
+            pending = Some((section.clone(), key, value, depth));
+        } else {
+            assignments.push((section.clone(), key, value));
+        }
+    }
+    if pending.is_some() {
+        return None;
+    }
+    Some(assignments)
+}
+
+fn strip_toml_comment(line: &str) -> &str {
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match (quote, character) {
+            (Some('"'), '\\') => escaped = true,
+            (Some(current), character) if current == character => quote = None,
+            (None, '"' | '\'') => quote = Some(character),
+            (None, '#') => return &line[..index],
+            _ => {}
+        }
+    }
+    line
+}
+
+fn toml_container_balance(value: &str) -> Option<usize> {
+    let mut containers = Vec::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut unicode_digits = 0;
+    let mut unicode_value = 0_u32;
+    for character in value.chars() {
+        if let Some(current_quote) = quote {
+            if current_quote == '"' {
+                if unicode_digits > 0 {
+                    let digit = character.to_digit(16)?;
+                    unicode_value = unicode_value.checked_mul(16)?.checked_add(digit)?;
+                    unicode_digits -= 1;
+                    if unicode_digits == 0 && char::from_u32(unicode_value).is_none() {
+                        return None;
+                    }
+                } else if escaped {
+                    if !matches!(character, 'b' | 't' | 'n' | 'f' | 'r' | '"' | '\\') {
+                        if character == 'u' {
+                            unicode_digits = 4;
+                            unicode_value = 0;
+                        } else if character == 'U' {
+                            unicode_digits = 8;
+                            unicode_value = 0;
+                        } else {
+                            return None;
+                        }
+                    }
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == current_quote {
+                    quote = None;
+                }
+            } else if character == current_quote {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '"' | '\'' => quote = Some(character),
+            '[' | '{' => containers.push(character),
+            ']' | '}' => {
+                let expected = if character == ']' { '[' } else { '{' };
+                if containers.pop() != Some(expected) {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    (quote.is_none() && !escaped && unicode_digits == 0).then_some(containers.len())
+}
+
+fn toml_key(value: &str) -> String {
+    let value = value.trim();
+    if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        value[1..value.len() - 1].to_owned()
+    } else {
+        value.to_owned()
+    }
+}
+
+fn toml_string_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    let quote = value.chars().next()?;
+    if !matches!(quote, '"' | '\'') {
+        return None;
+    }
+    let mut escaped = false;
+    let end = value
+        .char_indices()
+        .skip(1)
+        .find_map(|(index, character)| {
+            if quote == '"' && escaped {
+                escaped = false;
+                return None;
+            }
+            if quote == '"' && character == '\\' {
+                escaped = true;
+                return None;
+            }
+            (character == quote).then_some(index)
+        })?;
+    if !value[end + 1..].trim().is_empty() {
+        return None;
+    }
+    if quote == '"' {
+        let encoded = &value[..=end];
+        return serde_json::from_str(encoded)
+            .ok()
+            .or_else(|| Some(value[1..end].to_owned()));
+    }
+    Some(value[1..end].to_owned())
+}
+
+fn toml_array_strings(value: &str) -> Option<Vec<String>> {
+    let value = value.trim();
+    if value.len() < 2 || !value.starts_with('[') || !value.ends_with(']') {
+        return None;
+    }
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for character in value[1..value.len() - 1].chars() {
+        if let Some(current_quote) = quote {
+            current.push(character);
+            if escaped {
+                escaped = false;
+            } else if current_quote == '"' && character == '\\' {
+                escaped = true;
+            } else if character == current_quote {
+                quote = None;
+            }
+        } else if character == '"' || character == '\'' {
+            quote = Some(character);
+            current.push(character);
+        } else if character == ',' {
+            parts.push(std::mem::take(&mut current));
+        } else {
+            current.push(character);
+        }
+    }
+    if quote.is_some() || escaped {
+        return None;
+    }
+    parts.push(current);
+    if parts.len() == 1 && parts[0].trim().is_empty() {
+        return Some(Vec::new());
+    }
+
+    let mut strings = Vec::with_capacity(parts.len());
+    for (index, part) in parts.iter().enumerate() {
+        let part = part.trim();
+        if part.is_empty() {
+            if index + 1 == parts.len() {
+                continue;
+            }
+            return None;
+        }
+        strings.push(toml_string_value(part)?);
+    }
+    Some(strings)
+}
+
+fn pep508_name(spec: &str) -> String {
+    let end = spec
+        .char_indices()
+        .find(|(_, character)| {
+            matches!(
+                character,
+                ' ' | '\t' | '<' | '>' | '=' | '!' | '~' | ';' | '[' | '('
+            )
+        })
+        .map_or(spec.len(), |(index, _)| index);
+    spec[..end].to_owned()
+}
+
+fn collect_go_context_files(root: &Path) -> CodeGraphResult<Vec<GoCallFactsFile>> {
+    let mut paths = Vec::new();
+    collect_go_context_paths(root, &mut paths)?;
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(&path)
+                .map_err(|error| io_failure("read Go context input", &path, error))?;
+            Ok(GoCallFactsFile {
+                path: relative_path(root, &path),
+                sha256: sha256_hex(&bytes),
+            })
+        })
+        .collect()
+}
+
+fn collect_go_context_paths(root: &Path, output: &mut Vec<PathBuf>) -> CodeGraphResult<()> {
+    let entries =
+        fs::read_dir(root).map_err(|error| io_failure("scan Go context inputs", root, error))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| io_failure("read Go context directory entry", root, error))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| io_failure("inspect Go context input", &path, error))?;
+        if file_type.is_dir() {
+            if matches!(
+                entry.file_name().to_str(),
+                Some(".git" | ".zvec-grep" | "node_modules")
+            ) {
+                continue;
+            }
+            collect_go_context_paths(&path, output)?;
+        } else if file_type.is_file() && is_go_context_input_path(&path) {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_go_context_input_path(path: &Path) -> bool {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some("go.mod" | "go.sum" | "go.work" | "go.work.sum") => true,
+        Some("modules.txt") => path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "vendor"),
+        _ => false,
+    }
+}
+
+fn collect_rust_context_files(root: &Path) -> CodeGraphResult<Vec<RustCallFactsFile>> {
+    let mut paths = Vec::new();
+    collect_rust_context_paths(root, &mut paths)?;
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(&path)
+                .map_err(|error| io_failure("read Rust context input", &path, error))?;
+            Ok(RustCallFactsFile {
+                path: relative_path(root, &path),
+                sha256: sha256_hex(&bytes),
+            })
+        })
+        .collect()
+}
+
+fn collect_rust_context_paths(root: &Path, output: &mut Vec<PathBuf>) -> CodeGraphResult<()> {
+    let entries =
+        fs::read_dir(root).map_err(|error| io_failure("scan Rust context inputs", root, error))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| io_failure("read Rust context directory entry", root, error))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| io_failure("inspect Rust context input", &path, error))?;
+        if file_type.is_dir() {
+            if matches!(
+                entry.file_name().to_str(),
+                Some(".git" | ".zvec-grep" | "node_modules" | "target")
+            ) {
+                continue;
+            }
+            collect_rust_context_paths(&path, output)?;
+        } else if file_type.is_file() && is_rust_context_input_path(&path) {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_rust_context_input_path(path: &Path) -> bool {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some("Cargo.toml" | "Cargo.lock" | "rust-toolchain" | "rust-toolchain.toml") => true,
+        Some("config" | "config.toml") => path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == ".cargo"),
+        _ => false,
+    }
+}
+
+fn collect_typescript_context_files(root: &Path) -> CodeGraphResult<Vec<TypeScriptCallFactsFile>> {
+    let mut paths = Vec::new();
+    collect_typescript_context_paths(root, &mut paths)?;
+    collect_typescript_extended_context_paths(root, &mut paths);
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(&path)
+                .map_err(|error| io_failure("read TypeScript context input", &path, error))?;
+            Ok(TypeScriptCallFactsFile {
+                path: relative_path(root, &path),
+                sha256: sha256_hex(&bytes),
+            })
+        })
+        .collect()
+}
+
+fn collect_typescript_extended_context_paths(root: &Path, paths: &mut Vec<PathBuf>) {
+    let mut config_paths = paths
+        .iter()
+        .filter(|path| is_typescript_context_input_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut index = 0;
+    while index < config_paths.len() {
+        let config_path = config_paths[index].clone();
+        index += 1;
+        let Ok(bytes) = fs::read(&config_path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        let Some(extends) = value.get("extends").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if !extends.starts_with('.') {
+            continue;
+        }
+        let Some(parent) = config_path.parent() else {
+            continue;
+        };
+        let base = parent.join(extends);
+        let candidates = [
+            base.clone(),
+            base.with_extension("json"),
+            base.join("tsconfig.json"),
+        ];
+        let Some(extended) = candidates
+            .iter()
+            .find(|candidate| candidate.is_file())
+            .and_then(|candidate| candidate.canonicalize().ok())
+        else {
+            continue;
+        };
+        if !extended.starts_with(root) || paths.contains(&extended) {
+            continue;
+        }
+        paths.push(extended);
+        config_paths.push(paths.last().expect("extended config path").clone());
+    }
+}
+
+fn collect_typescript_context_paths(root: &Path, output: &mut Vec<PathBuf>) -> CodeGraphResult<()> {
+    let entries = fs::read_dir(root)
+        .map_err(|error| io_failure("scan TypeScript context inputs", root, error))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| io_failure("read TypeScript context directory entry", root, error))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| io_failure("inspect TypeScript context input", &path, error))?;
+        if file_type.is_dir() {
+            if matches!(
+                entry.file_name().to_str(),
+                Some(".git" | ".zvec-grep" | "node_modules" | "target" | "dist")
+            ) {
+                continue;
+            }
+            collect_typescript_context_paths(&path, output)?;
+        } else if file_type.is_file() && is_typescript_context_input_path(&path) {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_typescript_context_input_path(path: &Path) -> bool {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some(
+            "package.json"
+            | "package-lock.json"
+            | "npm-shrinkwrap.json"
+            | "yarn.lock"
+            | "pnpm-lock.yaml"
+            | "tsconfig.json",
+        ) => true,
+        Some(name)
+            if name.starts_with("tsconfig.")
+                && Path::new(name)
+                    .extension()
+                    .is_some_and(|extension| extension == "json") =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+fn is_typescript_context_file_path(path: &Path) -> bool {
+    is_typescript_context_input_path(path)
+        || path
+            .extension()
+            .is_some_and(|extension| extension == "json")
+}
+
+fn collect_python_context_files(root: &Path) -> CodeGraphResult<Vec<PythonCallFactsFile>> {
+    let mut paths = Vec::new();
+    collect_python_context_paths(root, &mut paths)?;
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(&path)
+                .map_err(|error| io_failure("read Python context input", &path, error))?;
+            Ok(PythonCallFactsFile {
+                path: relative_path(root, &path),
+                sha256: sha256_hex(&bytes),
+            })
+        })
+        .collect()
+}
+
+fn collect_python_context_paths(root: &Path, output: &mut Vec<PathBuf>) -> CodeGraphResult<()> {
+    let entries = fs::read_dir(root)
+        .map_err(|error| io_failure("scan Python context inputs", root, error))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| io_failure("read Python context directory entry", root, error))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| io_failure("inspect Python context input", &path, error))?;
+        if file_type.is_dir() {
+            if matches!(
+                entry.file_name().to_str(),
+                Some(
+                    ".git"
+                        | ".zvec-grep"
+                        | "node_modules"
+                        | "target"
+                        | ".venv"
+                        | "venv"
+                        | "__pycache__"
+                )
+            ) {
+                continue;
+            }
+            collect_python_context_paths(&path, output)?;
+        } else if file_type.is_file() && is_python_context_input_path(&path) {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_python_context_input_path(path: &Path) -> bool {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some(
+            "pyrightconfig.json" | "pyproject.toml" | "setup.cfg" | "setup.py" | "Pipfile"
+            | "Pipfile.lock" | "poetry.lock" | "uv.lock" | ".python-version",
+        ) => true,
+        Some(name)
+            if name.starts_with("requirements")
+                && Path::new(name).extension() == Some("txt".as_ref()) =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Collects inexpensive change stamps for supported source files under `root`.
+/// Callers may compare these with a previous snapshot before hashing or parsing
+/// file contents.
+///
+/// # Errors
+///
+/// Returns an error if the root or any source directory/file cannot be read.
+pub fn codegraph_source_stamps(
+    root: &Path,
+) -> CodeGraphResult<BTreeMap<String, CodeGraphSourceStamp>> {
+    let root = resolve_root(root)?;
+    let mut paths = Vec::new();
+    collect_code_files(&root, &mut paths)?;
+    let mut stamps = BTreeMap::new();
+    for path in paths {
+        let metadata =
+            fs::metadata(&path).map_err(|error| io_failure("stat source", &path, error))?;
+        stamps.insert(relative_path(&root, &path), source_stamp(&metadata, None));
+    }
+    let go_context = collect_go_context_files(&root)?
+        .into_iter()
+        .map(|file| (file.path, file.sha256));
+    insert_context_stamps(&root, &mut stamps, go_context, "Go")?;
+    let rust_context = collect_rust_context_files(&root)?
+        .into_iter()
+        .map(|file| (file.path, file.sha256));
+    insert_context_stamps(&root, &mut stamps, rust_context, "Rust")?;
+    let typescript_context = collect_typescript_context_files(&root)?
+        .into_iter()
+        .map(|file| (file.path, file.sha256));
+    insert_context_stamps(&root, &mut stamps, typescript_context, "TypeScript")?;
+    let python_context = collect_python_context_files(&root)?
+        .into_iter()
+        .map(|file| (file.path, file.sha256));
+    insert_context_stamps(&root, &mut stamps, python_context, "Python")?;
+    insert_callfacts_stamp(&root, &mut stamps, GO_CALLFACTS_FILE, "Go")?;
+    insert_callfacts_stamp(&root, &mut stamps, RUST_CALLFACTS_FILE, "Rust")?;
+    insert_callfacts_stamp(&root, &mut stamps, TYPESCRIPT_CALLFACTS_FILE, "TypeScript")?;
+    insert_callfacts_stamp(&root, &mut stamps, PYTHON_CALLFACTS_FILE, "Python")?;
+    Ok(stamps)
+}
+
+fn source_stamp(metadata: &fs::Metadata, content_sha256: Option<String>) -> CodeGraphSourceStamp {
+    let modified_unix_nanos = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos());
+    #[cfg(unix)]
+    let changed_unix_nanos =
+        Some(i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec()));
+    #[cfg(not(unix))]
+    let changed_unix_nanos = None;
+    CodeGraphSourceStamp {
+        byte_len: metadata.len(),
+        modified_unix_nanos,
+        changed_unix_nanos,
+        content_sha256,
+    }
+}
+
+fn insert_context_stamps<I>(
+    root: &Path,
+    stamps: &mut BTreeMap<String, CodeGraphSourceStamp>,
+    files: I,
+    language: &str,
+) -> CodeGraphResult<()>
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    for (path, digest) in files {
+        let full_path = root.join(&path);
+        let metadata = fs::metadata(&full_path).map_err(|error| {
+            io_failure(&format!("stat {language} context input"), &full_path, error)
+        })?;
+        stamps.insert(path, source_stamp(&metadata, Some(digest)));
+    }
+    Ok(())
+}
+
+fn insert_callfacts_stamp(
+    root: &Path,
+    stamps: &mut BTreeMap<String, CodeGraphSourceStamp>,
+    filename: &str,
+    language: &str,
+) -> CodeGraphResult<()> {
+    let path = root.join(".zvec-grep").join(filename);
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(io_failure(
+                &format!("stat {language} call-facts artifact"),
+                &path,
+                error,
+            ));
+        }
+    };
+    let bytes = fs::read(&path).map_err(|error| {
+        io_failure(
+            &format!("read {language} call-facts artifact for freshness"),
+            &path,
+            error,
+        )
+    })?;
+    stamps.insert(
+        format!(".zvec-grep/{filename}"),
+        source_stamp(&metadata, Some(sha256_hex(&bytes))),
+    );
+    Ok(())
+}
+
+fn parse_files(root: &Path, paths: &[PathBuf]) -> CodeGraphResult<Vec<ParsedFile>> {
+    paths
+        .par_iter()
+        .map(|path| parse_file(root, path))
+        .collect()
+}
+
+fn parse_file(root: &Path, path: &Path) -> CodeGraphResult<ParsedFile> {
+    let language = SourceLanguage::from_path(path)
+        .ok_or_else(|| CodeGraphError::UnsupportedLanguage(path.to_path_buf()))?;
+    let bytes = fs::read(path).map_err(|error| io_failure("read source", path, error))?;
+    let text = String::from_utf8(bytes.clone()).map_err(|source| CodeGraphError::Utf8 {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let relative_path = relative_path(root, path);
+    let source_hash = sha256_hex(&bytes);
+    let mut parser = Parser::new();
+    let grammar = language.parser_language();
+    parser
+        .set_language(&grammar)
+        .map_err(|error| CodeGraphError::Parser(error.to_string()))?;
+    let tree = parser
+        .parse(&text, None)
+        .ok_or_else(|| CodeGraphError::Parse(path.display().to_string()))?;
+    let package = if language == SourceLanguage::Go {
+        package_name(tree.root_node(), text.as_bytes())
+    } else {
+        Some(module_name(&relative_path))
+    };
+    let file_node_id = file_node_id(&relative_path);
+    let mut definitions = Vec::new();
+    let mut imports = BTreeSet::new();
+    let mut import_sites = Vec::new();
+    let mut calls = Vec::new();
+    let mut relations = Vec::new();
+    if language == SourceLanguage::Go {
+        collect_file_data(
+            tree.root_node(),
+            text.as_bytes(),
+            package.as_deref().unwrap_or("_"),
+            &relative_path,
+            &mut definitions,
+            &mut imports,
+            &mut import_sites,
+            &mut calls,
+            &mut relations,
+        );
+    } else {
+        let mut collector = LanguageCollector::new(text.as_bytes(), language, &relative_path);
+        collector.collect(tree.root_node());
+        definitions = collector.definitions;
+        imports = collector.imports;
+        import_sites = collector.import_sites;
+        calls = collector.calls;
+        relations = collector.relations;
+    }
+    relations.sort_by(|left, right| {
+        (
+            left.kind.as_str(),
+            left.source.as_str(),
+            left.target_name.as_str(),
+            left.range.start_byte,
+            left.range.end_byte,
+        )
+            .cmp(&(
+                right.kind.as_str(),
+                right.source.as_str(),
+                right.target_name.as_str(),
+                right.range.start_byte,
+                right.range.end_byte,
+            ))
+    });
+    relations.dedup();
+    Ok(ParsedFile {
+        file: CodeGraphFile {
+            path: relative_path,
+            language: language.name().to_owned(),
+            sha256: source_hash,
+            bytes: bytes.len(),
+            package,
+        },
+        file_node_id,
+        definitions,
+        imports: imports.into_iter().collect(),
+        import_sites,
+        calls,
+        relations,
+        source: String::from_utf8_lossy(&bytes).into_owned(),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_file_data(
+    node: Node<'_>,
+    source: &[u8],
+    package: &str,
+    path: &str,
+    definitions: &mut Vec<Definition>,
+    imports: &mut BTreeSet<String>,
+    import_sites: &mut Vec<ImportSite>,
+    calls: &mut Vec<CallSite>,
+    relations: &mut Vec<StructuralRelation>,
+) {
+    match node.kind() {
+        "function_declaration" => {
+            if let Some(definition) = definition(node, source, package, path, "function") {
+                relations.extend(go_signature_references(node, source, &definition));
+                definitions.push(definition);
+            }
+        }
+        "method_declaration" => {
+            if let Some(definition) = definition(node, source, package, path, "method") {
+                relations.extend(go_signature_references(node, source, &definition));
+                definitions.push(definition);
+            }
+        }
+        "type_spec" => {
+            if is_package_level_spec(node)
+                && let Some(definition) = definition(node, source, package, path, "type")
+            {
+                relations.extend(go_structural_relations(node, source, &definition));
+                definitions.push(definition);
+            }
+        }
+        "var_spec" => {
+            if is_package_level_spec(node)
+                && let Some(definition) = definition(node, source, package, path, "variable")
+            {
+                definitions.push(definition);
+            }
+        }
+        "const_spec" => {
+            if is_package_level_spec(node)
+                && let Some(definition) = definition(node, source, package, path, "constant")
+            {
+                definitions.push(definition);
+            }
+        }
+        "import_spec" => {
+            if let Some(import) = import_path(node, source) {
+                import_sites.push(ImportSite {
+                    kind: "imports_from".to_owned(),
+                    target_name: import.clone(),
+                    symbol_names: Vec::new(),
+                    range: graph_range(node),
+                });
+                imports.insert(import);
+            }
+        }
+        "call_expression" => {
+            if let Some(call) = call_site(node, source) {
+                calls.push(call);
+            }
+        }
+        "type_conversion_expression" => {
+            if let Some(call) = go_generic_call_site(node, source) {
+                calls.push(call);
+            }
+        }
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_file_data(
+            child,
+            source,
+            package,
+            path,
+            definitions,
+            imports,
+            import_sites,
+            calls,
+            relations,
+        );
+    }
+}
+
+fn module_name(path: &str) -> String {
+    Path::new(path)
+        .with_extension("")
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn language_definition(
+    node: Node<'_>,
+    source: &[u8],
+    language: SourceLanguage,
+    path: &str,
+    scopes: &[(String, bool)],
+) -> Option<Definition> {
+    let (kind, name) = match (language, node.kind()) {
+        (SourceLanguage::Rust, "function_item" | "function_signature_item") => (
+            if scopes.iter().rev().any(|(_, class_like)| *class_like) {
+                "method"
+            } else {
+                "function"
+            },
+            node.child_by_field_name("name")?,
+        ),
+        (SourceLanguage::Rust, "struct_item" | "enum_item") => {
+            ("type", node.child_by_field_name("name")?)
+        }
+        (SourceLanguage::Rust, "trait_item") => ("interface", node.child_by_field_name("name")?),
+        (SourceLanguage::Rust, "type_item") => ("alias", node.child_by_field_name("name")?),
+        (SourceLanguage::Rust, "mod_item") => ("module", node.child_by_field_name("name")?),
+        (SourceLanguage::Rust, "const_item") => ("constant", node.child_by_field_name("name")?),
+        (SourceLanguage::Rust, "static_item") => ("variable", node.child_by_field_name("name")?),
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "function_declaration") => {
+            ("function", node.child_by_field_name("name")?)
+        }
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "method_definition") => {
+            ("method", node.child_by_field_name("name")?)
+        }
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "class_declaration")
+        | (SourceLanguage::Python, "class_definition") => {
+            ("class", node.child_by_field_name("name")?)
+        }
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "interface_declaration") => {
+            ("interface", node.child_by_field_name("name")?)
+        }
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "enum_declaration") => {
+            ("enum", node.child_by_field_name("name")?)
+        }
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "type_alias_declaration") => {
+            ("alias", node.child_by_field_name("name")?)
+        }
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "variable_declarator") => (
+            if is_callable_variable(node) {
+                "function"
+            } else {
+                "variable"
+            },
+            node.child_by_field_name("name")?,
+        ),
+        (SourceLanguage::Python, "function_definition") => (
+            if scopes.iter().rev().any(|(_, class_like)| *class_like) {
+                "method"
+            } else {
+                "function"
+            },
+            node.child_by_field_name("name")?,
+        ),
+        _ => return None,
+    };
+    let name = node_text(name, source)
+        .trim_matches(['\'', '"', '`'])
+        .to_owned();
+    if name.is_empty() || name == "_" {
+        return None;
+    }
+    let qualified_name = scopes
+        .iter()
+        .map(|(scope, _)| scope.as_str())
+        .chain(std::iter::once(name.as_str()))
+        .collect::<Vec<_>>()
+        .join(".");
+    let range = graph_range(node);
+    let signature = node
+        .child_by_field_name("body")
+        .and_then(|body| source.get(node.start_byte()..body.start_byte()))
+        .and_then(|signature| std::str::from_utf8(signature).ok())
+        .map(str::trim)
+        .filter(|signature| !signature.is_empty())
+        .map(str::to_owned);
+    Some(Definition {
+        node: CodeGraphNode {
+            id: symbol_node_id(kind, path, &qualified_name),
+            kind: kind.to_owned(),
+            path: Some(path.to_owned()),
+            name: name.clone(),
+            qualified_name: Some(qualified_name.clone()),
+            range: Some(range),
+            signature,
+        },
+        start_byte: node.start_byte(),
+        end_byte: node.end_byte(),
+        simple_name: name,
+        qualified_name,
+    })
+}
+
+#[allow(clippy::match_same_arms, clippy::too_many_lines)]
+fn language_relations(
+    node: Node<'_>,
+    source: &[u8],
+    language: SourceLanguage,
+    path: &str,
+    scopes: &[(String, bool)],
+    definition: Option<&Definition>,
+) -> Vec<StructuralRelation> {
+    let mut relations = Vec::new();
+    match (language, node.kind()) {
+        (SourceLanguage::Rust, "impl_item") => {
+            let Some(type_node) = node.child_by_field_name("type") else {
+                return relations;
+            };
+            let source_name = clean_relation_target(node_text(type_node, source));
+            if source_name.is_empty() {
+                return relations;
+            }
+            let qualified_source_name = scopes
+                .iter()
+                .map(|(scope, _)| scope.as_str())
+                .chain(std::iter::once(source_name.as_str()))
+                .collect::<Vec<_>>()
+                .join(".");
+            let source_id = symbol_node_id("type", path, &qualified_source_name);
+            if let Some(trait_node) = node.child_by_field_name("trait")
+                && let Some(target_name) = non_empty_relation_target(node_text(trait_node, source))
+            {
+                relations.push(StructuralRelation {
+                    kind: "implements".to_owned(),
+                    source: source_id,
+                    target_name,
+                    range: graph_range(trait_node),
+                });
+            }
+        }
+        (SourceLanguage::Rust, "trait_item") => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            if let Some(bounds) = node.child_by_field_name("bounds") {
+                for (target_name, range) in relation_targets(bounds, source) {
+                    relations.push(StructuralRelation {
+                        kind: "inherits".to_owned(),
+                        source: definition.node.id.clone(),
+                        target_name,
+                        range,
+                    });
+                }
+            }
+        }
+        (SourceLanguage::Rust, "struct_item") => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            if let Some(fields) = node.child_by_field_name("body") {
+                for field in fields.named_children(&mut fields.walk()) {
+                    let Some(type_node) = field.child_by_field_name("type") else {
+                        continue;
+                    };
+                    if let Some(target_name) =
+                        non_empty_relation_target(node_text(type_node, source))
+                    {
+                        relations.push(StructuralRelation {
+                            kind: "references".to_owned(),
+                            source: definition.node.id.clone(),
+                            target_name,
+                            range: graph_range(type_node),
+                        });
+                    }
+                }
+            }
+        }
+        (SourceLanguage::Rust, "function_item" | "function_signature_item") => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            relations.extend(type_field_references(node, source, definition));
+        }
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "class_declaration") => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            if let Some(heritage) = node
+                .named_children(&mut node.walk())
+                .find(|child| child.kind() == "class_heritage")
+            {
+                for clause in heritage.named_children(&mut heritage.walk()) {
+                    let kind = match clause.kind() {
+                        "extends_clause" => "inherits",
+                        "implements_clause" => "implements",
+                        _ => continue,
+                    };
+                    for (target_name, range) in relation_targets(clause, source) {
+                        relations.push(StructuralRelation {
+                            kind: kind.to_owned(),
+                            source: definition.node.id.clone(),
+                            target_name,
+                            range,
+                        });
+                    }
+                }
+            }
+            relations.extend(type_field_references(node, source, definition));
+        }
+        (
+            SourceLanguage::TypeScript | SourceLanguage::Tsx,
+            "function_declaration" | "method_definition" | "arrow_function",
+        ) => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            relations.extend(type_field_references(node, source, definition));
+        }
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "interface_declaration") => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            for child in node.named_children(&mut node.walk()) {
+                if child.kind() != "extends_type_clause" {
+                    continue;
+                }
+                for (target_name, range) in relation_targets(child, source) {
+                    relations.push(StructuralRelation {
+                        kind: "inherits".to_owned(),
+                        source: definition.node.id.clone(),
+                        target_name,
+                        range,
+                    });
+                }
+            }
+            relations.extend(type_field_references(node, source, definition));
+        }
+        (SourceLanguage::Python, "class_definition") => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            let Some(superclasses) = node.child_by_field_name("superclasses") else {
+                return relations;
+            };
+            for (target_name, range) in relation_targets(superclasses, source) {
+                relations.push(StructuralRelation {
+                    kind: "inherits".to_owned(),
+                    source: definition.node.id.clone(),
+                    target_name,
+                    range,
+                });
+            }
+        }
+        (SourceLanguage::Python, "function_definition") => {
+            let Some(definition) = definition else {
+                return relations;
+            };
+            relations.extend(type_field_references(node, source, definition));
+        }
+        _ => {}
+    }
+    relations
+}
+
+fn relation_targets(node: Node<'_>, source: &[u8]) -> Vec<(String, CodeGraphRange)> {
+    let children = node.named_children(&mut node.walk()).collect::<Vec<_>>();
+    if children.is_empty() {
+        return non_empty_relation_target(node_text(node, source))
+            .map(|target| vec![(target, graph_range(node))])
+            .unwrap_or_default();
+    }
+    children
+        .into_iter()
+        .filter(|child| {
+            !matches!(
+                child.kind(),
+                "type_arguments" | "type_parameters" | "type_parameters_list"
+            )
+        })
+        .filter_map(|child| {
+            non_empty_relation_target(node_text(child, source))
+                .map(|target| (target, graph_range(child)))
+        })
+        .collect()
+}
+
+fn non_empty_relation_target(raw: &str) -> Option<String> {
+    let target = clean_relation_target(raw);
+    (!target.is_empty()).then_some(target)
+}
+
+fn clean_relation_target(raw: &str) -> String {
+    let mut target = raw
+        .trim()
+        .trim_matches(['"', '\'', '`', '(', ')', ',', ';'])
+        .trim_start_matches("dyn ")
+        .trim_start_matches('&')
+        .trim_start_matches('*')
+        .trim_start_matches("mut ")
+        .trim();
+    if let Some((prefix, _)) = target.split_once('<') {
+        target = prefix.trim();
+    }
+    target = target.trim_matches(['"', '\'', '`', '(', ')', ',', ';']);
+    target.replace("::", ".").trim_matches('.').to_owned()
+}
+
+fn go_structural_relations(
+    node: Node<'_>,
+    source: &[u8],
+    definition: &Definition,
+) -> Vec<StructuralRelation> {
+    let Some(type_node) = node.child_by_field_name("type") else {
+        return Vec::new();
+    };
+    if type_node.kind() != "struct_type" {
+        return Vec::new();
+    }
+    let Some(fields) = named_children(type_node)
+        .into_iter()
+        .find(|child| child.kind() == "field_declaration_list")
+    else {
+        return Vec::new();
+    };
+    fields
+        .named_children(&mut fields.walk())
+        .filter(|field| field.kind() == "field_declaration")
+        .filter_map(|field| {
+            let target = field.child_by_field_name("type")?;
+            let target_name = non_empty_relation_target(node_text(target, source))?;
+            Some(StructuralRelation {
+                kind: if field.child_by_field_name("name").is_some() {
+                    "references"
+                } else {
+                    "embeds"
+                }
+                .to_owned(),
+                source: definition.node.id.clone(),
+                target_name,
+                range: graph_range(target),
+            })
+        })
+        .collect()
+}
+
+fn go_signature_references(
+    node: Node<'_>,
+    source: &[u8],
+    definition: &Definition,
+) -> Vec<StructuralRelation> {
+    let mut relations = Vec::new();
+    let mut pending = vec![node];
+    while let Some(candidate) = pending.pop() {
+        let type_node = candidate.child_by_field_name("type");
+        if matches!(
+            candidate.kind(),
+            "parameter_declaration" | "variadic_parameter_declaration" | "field_declaration"
+        ) && let Some(type_node) = type_node
+        {
+            for (target_name, range) in relation_targets(type_node, source) {
+                relations.push(StructuralRelation {
+                    kind: "references".to_owned(),
+                    source: definition.node.id.clone(),
+                    target_name,
+                    range,
+                });
+            }
+        }
+        pending.extend(named_children(candidate));
+    }
+    if let Some(result) = node.child_by_field_name("result") {
+        for (target_name, range) in relation_targets(result, source) {
+            relations.push(StructuralRelation {
+                kind: "references".to_owned(),
+                source: definition.node.id.clone(),
+                target_name,
+                range,
+            });
+        }
+    }
+    relations
+}
+
+fn type_field_references(
+    node: Node<'_>,
+    source: &[u8],
+    definition: &Definition,
+) -> Vec<StructuralRelation> {
+    let mut relations = Vec::new();
+    let mut pending = vec![node];
+    while let Some(candidate) = pending.pop() {
+        let type_node = candidate
+            .child_by_field_name("type")
+            .or_else(|| candidate.child_by_field_name("type_annotation"))
+            .or_else(|| candidate.child_by_field_name("return_type"));
+        if matches!(
+            candidate.kind(),
+            "public_field_definition"
+                | "property_signature"
+                | "required_parameter"
+                | "optional_parameter"
+                | "typed_parameter"
+                | "parameter"
+                | "function_declaration"
+                | "method_definition"
+                | "arrow_function"
+                | "function_definition"
+        ) && let Some(type_node) = type_node
+        {
+            for (target_name, range) in relation_targets(type_node, source) {
+                relations.push(StructuralRelation {
+                    kind: "references".to_owned(),
+                    source: definition.node.id.clone(),
+                    target_name,
+                    range,
+                });
+            }
+        }
+        pending.extend(named_children(candidate));
+    }
+    relations
+}
+
+fn is_callable_variable(node: Node<'_>) -> bool {
+    node.child_by_field_name("value")
+        .is_some_and(|value| matches!(value.kind(), "arrow_function" | "function"))
+}
+
+#[allow(clippy::match_same_arms)]
+fn language_scope(
+    node: Node<'_>,
+    source: &[u8],
+    language: SourceLanguage,
+) -> Option<(String, bool)> {
+    let (field, class_like) = match (language, node.kind()) {
+        (SourceLanguage::Rust, "impl_item") => ("type", true),
+        (SourceLanguage::Rust, "trait_item")
+        | (SourceLanguage::TypeScript | SourceLanguage::Tsx, "class_declaration")
+        | (SourceLanguage::Python, "class_definition") => ("name", true),
+        (SourceLanguage::Rust, "mod_item" | "function_item")
+        | (
+            SourceLanguage::TypeScript | SourceLanguage::Tsx,
+            "function_declaration" | "method_definition",
+        ) => ("name", false),
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "variable_declarator")
+            if is_callable_variable(node) =>
+        {
+            ("name", false)
+        }
+        (SourceLanguage::Python, "function_definition") => ("name", false),
+        _ => return None,
+    };
+    let name = node.child_by_field_name(field).map(|name| {
+        node_text(name, source)
+            .trim_matches(['\'', '"', '`'])
+            .to_owned()
+    })?;
+    (!name.is_empty()).then_some((name, class_like))
+}
+
+fn test_owner_id(
+    node: Node<'_>,
+    scopes: &[(String, bool)],
+    language: SourceLanguage,
+    path: &str,
+    source: &[u8],
+) -> Option<String> {
+    let owner = scopes
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, (_, class_like))| !*class_like)?;
+    if !is_test_name(&owner.1.0)
+        && !rust_test_attribute(node, language, source)
+        && !python_test_decorator(node, language, source)
+    {
+        return None;
+    }
+    let owner_index = owner.0;
+    let qualified_name = scopes[..=owner_index]
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>()
+        .join(".");
+    let kind = if scopes[..owner_index]
+        .iter()
+        .any(|(_, class_like)| *class_like)
+    {
+        "method"
+    } else {
+        "function"
+    };
+    Some(symbol_node_id(kind, path, &qualified_name))
+}
+
+fn rust_test_attribute(node: Node<'_>, language: SourceLanguage, source: &[u8]) -> bool {
+    if language != SourceLanguage::Rust {
+        return false;
+    }
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        if parent.kind() == "function_item" {
+            return std::str::from_utf8(&source[..parent.start_byte()]).is_ok_and(|prefix| {
+                prefix
+                    .lines()
+                    .rev()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                    .is_some_and(|line| line.starts_with("#[") && line.contains("test"))
+            });
+        }
+        current = parent;
+    }
+    false
+}
+
+fn python_test_decorator(node: Node<'_>, language: SourceLanguage, source: &[u8]) -> bool {
+    if language != SourceLanguage::Python {
+        return false;
+    }
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        if parent.kind() == "function_definition" {
+            return std::str::from_utf8(&source[..parent.start_byte()]).is_ok_and(|prefix| {
+                let mut decorators = Vec::new();
+                for line in prefix.lines().rev().map(str::trim) {
+                    if line.is_empty() {
+                        if decorators.is_empty() {
+                            continue;
+                        }
+                        break;
+                    }
+                    if !line.starts_with('@') {
+                        break;
+                    }
+                    decorators.push(line);
+                }
+                decorators
+                    .iter()
+                    .any(|line| line.contains("test") || line.contains("pytest"))
+            });
+        }
+        current = parent;
+    }
+    false
+}
+
+fn is_test_name(name: &str) -> bool {
+    name == "test"
+        || name.starts_with("test_")
+        || name
+            .strip_prefix("test")
+            .is_some_and(|suffix| suffix.chars().next().is_some_and(char::is_uppercase))
+        || name
+            .strip_prefix("Test")
+            .is_some_and(|suffix| suffix.chars().next().is_some_and(char::is_uppercase))
+}
+
+fn language_imports(node: Node<'_>, source: &[u8], language: SourceLanguage) -> Vec<ImportSite> {
+    let target_names = match (language, node.kind()) {
+        (SourceLanguage::Rust, "use_declaration") => {
+            rust_use_target(node, source).into_iter().collect()
+        }
+        (SourceLanguage::Rust, "mod_item") if node.child_by_field_name("body").is_none() => node
+            .child_by_field_name("name")
+            .map(|name| format!("crate::{}", node_text(name, source).trim()))
+            .filter(|target| !target.ends_with("::"))
+            .into_iter()
+            .collect(),
+        (SourceLanguage::TypeScript | SourceLanguage::Tsx, "import_statement") => node
+            .child_by_field_name("source")
+            .or_else(|| {
+                named_children(node)
+                    .into_iter()
+                    .find(|child| child.kind() == "string")
+            })
+            .and_then(|source_node| string_literal_value(source_node, source))
+            .into_iter()
+            .collect(),
+        (SourceLanguage::Python, "import_from_statement") => node
+            .child_by_field_name("module_name")
+            .map(|module| node_text(module, source).trim().to_owned())
+            .filter(|module| !module.is_empty())
+            .into_iter()
+            .collect(),
+        (SourceLanguage::Python, "import_statement") => named_children(node)
+            .into_iter()
+            .filter_map(|child| match child.kind() {
+                "aliased_import" => child
+                    .child_by_field_name("name")
+                    .map(|name| node_text(name, source).trim().to_owned()),
+                "dotted_name" => Some(node_text(child, source).trim().to_owned()),
+                _ => None,
+            })
+            .filter(|module| !module.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    target_names
+        .into_iter()
+        .map(|target_name| {
+            let symbol_names = match language {
+                SourceLanguage::Rust if node.kind() == "use_declaration" => {
+                    rust_use_symbols(node, source)
+                }
+                SourceLanguage::TypeScript | SourceLanguage::Tsx
+                    if node.kind() == "import_statement" =>
+                {
+                    typescript_import_symbols(node, source)
+                }
+                SourceLanguage::Python if node.kind() == "import_from_statement" => {
+                    python_import_symbols(node, source)
+                }
+                _ => Vec::new(),
+            };
+            ImportSite {
+                kind: if language == SourceLanguage::Rust
+                    && node.kind() == "use_declaration"
+                    && rust_use_is_public(node, source)
+                {
+                    "re_exports".to_owned()
+                } else {
+                    "imports_from".to_owned()
+                },
+                target_name,
+                symbol_names,
+                range: graph_range(node),
+            }
+        })
+        .collect()
+}
+
+fn rust_use_target(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let argument = node
+        .child_by_field_name("argument")
+        .or_else(|| named_children(node).into_iter().last())?;
+    let raw = node_text(argument, source)
+        .trim()
+        .trim_end_matches(';')
+        .trim();
+    let target = raw.split_once("::{").map_or(raw, |(prefix, _)| prefix);
+    let target = target
+        .split_once(" as ")
+        .map_or(target, |(prefix, _)| prefix)
+        .trim_matches(['{', '}', ',', ';', '"', '\'', '`'])
+        .trim();
+    (!target.is_empty()).then(|| target.to_owned())
+}
+
+fn rust_use_symbols(node: Node<'_>, source: &[u8]) -> Vec<String> {
+    let Some(argument) = node
+        .child_by_field_name("argument")
+        .or_else(|| named_children(node).into_iter().last())
+    else {
+        return Vec::new();
+    };
+    let raw = node_text(argument, source)
+        .trim()
+        .trim_end_matches(';')
+        .trim();
+    let Some((_, grouped)) = raw.split_once("::{") else {
+        return raw
+            .rsplit("::")
+            .next()
+            .and_then(|name| import_symbol_name(name, None))
+            .into_iter()
+            .collect();
+    };
+    grouped
+        .strip_suffix('}')
+        .unwrap_or(grouped)
+        .split(',')
+        .filter_map(|item| {
+            let item = item.trim();
+            if item.is_empty() || item == "self" {
+                return None;
+            }
+            let (name, alias) = item
+                .split_once(" as ")
+                .map_or((item, None), |(name, alias)| (name, Some(alias)));
+            import_symbol_name(name, alias)
+        })
+        .collect()
+}
+
+fn typescript_import_symbols(node: Node<'_>, source: &[u8]) -> Vec<String> {
+    let raw = node_text(node, source);
+    let Some((clause, _)) = raw.split_once(" from ") else {
+        return Vec::new();
+    };
+    let clause = clause.trim().trim_start_matches("import").trim();
+    let mut symbols = Vec::new();
+    if let Some((_, named)) = clause.split_once('{') {
+        for item in named.split('}').next().unwrap_or_default().split(',') {
+            let item = item.trim();
+            if item.is_empty() {
+                continue;
+            }
+            let (name, alias) = item
+                .split_once(" as ")
+                .map_or((item, None), |(name, alias)| (name, Some(alias)));
+            if let Some(symbol) = import_symbol_name(name, alias) {
+                symbols.push(symbol);
+            }
+        }
+    }
+    let default_name = clause
+        .split(',')
+        .next()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !name.starts_with('{') && !name.starts_with('*'))
+        .and_then(|name| import_symbol_name(name, None));
+    if let Some(default_name) = default_name {
+        symbols.push(default_name);
+    }
+    symbols.sort();
+    symbols.dedup();
+    symbols
+}
+
+fn python_import_symbols(node: Node<'_>, source: &[u8]) -> Vec<String> {
+    let raw = node_text(node, source);
+    let Some((_, imported)) = raw.split_once(" import ") else {
+        return Vec::new();
+    };
+    imported
+        .replace(['(', ')', '\n'], "")
+        .split(',')
+        .filter_map(|item| {
+            let item = item.trim();
+            if item.is_empty() || item == "*" {
+                return None;
+            }
+            let (name, alias) = item
+                .split_once(" as ")
+                .map_or((item, None), |(name, alias)| (name, Some(alias)));
+            import_symbol_name(name, alias)
+        })
+        .collect()
+}
+
+fn import_symbol_name(raw: &str, _alias: Option<&str>) -> Option<String> {
+    let name = raw
+        .trim()
+        .trim_matches(['{', '}', ';', ','])
+        .rsplit("::")
+        .next()
+        .unwrap_or(raw)
+        .rsplit('.')
+        .next()
+        .unwrap_or(raw)
+        .trim();
+    (!name.is_empty() && name != "_").then(|| name.to_owned())
+}
+
+fn rust_use_is_public(node: Node<'_>, source: &[u8]) -> bool {
+    named_children(node)
+        .into_iter()
+        .find(|child| child.kind() == "visibility_modifier")
+        .is_some_and(|visibility| node_text(visibility, source).trim().starts_with("pub"))
+}
+
+fn string_literal_value(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let raw = node_text(node, source).trim();
+    let quote = raw.as_bytes().first().copied()?;
+    if !matches!(quote, b'\'' | b'"' | b'`') || raw.as_bytes().last().copied() != Some(quote) {
+        return None;
+    }
+    let value = raw[1..raw.len() - 1].trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+fn language_reexport(
+    node: Node<'_>,
+    source: &[u8],
+    language: SourceLanguage,
+) -> Option<ImportSite> {
+    if !matches!(language, SourceLanguage::TypeScript | SourceLanguage::Tsx)
+        || node.kind() != "export_statement"
+    {
+        return None;
+    }
+    let source_node = node.child_by_field_name("source").or_else(|| {
+        named_children(node)
+            .into_iter()
+            .find(|child| child.kind() == "string")
+    })?;
+    let target_name = node_text(source_node, source)
+        .trim()
+        .trim_matches(['\'', '"', '`'])
+        .trim();
+    (!target_name.is_empty()).then(|| ImportSite {
+        kind: "re_exports".to_owned(),
+        target_name: target_name.to_owned(),
+        symbol_names: typescript_import_symbols(node, source),
+        range: graph_range(node),
+    })
+}
+
+fn language_dynamic_import(
+    node: Node<'_>,
+    source: &[u8],
+    language: SourceLanguage,
+) -> Option<ImportSite> {
+    if !matches!(language, SourceLanguage::TypeScript | SourceLanguage::Tsx)
+        || node.kind() != "call_expression"
+    {
+        return None;
+    }
+    let function = node.child_by_field_name("function")?;
+    if node_text(function, source).trim() != "import" {
+        return None;
+    }
+    let argument = named_children(node)
+        .into_iter()
+        .find(|child| child.kind() == "arguments")
+        .and_then(|arguments| named_children(arguments).into_iter().next())?;
+    let target_name = node_text(argument, source)
+        .trim()
+        .trim_matches(['\'', '"', '`'])
+        .trim();
+    (!target_name.is_empty()).then(|| ImportSite {
+        kind: "imports_from".to_owned(),
+        target_name: target_name.to_owned(),
+        symbol_names: Vec::new(),
+        range: graph_range(node),
+    })
+}
+
+fn language_call_site(node: Node<'_>, source: &[u8], language: SourceLanguage) -> Option<CallSite> {
+    let target = match (language, node.kind()) {
+        (SourceLanguage::Rust, "method_call_expression") => {
+            let receiver = node.child_by_field_name("receiver")?;
+            let name = node.child_by_field_name("name")?;
+            format!(
+                "{}.{}",
+                node_text(receiver, source),
+                node_text(name, source)
+            )
+        }
+        (
+            SourceLanguage::Rust | SourceLanguage::TypeScript | SourceLanguage::Tsx,
+            "call_expression",
+        )
+        | (SourceLanguage::Python, "call") => {
+            let function = node.child_by_field_name("function")?;
+            node_text(function, source).to_owned()
+        }
+        _ => return None,
+    };
+    let target = target.trim();
+    if target.is_empty() {
+        return None;
+    }
+    let simple_name = target
+        .rsplit("::")
+        .next()
+        .unwrap_or(target)
+        .rsplit('.')
+        .next()
+        .unwrap_or(target)
+        .split('<')
+        .next()
+        .unwrap_or(target)
+        .trim()
+        .to_owned();
+    if simple_name.is_empty() {
+        return None;
+    }
+    Some(CallSite {
+        start_byte: node.start_byte(),
+        end_byte: node.end_byte(),
+        target_name: simple_name.clone(),
+        qualified_target: (target != simple_name).then(|| target.to_owned()),
+        range: graph_range(node),
+    })
+}
+
+fn is_package_level_spec(node: Node<'_>) -> bool {
+    node.parent()
+        .and_then(|declaration| declaration.parent())
+        .is_some_and(|parent| parent.kind() == "source_file")
+}
+
+fn definition(
+    node: Node<'_>,
+    source: &[u8],
+    package: &str,
+    path: &str,
+    kind: &str,
+) -> Option<Definition> {
+    let name = node
+        .child_by_field_name("name")
+        .map(|name| node_text(name, source).to_owned())
+        .filter(|name| !name.is_empty() && name != "_")?;
+    let qualified_name = match kind {
+        "method" => {
+            let receiver = node
+                .child_by_field_name("receiver")
+                .and_then(|receiver| receiver_type(receiver, source))?;
+            format!("{package}.{receiver}.{name}")
+        }
+        _ => format!("{package}.{name}"),
+    };
+    let range = graph_range(node);
+    let signature = node
+        .child_by_field_name("body")
+        .and_then(|body| source.get(node.start_byte()..body.start_byte()))
+        .and_then(|signature| std::str::from_utf8(signature).ok())
+        .map(str::trim)
+        .filter(|signature| !signature.is_empty())
+        .map(str::to_owned);
+    let id = symbol_node_id(kind, path, &qualified_name);
+    Some(Definition {
+        node: CodeGraphNode {
+            id,
+            kind: kind.to_owned(),
+            path: Some(path.to_owned()),
+            name: name.clone(),
+            qualified_name: Some(qualified_name.clone()),
+            range: Some(range),
+            signature,
+        },
+        start_byte: node.start_byte(),
+        end_byte: node.end_byte(),
+        simple_name: name,
+        qualified_name,
+    })
+}
+
+fn call_site(node: Node<'_>, source: &[u8]) -> Option<CallSite> {
+    let function = node.child_by_field_name("function")?;
+    let target_name = call_symbol_name(function, source)?;
+    if target_name.is_empty() {
+        return None;
+    }
+    let qualified_target =
+        qualified_call_name(function, source).filter(|qualified| qualified != &target_name);
+    Some(CallSite {
+        start_byte: node.start_byte(),
+        end_byte: node.end_byte(),
+        target_name,
+        qualified_target,
+        range: graph_range(node),
+    })
+}
+
+fn go_generic_call_site(node: Node<'_>, source: &[u8]) -> Option<CallSite> {
+    let generic_type = node.child_by_field_name("type")?;
+    if generic_type.kind() != "generic_type" {
+        return None;
+    }
+    let function = generic_type.child_by_field_name("type")?;
+    let target_name = call_symbol_name(function, source)?;
+    if target_name.is_empty() {
+        return None;
+    }
+    let qualified_target =
+        qualified_call_name(function, source).filter(|qualified| qualified != &target_name);
+    Some(CallSite {
+        start_byte: node.start_byte(),
+        end_byte: node.end_byte(),
+        target_name,
+        qualified_target,
+        range: graph_range(node),
+    })
+}
+
+fn call_symbol_name(function: Node<'_>, source: &[u8]) -> Option<String> {
+    match function.kind() {
+        "identifier" | "type_identifier" => Some(node_text(function, source).to_owned()),
+        "selector_expression" => function
+            .child_by_field_name("field")
+            .map(|field| node_text(field, source).to_owned()),
+        "index_expression" => function
+            .child_by_field_name("operand")
+            .and_then(|operand| call_symbol_name(operand, source)),
+        "type_instantiation_expression" => function
+            .child_by_field_name("type")
+            .and_then(|typ| call_symbol_name(typ, source)),
+        "parenthesized_expression" => named_children(function)
+            .into_iter()
+            .next()
+            .and_then(|expression| call_symbol_name(expression, source)),
+        _ => None,
+    }
+}
+
+fn qualified_call_name(function: Node<'_>, source: &[u8]) -> Option<String> {
+    match function.kind() {
+        "identifier" | "type_identifier" => Some(node_text(function, source).to_owned()),
+        "selector_expression" => {
+            let operand = function.child_by_field_name("operand")?;
+            let field = function.child_by_field_name("field")?;
+            Some(format!(
+                "{}.{}",
+                qualified_call_name(operand, source)?,
+                node_text(field, source)
+            ))
+        }
+        "index_expression" => function
+            .child_by_field_name("operand")
+            .and_then(|operand| qualified_call_name(operand, source)),
+        "type_instantiation_expression" => function
+            .child_by_field_name("type")
+            .and_then(|typ| qualified_call_name(typ, source)),
+        "parenthesized_expression" => named_children(function)
+            .into_iter()
+            .next()
+            .and_then(|expression| qualified_call_name(expression, source)),
+        _ => None,
+    }
+}
+
+fn import_path(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let path = node.child_by_field_name("path").or_else(|| {
+        named_children(node).into_iter().find(|child| {
+            matches!(
+                child.kind(),
+                "interpreted_string_literal" | "raw_string_literal"
+            )
+        })
+    })?;
+    let value = node_text(path, source).trim();
+    if value.len() >= 2 && (value.starts_with('"') || value.starts_with('`')) {
+        Some(value[1..value.len() - 1].to_owned())
+    } else {
+        None
+    }
+}
+
+fn package_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if node.kind() == "package_clause" {
+        return node
+            .child_by_field_name("name")
+            .map(|name| node_text(name, source).to_owned())
+            .or_else(|| {
+                named_children(node)
+                    .into_iter()
+                    .find(|child| child.kind() == "package_identifier")
+                    .map(|name| node_text(name, source).to_owned())
+            });
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if let Some(package) = package_name(child, source) {
+            return Some(package);
+        }
+    }
+    None
+}
+
+fn receiver_type(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let receiver = node
+        .child_by_field_name("type")
+        .map_or_else(|| node_text(node, source), |node| node_text(node, source));
+    let receiver = receiver.trim();
+    let receiver = receiver
+        .strip_prefix('(')
+        .and_then(|receiver| receiver.strip_suffix(')'))
+        .unwrap_or(receiver);
+    let receiver = receiver
+        .trim()
+        .trim_start_matches('*')
+        .split('[')
+        .next()
+        .unwrap_or(receiver)
+        .trim();
+    let receiver = receiver.rsplit('.').next().unwrap_or(receiver);
+    (!receiver.is_empty()).then(|| receiver.to_owned())
+}
+
+fn resolve_call<'a>(
+    call: &CallSite,
+    caller_path: Option<&str>,
+    by_name: &HashMap<&str, Vec<&'a Definition>>,
+    caller: Option<&CodeGraphNode>,
+    caller_function_text: Option<&str>,
+) -> (Option<&'a Definition>, Vec<String>) {
+    let Some(candidates) = by_name.get(call.target_name.as_str()) else {
+        return (None, Vec::new());
+    };
+
+    // Go receiver disambiguation. Both heuristics engage only for qualified
+    // call targets (`receiver.Name(...)`) in Go files: (b) receiver-type
+    // qualification prefers the unique method matching the receiver
+    // expression's declared type, and (a) the self-loop guard stops a
+    // same-name collision from resolving a qualified call to the caller
+    // itself. Unqualified calls and non-Go files keep the exact prior
+    // behavior.
+    if let (Some(receiver_expression), Some(caller_node)) = (
+        call.qualified_target
+            .as_deref()
+            .and_then(qualified_target_receiver),
+        caller,
+    ) {
+        let is_go_caller = caller_node.path.as_deref().is_some_and(|path| {
+            path.rsplit('.')
+                .next()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("go"))
+        });
+        if is_go_caller {
+            // (b) RECEIVER-TYPE QUALIFICATION: when the receiver expression's
+            // declared type in the enclosing function matches exactly one
+            // candidate method, that method is the call target.
+            if let Some(resolved) = receiver_type_preference(
+                candidates,
+                call,
+                receiver_expression,
+                caller_function_text,
+            ) {
+                return (Some(resolved), Vec::new());
+            }
+
+            let same_file_candidates = caller_path.map_or_else(Vec::new, |path| {
+                candidates
+                    .iter()
+                    .copied()
+                    .filter(|definition| definition.node.path.as_deref() == Some(path))
+                    .collect::<Vec<_>>()
+            });
+            let default_candidates = if same_file_candidates.is_empty() {
+                candidates
+            } else {
+                &same_file_candidates
+            };
+            if let [only] = default_candidates.as_slice()
+                && only.node.id == caller_node.id
+            {
+                // (a) SELF-LOOP GUARD: a qualified call whose receiver
+                // expression differs from the caller's own receiver name
+                // cannot target the caller itself.
+                let caller_receiver_ident = caller_receiver_identifier(caller_node);
+                if caller_receiver_ident.as_deref() != Some(receiver_expression) {
+                    let guarded: Vec<&Definition> = candidates
+                        .iter()
+                        .copied()
+                        .filter(|definition| definition.node.id != caller_node.id)
+                        .collect();
+                    return resolve_candidate_slice(&guarded);
+                }
+            }
+        }
+    }
+
+    let same_file_candidates = caller_path.map_or_else(Vec::new, |path| {
+        candidates
+            .iter()
+            .copied()
+            .filter(|definition| definition.node.path.as_deref() == Some(path))
+            .collect::<Vec<_>>()
+    });
+    let candidates = if same_file_candidates.is_empty() {
+        candidates
+    } else {
+        &same_file_candidates
+    };
+    resolve_candidate_slice(candidates)
+}
+
+fn resolve_candidate_slice<'a>(
+    candidates: &[&'a Definition],
+) -> (Option<&'a Definition>, Vec<String>) {
+    match candidates {
+        [candidate] => (Some(*candidate), Vec::new()),
+        [] => (None, Vec::new()),
+        ambiguous => {
+            let mut candidate_ids = ambiguous
+                .iter()
+                .map(|candidate| candidate.node.id.clone())
+                .collect::<Vec<_>>();
+            candidate_ids.sort();
+            (None, candidate_ids)
+        }
+    }
+}
+
+/// The receiver expression of a qualified call target (`catalog.Name` -> `catalog`).
+fn qualified_target_receiver(qualified_target: &str) -> Option<&str> {
+    let receiver = qualified_target.rsplit_once('.')?.0;
+    (!receiver.is_empty()).then_some(receiver)
+}
+
+/// The receiver identifier of a Go method definition parsed from its
+/// signature (`func (c *Type) Name(...)` -> `c`); `None` for plain functions.
+fn caller_receiver_identifier(caller: &CodeGraphNode) -> Option<String> {
+    let signature = caller.signature.as_deref()?;
+    let rest = signature.strip_prefix("func (")?;
+    let receiver = rest.split(')').next()?;
+    let ident = receiver
+        .split(|character: char| character.is_whitespace() || character == ',')
+        .find(|part| !part.is_empty())?;
+    (ident != "_").then(|| ident.to_owned())
+}
+
+/// Prefer the candidate whose receiver type matches the declared type of the
+/// receiver expression in the enclosing Go function source. Only applies when
+/// the match is unique. Method qualified names are shaped
+/// `package.receiver Type.Method` (for example
+/// `discovery.c *WorkflowCatalog.ListWorkflows`), so both the import
+/// package and the local type name are matched.
+fn receiver_type_preference<'a>(
+    candidates: &[&'a Definition],
+    call: &CallSite,
+    receiver_expression: &str,
+    caller_function_text: Option<&str>,
+) -> Option<&'a Definition> {
+    let function_text = caller_function_text?;
+    let receiver_type = go_receiver_type(function_text, receiver_expression)?;
+    let type_local = receiver_type.rsplit('.').next().unwrap_or(&receiver_type);
+    let package = receiver_type.strip_suffix(&format!(".{type_local}"));
+    let exact = format!("{receiver_type}.{}", call.target_name);
+    let method_suffix = format!(".{type_local}.{}", call.target_name);
+    let receiver_suffix = format!("*{type_local}.{}", call.target_name);
+    let mut matching = candidates
+        .iter()
+        .copied()
+        .filter(|definition| {
+            let qualified = definition.qualified_name.as_str();
+            let package_matches = package.is_none_or(|package| {
+                qualified.starts_with(package) || qualified.contains(&format!(" {package}"))
+            });
+            package_matches
+                && (qualified == exact
+                    || qualified.ends_with(&method_suffix)
+                    || qualified.ends_with(&receiver_suffix))
+        })
+        .collect::<Vec<_>>();
+    if matching.len() == 1 {
+        return Some(matching.remove(0));
+    }
+    None
+}
+
+/// Resolve the declared type of a local receiver expression from Go function
+/// text. Recognizes, in order: a `var recv [*/]pkg.Type` declaration, a
+/// `recv := pkg.NewThing(...)` constructor, a `recv := &pkg.Type{...}`
+/// composite literal, and a `recv [*/]pkg.Type` parameter in the signature.
+/// Returns the package-qualified type name when unambiguous.
+fn go_receiver_type(function_text: &str, receiver: &str) -> Option<String> {
+    for line in function_text.lines() {
+        let trimmed = line.trim_start();
+        // var recv [*/]pkg.Type
+        if let Some(rest) = trimmed.strip_prefix("var ")
+            && let Some(type_name) = declared_type_after_ident(rest, receiver)
+        {
+            return Some(type_name);
+        }
+        // recv := pkg.NewThing(  /  recv := &pkg.Type{  /  recv := pkg.Type{
+        if let Some((before, after)) = trimmed.split_once(":=")
+            && before.trim() == receiver
+            && let Some(type_name) = constructor_type(after.trim_start())
+        {
+            return Some(type_name);
+        }
+    }
+    // Parameter in the signature: `recv *pkg.Type` or `recv pkg.Type`.
+    if let Some(signature_end) = function_text.find('{') {
+        let signature = &function_text[..signature_end];
+        let mut rest = signature;
+        while let Some(open) = rest.find('(') {
+            let after = &rest[open + 1..];
+            let Some(close) = after.find(')') else {
+                break;
+            };
+            for parameter in after[..close].split(',') {
+                if let Some(type_name) = declared_type_after_ident(parameter.trim(), receiver) {
+                    return Some(type_name);
+                }
+            }
+            rest = &after[close + 1..];
+        }
+    }
+    None
+}
+
+/// `recv *pkg.Type` / `recv pkg.Type` (after trimming) -> `pkg.Type`.
+fn declared_type_after_ident(text: &str, receiver: &str) -> Option<String> {
+    let mut words = text.split_whitespace();
+    if words.next()? != receiver {
+        return None;
+    }
+    let mut type_name = words.next()?.trim_start_matches('*').to_owned();
+    if type_name.ends_with(')') {
+        type_name.pop();
+    }
+    is_go_type_name(&type_name).then_some(type_name)
+}
+
+/// `pkg.NewThing(` -> `pkg.Thing`; `&pkg.Type{` / `pkg.Type{` -> `pkg.Type`.
+fn constructor_type(rhs: &str) -> Option<String> {
+    let rhs = rhs.trim_start_matches('&');
+    if let Some((package, constructor)) = rhs.split_once("New")
+        && package.ends_with('.')
+    {
+        let constructor = constructor.split(['(', '{']).next().unwrap_or(constructor);
+        let type_name = format!("{package}{constructor}");
+        return is_go_type_name(&type_name).then_some(type_name);
+    }
+    // Composite literal: &pkg.Type{ or pkg.Type{
+    let literal = rhs
+        .split('(')
+        .next()
+        .unwrap_or(rhs)
+        .split('{')
+        .next()
+        .unwrap_or(rhs)
+        .trim();
+    if is_go_type_name(literal) && literal.contains('.') {
+        return Some(literal.to_owned());
+    }
+    None
+}
+
+fn is_go_type_name(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_' || character == '.')
+        && value.split('.').count() <= 2
+}
+
+fn manifest_key(files: &[CodeGraphFile]) -> String {
+    let mut input = format!("{CODEGRAPH_SCHEMA}\0{CODEGRAPH_VERSION}\0").into_bytes();
+    for file in files {
+        input.extend_from_slice(file.path.as_bytes());
+        input.push(0);
+        input.extend_from_slice(file.sha256.as_bytes());
+        input.push(0);
+    }
+    sha256_hex(&input)
+}
+
+fn package_manifest_key(files: &[CodeGraphFile], manifests: &[PackageManifest]) -> String {
+    let base = manifest_key(files);
+    if manifests.is_empty() {
+        return base;
+    }
+    let mut input = base.into_bytes();
+    for manifest in manifests {
+        input.extend_from_slice(b"\0package-manifest\0");
+        input.extend_from_slice(manifest.ecosystem.as_bytes());
+        input.push(0);
+        input.extend_from_slice(manifest.path.as_bytes());
+        input.push(0);
+        input.extend_from_slice(manifest.sha256.as_bytes());
+        input.push(0);
+    }
+    sha256_hex(&input)
+}
+
+fn file_node_id(path: &str) -> String {
+    format!("file:{}", sha256_hex(path.as_bytes()))
+}
+
+fn package_node_id(path: &str) -> String {
+    format!("package:{}", sha256_hex(path.as_bytes()))
+}
+
+fn symbol_node_id(kind: &str, path: &str, qualified_name: &str) -> String {
+    let key = format!("{kind}\0{path}\0{qualified_name}");
+    format!("symbol:{}", sha256_hex(key.as_bytes()))
+}
+
+fn graph_range(node: Node<'_>) -> CodeGraphRange {
+    let start = node.start_position();
+    let end = node.end_position();
+    CodeGraphRange {
+        start_byte: node.start_byte(),
+        end_byte: node.end_byte(),
+        start_line: start.row + 1,
+        end_line: end.row + 1,
+        start_column: start.column,
+        end_column: end.column,
+    }
+}
+
+fn named_children(node: Node<'_>) -> Vec<Node<'_>> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor).collect()
+}
+
+fn node_text<'source>(node: Node<'_>, source: &'source [u8]) -> &'source str {
+    node.utf8_text(source).unwrap_or_default()
+}
+
+fn relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .expect("codegraph file belongs to root")
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(bytes);
+    hex::encode(digest.finalize())
+}
+
+fn io_failure(operation: &str, path: &Path, source: std::io::Error) -> CodeGraphError {
+    CodeGraphError::Io {
+        operation: operation.to_owned(),
+        path: path.to_path_buf(),
+        source,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeSet, fs, path::Path};
+
+    use serde::Deserialize;
+    use tempfile::tempdir;
+
+    use super::{
+        CODEGRAPH_FILE, CODEGRAPH_JSON_FILE, CODEGRAPH_PUBLICATION_FILE,
+        CODEGRAPH_RELATION_GENERATION, CodeGraphChange, build_codegraph, build_go_codegraph,
+        read_codegraph, read_codegraph_publication, refresh_codegraph, update_codegraph,
+        update_go_codegraph, validate_codegraph_publication, write_go_codegraph,
+    };
+
+    #[test]
+    fn go_analysis_context_fingerprint_matches_go_producer_contract() {
+        let settings = [
+            "GO111MODULE",
+            "GO386",
+            "GOAMD64",
+            "GOARCH",
+            "GOARM",
+            "GOARM64",
+            "CGO_ENABLED",
+            "GOEXPERIMENT",
+            "GOFLAGS",
+            "GOMIPS",
+            "GOMIPS64",
+            "GOOS",
+            "GOPPC64",
+            "GORISCV64",
+            "GOTOOLCHAIN",
+            "GOWASM",
+        ]
+        .into_iter()
+        .map(|name| {
+            let value = match name {
+                "GOARCH" => "arm64",
+                "CGO_ENABLED" => "1",
+                "GOFLAGS" => "-tags=fixture",
+                "GOOS" => "darwin",
+                _ => "",
+            };
+            (name.to_owned(), value.to_owned())
+        })
+        .collect();
+        let context = super::GoCallFactsContext {
+            go_version: "go1.26.0".to_owned(),
+            go_mod: "go.mod".to_owned(),
+            go_work: String::new(),
+            settings,
+            context_files: vec![super::GoCallFactsFile {
+                path: "go.mod".to_owned(),
+                sha256: "abc123".to_owned(),
+            }],
+        };
+        assert_eq!(
+            context.fingerprint(),
+            "5b7f099e8fbdb5261a1e04b1a2183cbecc299f34b7f13a2583f7d0e9f48e0505"
+        );
+    }
+
+    fn write_go_fixture(root: &Path) {
+        fs::create_dir_all(root.join("internal/discovery")).expect("create discovery dir");
+        fs::create_dir_all(root.join("internal/tools")).expect("create tools dir");
+        fs::write(
+            root.join("go.mod"),
+            "module example.com/disambiguation\n\ngo 1.22\n",
+        )
+        .expect("write go.mod");
+        fs::write(
+            root.join("internal/discovery/catalog.go"),
+            "package discovery\n\n\
+             type WorkflowCatalog struct{ workflows []string }\n\n\
+             func (c *WorkflowCatalog) ListWorkflows() []string {\n\
+             \treturn c.workflows\n\
+             }\n\n\
+             func NewWorkflowCatalog() *WorkflowCatalog {\n\
+             \treturn &WorkflowCatalog{}\n\
+             }\n",
+        )
+        .expect("write catalog.go");
+        fs::write(
+            root.join("internal/tools/list_workflows.go"),
+            "package tools\n\n\
+             import \"example.com/disambiguation/internal/discovery\"\n\n\
+             func ListWorkflows(catalog *discovery.WorkflowCatalog) []string {\n\
+             \treturn catalog.ListWorkflows()\n\
+             }\n\n\
+             func ListFromVar() []string {\n\
+             \tvar catalog *discovery.WorkflowCatalog\n\
+             \treturn catalog.ListWorkflows()\n\
+             }\n\n\
+             func ListFromConstructor() []string {\n\
+             \tcatalog := discovery.NewWorkflowCatalog()\n\
+             \treturn catalog.ListWorkflows()\n\
+             }\n",
+        )
+        .expect("write list_workflows.go");
+    }
+
+    #[test]
+    fn go_receiver_disambiguation_avoids_self_loops() {
+        let root = tempdir().expect("tempdir");
+        write_go_fixture(root.path());
+        let artifact = build_codegraph(root.path()).expect("build codegraph");
+        let nodes: std::collections::HashMap<&str, &super::CodeGraphNode> = artifact
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node))
+            .collect();
+
+        let caller = artifact
+            .nodes
+            .iter()
+            .find(|node| node.qualified_name.as_deref() == Some("tools.ListWorkflows"))
+            .expect("caller function");
+        let method = artifact
+            .nodes
+            .iter()
+            .find(|node| {
+                node.qualified_name
+                    .as_deref()
+                    .is_some_and(|qualified| qualified.ends_with("WorkflowCatalog.ListWorkflows"))
+            })
+            .expect("catalog method");
+
+        for caller_name in [
+            "tools.ListWorkflows",
+            "tools.ListFromVar",
+            "tools.ListFromConstructor",
+        ] {
+            let caller = artifact
+                .nodes
+                .iter()
+                .find(|node| node.qualified_name.as_deref() == Some(caller_name))
+                .expect("caller function");
+            let edges: Vec<&super::CodeGraphEdge> = artifact
+                .edges
+                .iter()
+                .filter(|edge| edge.kind == "calls" && edge.source == caller.id)
+                .collect();
+            let list_edge = edges
+                .iter()
+                .find(|edge| edge.target_name.as_deref() == Some("catalog.ListWorkflows"))
+                .or_else(|| {
+                    edges
+                        .iter()
+                        .find(|edge| edge.target_name.as_deref() == Some("ListWorkflows"))
+                })
+                .expect("ListWorkflows call edge");
+            assert!(
+                list_edge.resolved,
+                "{caller_name}: ListWorkflows edge resolved"
+            );
+            assert_eq!(
+                list_edge.target.as_deref(),
+                Some(method.id.as_str()),
+                "{caller_name}: resolves to the catalog method, not the caller"
+            );
+            assert_ne!(list_edge.target.as_deref(), Some(caller.id.as_str()));
+        }
+        let _ = nodes;
+        let _ = caller;
+    }
+
+    #[test]
+    fn go_receiver_type_helpers_extract_declared_types() {
+        use super::{caller_receiver_identifier, constructor_type, go_receiver_type};
+
+        let function_text = "func (v *Validator) Validate(catalog *discovery.WorkflowCatalog) bool {\n\
+             \tvar local *discovery.WorkflowState\n\
+             \tbuilt := discovery.NewWorkflowCatalog()\n\
+             \tcomposite := &discovery.WorkflowState{}\n\
+             \treturn catalog.ListWorkflows() != nil\n\
+             }";
+        assert_eq!(
+            go_receiver_type(function_text, "catalog"),
+            Some("discovery.WorkflowCatalog".to_owned())
+        );
+        assert_eq!(
+            go_receiver_type(function_text, "local"),
+            Some("discovery.WorkflowState".to_owned())
+        );
+        assert_eq!(
+            go_receiver_type(function_text, "built"),
+            Some("discovery.WorkflowCatalog".to_owned())
+        );
+        assert_eq!(
+            go_receiver_type(function_text, "composite"),
+            Some("discovery.WorkflowState".to_owned())
+        );
+        assert_eq!(go_receiver_type(function_text, "unknown"), None);
+
+        assert_eq!(
+            caller_receiver_identifier(&super::CodeGraphNode {
+                id: "x".to_owned(),
+                kind: "method".to_owned(),
+                path: None,
+                name: "Validate".to_owned(),
+                qualified_name: None,
+                range: None,
+                signature: Some("func (v *Validator) Validate(x int) bool ".to_owned()),
+            }),
+            Some("v".to_owned())
+        );
+        assert_eq!(
+            constructor_type("discovery.NewWorkflowCatalog()"),
+            Some("discovery.WorkflowCatalog".to_owned())
+        );
+        assert_eq!(
+            constructor_type("&discovery.WorkflowState{}"),
+            Some("discovery.WorkflowState".to_owned())
+        );
+    }
+
+    fn node_id(artifact: &super::CodeGraphArtifact, kind: &str, name: &str) -> String {
+        artifact
+            .nodes
+            .iter()
+            .find(|node| node.kind == kind && node.name == name)
+            .map_or_else(
+                || panic!("missing {kind} node {name}"),
+                |node| node.id.clone(),
+            )
+    }
+
+    #[test]
+    fn builds_manifest_keyed_definitions_imports_and_calls() {
+        let directory = tempdir().expect("workspace");
+        fs::write(
+            directory.path().join("main.go"),
+            "package main\n\nimport \"fmt\"\n\nfunc helper() {}\nfunc main() { helper(); fmt.Println(\"ok\") }\n",
+        )
+        .expect("Go source");
+
+        let artifact = build_go_codegraph(directory.path()).expect("graph");
+        assert_eq!(artifact.version, 2);
+        assert_eq!(artifact.files.len(), 1);
+        assert!(
+            artifact
+                .nodes
+                .iter()
+                .any(|node| node.kind == "function" && node.name == "helper")
+        );
+        assert!(
+            artifact
+                .nodes
+                .iter()
+                .any(|node| node.kind == "package" && node.name == "fmt")
+        );
+        assert!(artifact.edges.iter().any(|edge| {
+            edge.kind == "calls" && edge.target_name.as_deref() == Some("helper") && edge.resolved
+        }));
+        assert!(artifact.edges.iter().any(|edge| {
+            edge.kind == "calls"
+                && edge.target_name.as_deref() == Some("fmt.Println")
+                && !edge.resolved
+        }));
+    }
+
+    #[test]
+    fn emits_manifest_backed_dependency_edges_for_all_supported_ecosystems() {
+        let directory = tempdir().expect("workspace");
+        fs::write(
+            directory.path().join("main.go"),
+            "package main\n\nfunc main() {}\n",
+        )
+        .expect("Go source");
+        fs::write(
+            directory.path().join("go.mod"),
+            "module example.com/app\n\nrequire example.com/dep v1.2.3\n",
+        )
+        .expect("go.mod");
+
+        fs::create_dir_all(directory.path().join("rust/src")).expect("Rust source directory");
+        fs::write(
+            directory.path().join("rust/src/lib.rs"),
+            "pub fn run() {}\n",
+        )
+        .expect("Rust source");
+        fs::write(
+            directory.path().join("rust/Cargo.toml"),
+            concat!(
+                "[package]\nname = \"example-rs\"\nversion = \"0.1.0\"\n\n",
+                "[dependencies]\nserde = \"1\"\n\n",
+                "[target.'cfg(unix)'.dependencies]\ntokio = \"1\"\n",
+                "\n[[bin]]\nname = \"example-rs-bin\"\npath = \"src/bin.rs\"\n",
+            ),
+        )
+        .expect("Cargo.toml");
+
+        fs::create_dir_all(directory.path().join("python")).expect("Python source directory");
+        fs::write(
+            directory.path().join("python/app.py"),
+            "def run():\n    pass\n",
+        )
+        .expect("Python source");
+        fs::write(
+            directory.path().join("python/pyproject.toml"),
+            concat!(
+                "[project]\nname = \"example-python\"\nversion = \"0.1.0\"\n",
+                "dependencies = [\"requests>=2\", \"pydantic[dotenv]==2\"]\n",
+            ),
+        )
+        .expect("pyproject.toml");
+
+        fs::create_dir_all(directory.path().join("web")).expect("TypeScript source directory");
+        fs::write(
+            directory.path().join("web/index.ts"),
+            "export function run() {}\n",
+        )
+        .expect("TypeScript source");
+        fs::write(
+            directory.path().join("web/package.json"),
+            concat!(
+                "{\n",
+                "  \"name\": \"example-web\",\n",
+                "  \"dependencies\": {\"react\": \"^19\"}\n",
+                "}\n",
+            ),
+        )
+        .expect("package.json");
+
+        let artifact = build_codegraph(directory.path()).expect("manifest graph");
+        for (package, dependency, manifest_path) in [
+            ("example.com/app", "example.com/dep", "go.mod"),
+            ("example-rs", "serde", "rust/Cargo.toml"),
+            ("example-rs", "tokio", "rust/Cargo.toml"),
+            ("example-python", "requests", "python/pyproject.toml"),
+            ("example-python", "pydantic", "python/pyproject.toml"),
+            ("example-web", "react", "web/package.json"),
+        ] {
+            let source = node_id(&artifact, "package", package);
+            let target = node_id(&artifact, "package", dependency);
+            let edge = artifact
+                .edges
+                .iter()
+                .find(|edge| {
+                    edge.kind == "depends_on"
+                        && edge.source == source
+                        && edge.target.as_deref() == Some(target.as_str())
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing manifest dependency {package} -> {dependency}: {:#?}",
+                        artifact.edges
+                    )
+                });
+            assert!(edge.resolved);
+            assert_eq!(edge.resolution.as_deref(), Some("manifest"));
+            assert_eq!(edge.target_name.as_deref(), Some(dependency));
+            assert_eq!(
+                artifact
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == source)
+                    .and_then(|node| node.path.as_deref()),
+                Some(manifest_path)
+            );
+        }
+
+        assert!(artifact.edges.iter().all(|edge| {
+            edge.kind != "depends_on" || edge.resolution.as_deref() == Some("manifest")
+        }));
+        assert!(!artifact.edges.iter().any(|edge| {
+            edge.kind == "depends_on" && edge.target_name.as_deref() == Some("name")
+        }));
+    }
+
+    #[test]
+    fn refresh_rebuilds_manifest_dependency_edges_when_a_manifest_changes() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("main.go"), "package main\n").expect("Go source");
+        let manifest = directory.path().join("go.mod");
+        fs::write(
+            &manifest,
+            "module example.com/app\n\nrequire example.com/old v1.0.0\n",
+        )
+        .expect("initial go.mod");
+
+        let (_, initial) = refresh_codegraph(directory.path()).expect("initial refresh");
+        assert!(initial.edges.iter().any(|edge| {
+            edge.kind == "depends_on" && edge.target_name.as_deref() == Some("example.com/old")
+        }));
+
+        fs::write(
+            &manifest,
+            "module example.com/app\n\nrequire example.com/new v1.0.0\n",
+        )
+        .expect("updated go.mod");
+        let (_, refreshed) = refresh_codegraph(directory.path()).expect("manifest refresh");
+        assert!(!refreshed.edges.iter().any(|edge| {
+            edge.kind == "depends_on" && edge.target_name.as_deref() == Some("example.com/old")
+        }));
+        assert!(refreshed.edges.iter().any(|edge| {
+            edge.kind == "depends_on" && edge.target_name.as_deref() == Some("example.com/new")
+        }));
+        assert_eq!(
+            refreshed,
+            build_codegraph(directory.path()).expect("full manifest graph")
+        );
+    }
+
+    #[test]
+    fn malformed_go_manifest_does_not_emit_dependency_facts() {
+        assert_eq!(
+            super::parse_package_manifest(
+                "go",
+                b"module example.com/app\n\nrequire (\nexample.com/dep v1.2.3\n",
+            ),
+            (None, Vec::new())
+        );
+    }
+
+    #[test]
+    fn incremental_source_refresh_preserves_manifest_package_nodes_without_dependencies() {
+        let directory = tempdir().expect("workspace");
+        let source = directory.path().join("main.go");
+        fs::write(&source, "package main\n\nfunc main() {}\n").expect("Go source");
+        fs::write(
+            directory.path().join("go.mod"),
+            "module example.com/app\n\ngo 1.26\n",
+        )
+        .expect("go.mod");
+
+        let base = build_codegraph(directory.path()).expect("base graph");
+        let package_id = node_id(&base, "package", "example.com/app");
+        fs::write(
+            &source,
+            "package main\n\nfunc main() { println(\"updated\") }\n",
+        )
+        .expect("updated Go source");
+        let updated = update_codegraph(
+            &base,
+            directory.path(),
+            &[CodeGraphChange::Upsert("main.go".into())],
+        )
+        .expect("incremental graph");
+
+        assert!(updated.nodes.iter().any(|node| {
+            node.id == package_id
+                && node.kind == "package"
+                && node.path.as_deref() == Some("go.mod")
+        }));
+        assert_eq!(
+            updated,
+            build_codegraph(directory.path()).expect("full graph")
+        );
+    }
+
+    #[test]
+    fn malformed_toml_manifest_does_not_emit_dependency_facts() {
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"broken\"\n[dependencies]\nserde = [\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "python",
+                b"[project]\nname = \"broken\"\ndependencies = [\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"broken\"\n[dependencies]\nserde = \"1\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "python",
+                b"[project]\nname = \"broken\n\ndependencies = [\"requests\"]\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "python",
+                b"[project]\nname = \"valid-name\"\ndependencies = [\"requests\", invalid]\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "python",
+                b"[project]\nname = \"valid-name\"\ndependencies = [\"requests\" \"pydantic\"]\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"valid-name\"\n[dependencies]\nserde = \"\\q\"\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"valid-name\"\n[dependencies]\nserde = \"\\u12G4\"\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"broken\\uD800\"\n[dependencies]\nserde = \"1\"\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"valid-name\"\n[dependencies]\nserde =\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"valid-name\"\nnot valid TOML\n[dependencies]\nserde = \"1\"\n",
+            ),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            super::parse_package_manifest(
+                "rust",
+                b"[package]\nname = \"valid-name\"\n[dependencies]\nserde = \"1\"\n\xff",
+            ),
+            (None, Vec::new())
+        );
+    }
+
+    #[test]
+    fn parses_generic_function_instantiation_as_a_call_site() {
+        let directory = tempdir().expect("workspace");
+        let source = "package main\nfunc identity[T any](value T) T { return value }\nfunc caller() { _ = identity[int](1) }\n";
+        fs::write(directory.path().join("main.go"), source).expect("Go source");
+
+        let artifact = build_go_codegraph(directory.path()).expect("generic call graph");
+        let start = source.find("identity[int](1)").expect("generic call start");
+        let end = start + "identity[int](1)".len();
+        assert!(
+            artifact.edges.iter().any(|edge| {
+                edge.kind == "calls"
+                    && edge.target_name.as_deref() == Some("identity")
+                    && edge.resolved
+                    && edge
+                        .range
+                        .as_ref()
+                        .is_some_and(|range| range.start_byte == start && range.end_byte == end)
+            }),
+            "generic call edge missing: {:#?}",
+            artifact.edges
+        );
+    }
+
+    #[test]
+    fn builds_definitions_imports_and_calls_for_rust_typescript_and_python() {
+        let cases = [
+            (
+                "lib.rs",
+                "use std::fmt;\nstruct Service;\nimpl Service { fn call(&self) {} }\nfn helper() {}\nfn run(service: &Service) { helper(); service.call(); }\n",
+                "rust",
+            ),
+            (
+                "src.ts",
+                "import { external } from './helper';\nclass Service { call() {} }\nfunction helper() {}\nfunction run(service: Service) { helper(); service.call(); }\n",
+                "typescript",
+            ),
+            (
+                "src.tsx",
+                "import { external } from './helper';\nclass Service { call() {} }\nfunction helper() {}\nfunction run(service: Service) { helper(); service.call(); return <main />; }\n",
+                "tsx",
+            ),
+            (
+                "src.py",
+                "from helpers import external\nclass Service:\n    def call(self):\n        pass\ndef helper():\n    pass\ndef run():\n    helper()\n    Service().call()\n",
+                "python",
+            ),
+        ];
+
+        for (filename, source, expected_language) in cases {
+            let directory = tempdir().expect("workspace");
+            fs::write(directory.path().join(filename), source).expect("source file");
+            let artifact = super::build_codegraph(directory.path()).expect("graph");
+
+            assert_eq!(artifact.files.len(), 1);
+            assert_eq!(artifact.files[0].language, expected_language);
+            assert!(
+                artifact
+                    .nodes
+                    .iter()
+                    .any(|node| { node.kind == "function" && node.name == "run" })
+            );
+            assert!(
+                artifact
+                    .nodes
+                    .iter()
+                    .any(|node| { node.kind == "function" && node.name == "helper" })
+            );
+            assert!(artifact.edges.iter().any(|edge| edge.kind == "imports"));
+            assert!(artifact.edges.iter().any(|edge| {
+                edge.kind == "calls"
+                    && edge.target_name.as_deref() == Some("helper")
+                    && edge.resolved
+            }));
+            assert!(
+                artifact.edges.iter().any(|edge| {
+                    edge.kind == "calls"
+                        && edge
+                            .target_name
+                            .as_deref()
+                            .is_some_and(|name| name.rsplit(['.', ':']).next() == Some("call"))
+                        && edge.resolved
+                }),
+                "{expected_language}: {:#?}",
+                artifact.edges
+            );
+        }
+    }
+
+    fn source_node_id(artifact: &super::CodeGraphArtifact, name: &str) -> String {
+        artifact
+            .nodes
+            .iter()
+            .find(|node| node.name == name)
+            .map_or_else(
+                || panic!("missing source node {name}"),
+                |node| node.id.clone(),
+            )
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn emits_multifile_structural_relations_for_all_supported_languages() {
+        let cases = [
+            (
+                "go",
+                vec![
+                    (
+                        "types.go",
+                        "package demo\n\ntype Base struct{}\ntype Child struct { Base; Value Base }\n",
+                    ),
+                    (
+                        "test.go",
+                        "package demo\n\nfunc helper() {}\nfunc TestChild() { helper() }\n",
+                    ),
+                ],
+                vec![
+                    ("embeds", "Child", "Base"),
+                    ("references", "Child", "Base"),
+                    ("tests", "TestChild", "helper"),
+                ],
+            ),
+            (
+                "rust",
+                vec![
+                    (
+                        "types.rs",
+                        "trait Parent {}\ntrait Child: Parent {}\nstruct Impl;\nstruct Wrapper { value: Impl }\nimpl Parent for Impl {}\n",
+                    ),
+                    ("tests.rs", "fn helper() {}\nfn test_impl() { helper(); }\n"),
+                ],
+                vec![
+                    ("inherits", "Child", "Parent"),
+                    ("implements", "Impl", "Parent"),
+                    ("references", "Wrapper", "Impl"),
+                    ("tests", "test_impl", "helper"),
+                ],
+            ),
+            (
+                "typescript",
+                vec![
+                    (
+                        "types.ts",
+                        "export class Base {}\nexport interface Contract {}\nexport class Child extends Base implements Contract { value: Base; }\n",
+                    ),
+                    (
+                        "tests.ts",
+                        "function helper() {}\nfunction testChild() { helper(); }\n",
+                    ),
+                ],
+                vec![
+                    ("inherits", "Child", "Base"),
+                    ("implements", "Child", "Contract"),
+                    ("references", "Child", "Base"),
+                    ("tests", "testChild", "helper"),
+                ],
+            ),
+            (
+                "python",
+                vec![
+                    (
+                        "types.py",
+                        "class Base:\n    pass\n\nclass Child(Base):\n    pass\n",
+                    ),
+                    (
+                        "tests.py",
+                        "def helper():\n    pass\n\ndef typed_helper(value: Base) -> Base:\n    return value\n\ndef test_child():\n    helper()\n",
+                    ),
+                ],
+                vec![
+                    ("inherits", "Child", "Base"),
+                    ("references", "typed_helper", "Base"),
+                    ("tests", "test_child", "helper"),
+                ],
+            ),
+        ];
+
+        for (language, files, expected_relations) in cases {
+            let directory = tempdir().expect("workspace");
+            for (path, source) in files {
+                fs::write(directory.path().join(path), source).expect("fixture source");
+            }
+            let artifact = build_codegraph(directory.path()).expect("graph");
+            for (kind, source_name, target_name) in expected_relations {
+                let edge = artifact
+                    .edges
+                    .iter()
+                    .find(|edge| {
+                        edge.kind == kind
+                            && edge
+                                .source
+                                .as_str()
+                                .eq(source_node_id(&artifact, source_name).as_str())
+                            && edge.target_name.as_deref() == Some(target_name)
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{language}: missing {kind} {source_name} -> {target_name}: {:#?}",
+                            artifact.edges
+                        )
+                    });
+                assert!(edge.resolved, "{language}: {edge:#?}");
+                assert!(edge.target.is_some(), "{language}: {edge:#?}");
+                assert_eq!(edge.resolution.as_deref(), Some("syntax"));
+            }
+        }
+    }
+
+    #[test]
+    fn emits_source_anchored_import_topology_relations() {
+        let cases = [
+            (
+                "main.go",
+                "package main\nimport \"example.test/dep\"\nfunc main() {}\n",
+                "go",
+                false,
+            ),
+            (
+                "lib.rs",
+                "use crate::helper;\nfn main() {}\n",
+                "rust",
+                false,
+            ),
+            (
+                "src.ts",
+                "import { external } from './helper';\nexport { external } from './helper';\nasync function load() { return import('./lazy'); }\n",
+                "typescript",
+                true,
+            ),
+            (
+                "src.py",
+                "from helpers import external\ndef run():\n    pass\n",
+                "python",
+                false,
+            ),
+        ];
+
+        for (filename, source, language, reexports) in cases {
+            let directory = tempdir().expect("workspace");
+            fs::write(directory.path().join(filename), source).expect("source");
+            let artifact = build_codegraph(directory.path()).expect("graph");
+            assert!(artifact.files.iter().all(|file| {
+                file.language == language || (language == "typescript" && file.language == "tsx")
+            }));
+            assert!(artifact.edges.iter().any(|edge| {
+                edge.kind == "imports_from"
+                    && edge.resolved
+                    && edge.resolution.as_deref() == Some("syntax")
+                    && edge.range.is_some()
+            }));
+            if reexports {
+                assert!(artifact.edges.iter().any(|edge| {
+                    edge.kind == "re_exports"
+                        && edge.resolved
+                        && edge.target_name.as_deref() == Some("./helper")
+                }));
+                assert!(
+                    artifact
+                        .edges
+                        .iter()
+                        .filter(|edge| edge.kind == "imports_from")
+                        .count()
+                        >= 2
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn resolves_local_import_topology_for_all_supported_languages() {
+        let directory = tempdir().expect("workspace");
+        fs::write(
+            directory.path().join("go.mod"),
+            "module example.com/app\n\ngo 1.26\n",
+        )
+        .expect("Go manifest");
+        fs::create_dir_all(directory.path().join("internal/dep")).expect("Go package");
+        fs::write(
+            directory.path().join("main.go"),
+            "package main\nimport (\n alias \"example.com/app/internal/dep\"\n \"example.com/app/internal/multi\"\n)\nfunc main() { alias.Run(); multi.Run() }\n",
+        )
+        .expect("Go source");
+        fs::write(
+            directory.path().join("internal/dep/dep.go"),
+            "package dep\nfunc Run() {}\n",
+        )
+        .expect("Go dependency source");
+        fs::create_dir_all(directory.path().join("internal/multi")).expect("multi-file package");
+        fs::write(
+            directory.path().join("internal/multi/first.go"),
+            "package multi\nfunc Run() {}\n",
+        )
+        .expect("first multi-file source");
+        fs::write(
+            directory.path().join("internal/multi/second.go"),
+            "package multi\nfunc Other() {}\n",
+        )
+        .expect("second multi-file source");
+
+        fs::create_dir_all(directory.path().join("web")).expect("TypeScript directory");
+        fs::write(
+            directory.path().join("web/main.ts"),
+            "import { value as renamed } from './helper';\nexport { renamed } from './helper';\n",
+        )
+        .expect("TypeScript source");
+        fs::write(
+            directory.path().join("web/helper.ts"),
+            "export const value = 1;\n",
+        )
+        .expect("TypeScript helper");
+
+        fs::create_dir_all(directory.path().join("pkg")).expect("Python directory");
+        fs::write(
+            directory.path().join("pkg/app.py"),
+            "from .helpers import value as renamed\ndef run():\n    return renamed\n",
+        )
+        .expect("Python source");
+        fs::write(directory.path().join("pkg/helpers.py"), "value = 1\n").expect("Python helper");
+
+        fs::create_dir_all(directory.path().join("rust/src")).expect("Rust directory");
+        fs::write(
+            directory.path().join("rust/Cargo.toml"),
+            "[package]\nname = \"local-rs\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("Rust manifest");
+        fs::write(
+            directory.path().join("rust/src/lib.rs"),
+            "pub mod helper;\nuse crate::helper::Helper;\npub use crate::helper::Helper;\npub fn run(_: Helper) {}\n",
+        )
+        .expect("Rust source");
+        fs::write(
+            directory.path().join("rust/src/helper.rs"),
+            "pub struct Helper;\n",
+        )
+        .expect("Rust helper");
+
+        let artifact = build_codegraph(directory.path()).expect("local import graph");
+        let cases = [
+            (
+                "main.go",
+                "example.com/app/internal/dep",
+                "internal/dep/dep.go",
+            ),
+            ("web/main.ts", "./helper", "web/helper.ts"),
+            ("pkg/app.py", ".helpers", "pkg/helpers.py"),
+            (
+                "rust/src/lib.rs",
+                "crate::helper::Helper",
+                "rust/src/helper.rs",
+            ),
+        ];
+        for (source_path, target_name, target_path) in cases {
+            let source_id = super::file_node_id(source_path);
+            let target_id = super::file_node_id(target_path);
+            let edge = artifact
+                .edges
+                .iter()
+                .find(|edge| {
+                    edge.kind == "imports_from"
+                        && edge.source == source_id
+                        && edge.target_name.as_deref() == Some(target_name)
+                })
+                .unwrap_or_else(|| panic!("missing local import {source_path} -> {target_name}"));
+            assert_eq!(
+                edge.target.as_deref(),
+                Some(target_id.as_str()),
+                "{edge:#?}"
+            );
+            assert!(edge.resolved, "{edge:#?}");
+            assert_eq!(edge.resolution.as_deref(), Some("syntax"));
+        }
+        let rust_mod = artifact
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == "imports_from"
+                    && edge.source == super::file_node_id("rust/src/lib.rs")
+                    && edge.target_name.as_deref() == Some("crate::helper")
+            })
+            .expect("Rust external module declaration");
+        assert_eq!(
+            rust_mod.target.as_deref(),
+            Some(super::file_node_id("rust/src/helper.rs").as_str())
+        );
+        let rust_reexport = artifact
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == "re_exports"
+                    && edge.source == super::file_node_id("rust/src/lib.rs")
+                    && edge.target_name.as_deref() == Some("crate::helper::Helper")
+            })
+            .expect("Rust re-export");
+        assert_eq!(
+            rust_reexport.target.as_deref(),
+            Some(super::file_node_id("rust/src/helper.rs").as_str())
+        );
+        let multi_file_import = artifact
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == "imports_from"
+                    && edge.source == super::file_node_id("main.go")
+                    && edge.target_name.as_deref() == Some("example.com/app/internal/multi")
+            })
+            .expect("multi-file Go import");
+        assert_eq!(
+            multi_file_import.target.as_deref(),
+            Some(super::package_node_id("example.com/app/internal/multi").as_str())
+        );
+        assert!(multi_file_import.resolved);
+        assert!(artifact.nodes.iter().any(|node| {
+            node.kind == "variable"
+                && node.path.as_deref() == Some("web/helper.ts")
+                && node.name == "value"
+        }));
+        let reexport = artifact
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == "re_exports"
+                    && edge.source == super::file_node_id("web/main.ts")
+                    && edge.target_name.as_deref() == Some("./helper")
+            })
+            .expect("local re-export");
+        assert_eq!(
+            reexport.target.as_deref(),
+            Some(super::file_node_id("web/helper.ts").as_str())
+        );
+    }
+
+    #[test]
+    fn incremental_refresh_retargets_local_imports_when_a_target_is_deleted() {
+        let directory = tempdir().expect("workspace");
+        fs::write(
+            directory.path().join("main.ts"),
+            "import { value } from './helper';\nexport { value } from './helper';\n",
+        )
+        .expect("source");
+        fs::write(
+            directory.path().join("helper.ts"),
+            "export const value = 1;\n",
+        )
+        .expect("helper");
+        let base = build_codegraph(directory.path()).expect("base graph");
+        assert!(base.edges.iter().any(|edge| {
+            edge.kind == "imports_from"
+                && edge.target.as_deref() == Some(super::file_node_id("helper.ts").as_str())
+        }));
+
+        fs::remove_file(directory.path().join("helper.ts")).expect("delete helper");
+        let updated = update_codegraph(
+            &base,
+            directory.path(),
+            &[CodeGraphChange::Delete("helper.ts".into())],
+        )
+        .expect("incremental graph");
+        let package_id = super::package_node_id("./helper");
+        assert!(updated.edges.iter().any(|edge| {
+            edge.kind == "imports_from"
+                && edge.source == super::file_node_id("main.ts")
+                && edge.target.as_deref() == Some(package_id.as_str())
+                && edge.resolved
+        }));
+        assert_eq!(
+            updated,
+            build_codegraph(directory.path()).expect("full graph after deletion")
+        );
+    }
+
+    #[test]
+    fn incremental_refresh_retargets_symbol_imports_when_a_target_declaration_changes_kind() {
+        let directory = tempdir().expect("workspace");
+        fs::write(
+            directory.path().join("main.ts"),
+            "import { value } from './helper';\nexport function use() { return value; }\n",
+        )
+        .expect("main source");
+        let helper = directory.path().join("helper.ts");
+        fs::write(&helper, "export const value = 1;\n").expect("initial helper");
+        let base = build_codegraph(directory.path()).expect("base graph");
+        let main_id = super::file_node_id("main.ts");
+        let initial_target = base
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == "imports"
+                    && edge.source == main_id
+                    && edge.target_name.as_deref() == Some("value")
+            })
+            .and_then(|edge| edge.target.clone())
+            .expect("initial symbol import");
+        assert_eq!(
+            base.nodes
+                .iter()
+                .find(|node| node.id == initial_target)
+                .map(|node| node.kind.as_str()),
+            Some("variable")
+        );
+
+        fs::write(&helper, "export function value() { return 1; }\n").expect("updated helper");
+        let updated = update_codegraph(
+            &base,
+            directory.path(),
+            &[CodeGraphChange::Upsert("helper.ts".into())],
+        )
+        .expect("incremental graph");
+        let updated_edge = updated
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == "imports"
+                    && edge.source == main_id
+                    && edge.target_name.as_deref() == Some("value")
+            })
+            .expect("retargeted symbol import");
+        assert_ne!(
+            updated_edge.target.as_deref(),
+            Some(initial_target.as_str())
+        );
+        assert_eq!(
+            updated_edge
+                .target
+                .as_deref()
+                .and_then(|target| updated.nodes.iter().find(|node| node.id == target))
+                .map(|node| node.kind.as_str()),
+            Some("function")
+        );
+        assert_eq!(
+            updated,
+            build_codegraph(directory.path()).expect("full graph after target change")
+        );
+    }
+
+    #[derive(Deserialize)]
+    struct RelationFixture {
+        schema: String,
+        language: String,
+        source_files: Vec<String>,
+        relations: Vec<RelationExpectation>,
+    }
+
+    #[derive(Deserialize)]
+    struct RelationExpectation {
+        kind: String,
+        source: String,
+        target: String,
+    }
+
+    #[test]
+    fn checked_in_relation_fixtures_match_structural_graph_output() {
+        let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/codegraph-relations-20260928");
+        for language in ["go", "rust", "typescript", "python"] {
+            let root = fixture_root.join(language);
+            let truth: RelationFixture =
+                serde_json::from_slice(&fs::read(root.join("truth.json")).expect("relation truth"))
+                    .expect("valid relation truth");
+            assert_eq!(truth.schema, "zvec-grep.codegraph-relations-v2");
+            assert_eq!(truth.language, language);
+            for source_file in &truth.source_files {
+                assert!(
+                    root.join(source_file).is_file(),
+                    "{language}: {source_file}"
+                );
+            }
+
+            let artifact = build_codegraph(&root).expect("fixture graph");
+            assert!(artifact.files.iter().all(|file| {
+                file.language == language || (language == "typescript" && file.language == "tsx")
+            }));
+            for expected in truth.relations {
+                let source = source_node_id(&artifact, &expected.source);
+                let edge = artifact
+                    .edges
+                    .iter()
+                    .find(|edge| {
+                        edge.kind == expected.kind
+                            && edge.source == source
+                            && edge.target_name.as_deref() == Some(expected.target.as_str())
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{language}: missing {} {} -> {}: {:#?}",
+                            expected.kind, expected.source, expected.target, artifact.edges
+                        )
+                    });
+                assert!(edge.resolved, "{language}: {edge:#?}");
+                assert!(edge.target.is_some(), "{language}: {edge:#?}");
+                assert_eq!(
+                    edge.resolution.as_deref(),
+                    Some(if expected.kind == "contains" {
+                        "structural"
+                    } else {
+                        "syntax"
+                    })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn generic_delta_updates_supported_non_go_sources() {
+        let directory = tempdir().expect("workspace");
+        let source = directory.path().join("module.py");
+        fs::write(&source, "def old_function():\n    pass\n").expect("Python source");
+        let base = super::build_codegraph(directory.path()).expect("base graph");
+
+        fs::write(&source, "def new_function():\n    pass\n").expect("updated source");
+        let updated = super::update_codegraph(
+            &base,
+            directory.path(),
+            &[CodeGraphChange::Upsert("module.py".into())],
+        )
+        .expect("updated graph");
+
+        assert!(updated.nodes.iter().any(|node| node.name == "new_function"));
+        assert!(!updated.nodes.iter().any(|node| node.name == "old_function"));
+        assert_eq!(
+            updated,
+            super::build_codegraph(directory.path()).expect("full graph")
+        );
+    }
+
+    #[test]
+    fn source_stamps_detect_modified_added_and_deleted_files() {
+        let directory = tempdir().expect("workspace");
+        let source = directory.path().join("module.py");
+        fs::write(&source, "def old_name():\n    pass\n").expect("Python source");
+        let original = super::codegraph_source_stamps(directory.path()).expect("initial stamps");
+        assert_eq!(original.len(), 1);
+
+        fs::write(&source, "def renamed_function():\n    pass\n").expect("updated source");
+        let modified = super::codegraph_source_stamps(directory.path()).expect("updated stamps");
+        assert_ne!(original, modified);
+
+        fs::write(directory.path().join("added.rs"), "fn added() {}\n").expect("Rust source");
+        let added = super::codegraph_source_stamps(directory.path()).expect("added stamps");
+        assert_eq!(added.len(), 2);
+        fs::remove_file(source).expect("delete Python source");
+        let deleted = super::codegraph_source_stamps(directory.path()).expect("deleted stamps");
+        assert_eq!(deleted.len(), 1);
+        assert!(deleted.contains_key("added.rs"));
+    }
+
+    #[test]
+    fn codegraph_ignores_generated_dependency_and_environment_directories() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("main.rs"), "fn main() {}\n").expect("root source");
+        for ignored in [
+            ".git",
+            ".zvec-grep",
+            "node_modules",
+            "target",
+            "dist",
+            ".venv",
+            "venv",
+            "__pycache__",
+        ] {
+            let path = directory.path().join(ignored).join("generated.rs");
+            fs::create_dir_all(path.parent().expect("ignored directory"))
+                .expect("ignored directory path");
+            fs::write(path, "fn generated() {}\n").expect("generated source");
+        }
+
+        let artifact = build_codegraph(directory.path()).expect("graph");
+        assert_eq!(
+            artifact
+                .files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["main.rs"])
+        );
+    }
+
+    #[test]
+    fn source_stamps_include_go_callfacts_sidecar_for_query_cache_freshness() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("main.go"), "package main\n").expect("Go source");
+        let before = super::codegraph_source_stamps(directory.path()).expect("source stamps");
+        let sidecar = directory
+            .path()
+            .join(".zvec-grep")
+            .join(super::GO_CALLFACTS_FILE);
+        fs::create_dir_all(sidecar.parent().expect("sidecar parent")).expect("sidecar directory");
+        fs::write(&sidecar, b"first facts").expect("first sidecar");
+        let after = super::codegraph_source_stamps(directory.path()).expect("sidecar stamps");
+        assert_ne!(before, after);
+        assert!(after.contains_key(&format!(".zvec-grep/{}", super::GO_CALLFACTS_FILE)));
+        fs::write(&sidecar, b"replacement facts").expect("replacement sidecar");
+        let replaced = super::codegraph_source_stamps(directory.path()).expect("updated sidecar");
+        assert_ne!(after, replaced);
+    }
+
+    #[test]
+    fn source_stamps_include_go_module_context_inputs_for_query_cache_freshness() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("main.go"), "package main\n").expect("Go source");
+        let go_mod = directory.path().join("go.mod");
+        fs::write(&go_mod, "module example.com/stamps\n\ngo 1.22\n").expect("go.mod");
+        let before = super::codegraph_source_stamps(directory.path()).expect("initial stamps");
+        assert!(before.contains_key("go.mod"));
+
+        fs::write(&go_mod, "module example.com/stamps\n\ngo 1.23\n").expect("update go.mod");
+        let after = super::codegraph_source_stamps(directory.path()).expect("updated stamps");
+        assert_ne!(before, after);
+        assert!(after.contains_key("go.mod"));
+    }
+
+    #[test]
+    fn source_stamps_include_rust_context_inputs_for_query_cache_freshness() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("lib.rs"), "fn main() {}\n").expect("Rust source");
+        fs::write(
+            directory.path().join("Cargo.toml"),
+            "[package]\nname = \"stamps\"\n",
+        )
+        .expect("Cargo.toml");
+        fs::write(
+            directory.path().join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"stable\"\n",
+        )
+        .expect("rust-toolchain.toml");
+
+        let before = super::codegraph_source_stamps(directory.path()).expect("initial stamps");
+        assert!(before.contains_key("Cargo.toml"));
+        assert!(before.contains_key("rust-toolchain.toml"));
+
+        fs::write(
+            directory.path().join("Cargo.toml"),
+            "[package]\nname = \"stamps\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("update Cargo.toml");
+        let after = super::codegraph_source_stamps(directory.path()).expect("updated stamps");
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn source_stamps_include_typescript_and_python_context_inputs_and_sidecars() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("module.ts"), "function main() {}\n")
+            .expect("TypeScript source");
+        fs::write(
+            directory.path().join("module.py"),
+            "def main():\n    pass\n",
+        )
+        .expect("Python source");
+        fs::write(
+            directory.path().join("tsconfig.json"),
+            "{\"include\":[\"*.ts\"]}\n",
+        )
+        .expect("tsconfig");
+        fs::write(
+            directory.path().join("pyrightconfig.json"),
+            "{\"include\":[\"*.py\"]}\n",
+        )
+        .expect("pyrightconfig");
+
+        let before = super::codegraph_source_stamps(directory.path()).expect("initial stamps");
+        assert!(before.contains_key("tsconfig.json"));
+        assert!(before.contains_key("pyrightconfig.json"));
+
+        fs::write(directory.path().join("tsconfig.json"), "{\"include\":[]}\n")
+            .expect("update tsconfig");
+        let after = super::codegraph_source_stamps(directory.path()).expect("updated stamps");
+        assert_ne!(before, after);
+
+        let typescript_sidecar = directory
+            .path()
+            .join(".zvec-grep")
+            .join(super::TYPESCRIPT_CALLFACTS_FILE);
+        fs::create_dir_all(typescript_sidecar.parent().expect("sidecar parent"))
+            .expect("sidecar directory");
+        fs::write(&typescript_sidecar, b"TypeScript facts").expect("TypeScript sidecar");
+        let with_sidecar =
+            super::codegraph_source_stamps(directory.path()).expect("TypeScript sidecar stamps");
+        assert!(
+            with_sidecar.contains_key(&format!(".zvec-grep/{}", super::TYPESCRIPT_CALLFACTS_FILE))
+        );
+
+        let python_sidecar = directory
+            .path()
+            .join(".zvec-grep")
+            .join(super::PYTHON_CALLFACTS_FILE);
+        fs::write(&python_sidecar, b"Python facts").expect("Python sidecar");
+        let all_sidecars =
+            super::codegraph_source_stamps(directory.path()).expect("Python sidecar stamps");
+        assert!(all_sidecars.contains_key(&format!(".zvec-grep/{}", super::PYTHON_CALLFACTS_FILE)));
+    }
+
+    #[test]
+    fn source_stamps_include_vendor_manifest_context_inputs() {
+        let directory = tempdir().expect("workspace");
+        let manifest = directory.path().join("vendor/modules.txt");
+        fs::create_dir_all(manifest.parent().expect("vendor directory"))
+            .expect("create vendor directory");
+        fs::write(&manifest, "# example.com/dep v1.0.0\nexample.com/dep\n")
+            .expect("vendor manifest");
+
+        let before = super::codegraph_source_stamps(directory.path()).expect("initial stamps");
+        assert!(before.contains_key("vendor/modules.txt"));
+        fs::write(&manifest, "# example.com/dep v1.0.1\nexample.com/dep\n")
+            .expect("update vendor manifest");
+        let after = super::codegraph_source_stamps(directory.path()).expect("updated stamps");
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn refresh_detects_added_modified_and_deleted_files_and_persists_snapshot() {
+        let directory = tempdir().expect("workspace");
+        let source = directory.path().join("module.py");
+        let removed = directory.path().join("removed.rs");
+        fs::write(&source, "def old_function():\n    pass\n").expect("Python source");
+        fs::write(&removed, "fn removed_function() {}\n").expect("Rust source");
+        let (_, base) = super::refresh_codegraph(directory.path()).expect("initial refresh");
+
+        fs::write(&source, "def new_function():\n    pass\n").expect("updated source");
+        fs::write(directory.path().join("added.ts"), "function added() {}\n")
+            .expect("new TypeScript source");
+        fs::remove_file(removed).expect("delete Rust source");
+        let (path, refreshed) =
+            super::refresh_codegraph(directory.path()).expect("incremental refresh");
+
+        assert_eq!(
+            path,
+            directory
+                .path()
+                .canonicalize()
+                .expect("canonical workspace")
+                .join(".zvec-grep")
+                .join(CODEGRAPH_FILE)
+        );
+        assert_ne!(base.manifest_key, refreshed.manifest_key);
+        assert!(
+            refreshed
+                .nodes
+                .iter()
+                .any(|node| node.name == "new_function")
+        );
+        assert!(refreshed.nodes.iter().any(|node| node.name == "added"));
+        assert!(
+            !refreshed
+                .nodes
+                .iter()
+                .any(|node| node.name == "old_function")
+        );
+        assert!(
+            !refreshed
+                .nodes
+                .iter()
+                .any(|node| node.name == "removed_function")
+        );
+        assert_eq!(
+            refreshed,
+            super::build_codegraph(directory.path()).expect("full graph")
+        );
+        assert_eq!(
+            super::refresh_codegraph(directory.path())
+                .expect("unchanged refresh")
+                .1,
+            refreshed
+        );
+    }
+
+    #[test]
+    fn refresh_and_incremental_update_rebuild_stale_relation_generations() {
+        let directory = tempdir().expect("workspace");
+        fs::write(
+            directory.path().join("types.ts"),
+            "class Base {}\nclass Child extends Base {}\n",
+        )
+        .expect("TypeScript source");
+
+        let (_, fresh) = refresh_codegraph(directory.path()).expect("initial refresh");
+        assert_eq!(fresh.relation_generation, CODEGRAPH_RELATION_GENERATION);
+        assert!(fresh.edges.iter().any(|edge| edge.kind == "inherits"));
+
+        for marker in [0, CODEGRAPH_RELATION_GENERATION + 1] {
+            let mut stale = fresh.clone();
+            stale.relation_generation = marker;
+            stale.edges.retain(|edge| edge.kind != "inherits");
+            let artifact_path = directory.path().join(".zvec-grep").join(CODEGRAPH_FILE);
+            fs::remove_file(&artifact_path).expect("remove fresh compressed artifact");
+            let legacy_artifact_path = directory
+                .path()
+                .join(".zvec-grep")
+                .join(CODEGRAPH_JSON_FILE);
+            fs::write(
+                &legacy_artifact_path,
+                serde_json::to_vec(&stale).expect("stale artifact JSON"),
+            )
+            .expect("write stale artifact");
+
+            let (_, refreshed) = refresh_codegraph(directory.path()).expect("refresh stale");
+            let expected = build_codegraph(directory.path()).expect("full graph");
+            assert_eq!(refreshed, expected);
+            assert_eq!(refreshed.relation_generation, CODEGRAPH_RELATION_GENERATION);
+            assert!(refreshed.edges.iter().any(|edge| edge.kind == "inherits"));
+            assert!(!legacy_artifact_path.exists());
+
+            let updated =
+                update_codegraph(&stale, directory.path(), &[]).expect("incremental update stale");
+            assert_eq!(updated, expected);
+        }
+    }
+
+    #[test]
+    fn same_file_candidates_win_over_duplicate_names_in_other_files() {
+        let directory = tempdir().expect("workspace");
+        fs::create_dir_all(directory.path().join("first")).expect("first package");
+        fs::create_dir_all(directory.path().join("second")).expect("second package");
+        fs::write(
+            directory.path().join("first/first.go"),
+            "package first\n\nfunc helper() {}\nfunc caller() { helper() }\n",
+        )
+        .expect("first Go source");
+        fs::write(
+            directory.path().join("second/second.go"),
+            "package second\n\nfunc helper() {}\n",
+        )
+        .expect("second Go source");
+
+        let artifact = build_go_codegraph(directory.path()).expect("graph");
+        let caller = node_id(&artifact, "function", "caller");
+        let local_helper = artifact
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == "function"
+                    && node.path.as_deref() == Some("first/first.go")
+                    && node.name == "helper"
+            })
+            .expect("same-file helper");
+        let call = artifact
+            .edges
+            .iter()
+            .find(|edge| edge.kind == "calls" && edge.source == caller)
+            .expect("call edge");
+
+        assert_eq!(call.target.as_deref(), Some(local_helper.id.as_str()));
+        assert!(call.resolved);
+        assert!(call.ambiguous_candidates.is_empty());
+    }
+
+    #[test]
+    fn relation_candidate_index_preserves_name_suffix_and_kind_matching() {
+        let nodes = vec![
+            super::CodeGraphNode {
+                id: "z-suffix".to_owned(),
+                kind: "class".to_owned(),
+                path: Some("suffix.ts".to_owned()),
+                name: "Thing".to_owned(),
+                qualified_name: Some("outer.pkg.Thing".to_owned()),
+                range: None,
+                signature: None,
+            },
+            super::CodeGraphNode {
+                id: "a-exact".to_owned(),
+                kind: "class".to_owned(),
+                path: Some("exact.ts".to_owned()),
+                name: "Thing".to_owned(),
+                qualified_name: Some("pkg.Thing".to_owned()),
+                range: None,
+                signature: None,
+            },
+            super::CodeGraphNode {
+                id: "m-function".to_owned(),
+                kind: "function".to_owned(),
+                path: Some("function.ts".to_owned()),
+                name: "Thing".to_owned(),
+                qualified_name: Some("other.Thing".to_owned()),
+                range: None,
+                signature: None,
+            },
+        ];
+        let index = super::RelationCandidateIndex::new(&nodes);
+
+        assert_eq!(
+            index.candidate_ids("references", "pkg.Thing", "Thing"),
+            vec!["a-exact", "m-function", "z-suffix"]
+        );
+        assert_eq!(
+            index.candidate_ids("inherits", "pkg.Thing", "Thing"),
+            vec!["a-exact", "z-suffix"]
+        );
+        assert!(
+            index
+                .candidate_ids("references", "missing.Type", "Type")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn duplicate_qualified_names_are_reported_as_ambiguous_not_guessed() {
+        let directory = tempdir().expect("workspace");
+        fs::create_dir_all(directory.path().join("one")).expect("first package");
+        fs::create_dir_all(directory.path().join("two")).expect("second package");
+        fs::create_dir_all(directory.path().join("caller")).expect("caller package");
+        fs::write(
+            directory.path().join("one/config.go"),
+            "package config\n\nfunc Load() {}\n",
+        )
+        .expect("first config source");
+        fs::write(
+            directory.path().join("two/config.go"),
+            "package config\n\nfunc Load() {}\n",
+        )
+        .expect("second config source");
+        fs::write(
+            directory.path().join("caller/caller.go"),
+            "package caller\n\nfunc caller() { config.Load() }\n",
+        )
+        .expect("caller source");
+
+        let artifact = build_go_codegraph(directory.path()).expect("graph");
+        let caller = node_id(&artifact, "function", "caller");
+        let call = artifact
+            .edges
+            .iter()
+            .find(|edge| edge.kind == "calls" && edge.source == caller)
+            .expect("call edge");
+
+        assert_eq!(call.target_name.as_deref(), Some("config.Load"));
+        assert!(!call.resolved);
+        assert!(call.target.is_none());
+        assert_eq!(call.ambiguous_candidates.len(), 2);
+        assert!(
+            call.ambiguous_candidates
+                .windows(2)
+                .all(|pair| pair[0] < pair[1])
+        );
+    }
+
+    #[test]
+    fn chained_and_indexed_method_calls_keep_the_terminal_method_name() {
+        let directory = tempdir().expect("workspace");
+        fs::write(
+            directory.path().join("main.go"),
+            "package main\n\ntype command struct{}\nfunc (command) Result() {}\ntype client struct{}\nfunc (client) Add() command { return command{} }\ntype record struct{}\nfunc (record) Convert() {}\nfunc caller(c client, records []record) { c.Add().Result(); records[0].Convert() }\n",
+        )
+        .expect("Go source");
+
+        let artifact = build_go_codegraph(directory.path()).expect("graph");
+        let caller = node_id(&artifact, "function", "caller");
+        let calls = artifact
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == "calls" && edge.source == caller)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            calls
+                .iter()
+                .map(|edge| {
+                    edge.target_name
+                        .as_deref()
+                        .unwrap_or_default()
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or_default()
+                })
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["Add", "Convert", "Result"])
+        );
+        assert!(calls.iter().all(|edge| edge.resolved));
+    }
+
+    #[test]
+    fn logical_symbol_ids_survive_line_shifts() {
+        let directory = tempdir().expect("workspace");
+        let source = directory.path().join("main.go");
+        fs::write(&source, "package main\n\nfunc helper() {}\n").expect("Go source");
+        let first = build_go_codegraph(directory.path()).expect("first graph");
+        let first_id = node_id(&first, "function", "helper");
+        fs::write(&source, "package main\n\n\n\nfunc helper() {}\n").expect("updated Go source");
+        let second = build_go_codegraph(directory.path()).expect("second graph");
+        assert_eq!(first_id, node_id(&second, "function", "helper"));
+        assert_ne!(first.manifest_key, second.manifest_key);
+    }
+
+    #[test]
+    fn graph_symbols_use_unique_ids_for_package_scope_declarations() {
+        let directory = tempdir().expect("workspace");
+        fs::write(
+            directory.path().join("main.go"),
+            "package main\n\nvar shared int\nvar _ = 1\nvar _ = 2\nconst _ = 3\n\nfunc first() {\n var local int\n const localConstant = 1\n type localType struct{}\n { var local int; _ = local }\n _ = local\n _ = localConstant\n}\n\nfunc second() { var local int; _ = local }\n",
+        )
+        .expect("Go source");
+
+        let artifact = build_go_codegraph(directory.path()).expect("graph");
+        let variables = artifact
+            .nodes
+            .iter()
+            .filter(|node| node.kind == "variable")
+            .map(|node| node.name.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(variables, BTreeSet::from(["shared"]));
+        assert!(!artifact.nodes.iter().any(|node| {
+            matches!(node.kind.as_str(), "constant" | "type")
+                && matches!(node.name.as_str(), "localConstant" | "localType")
+        }));
+        assert!(!artifact.nodes.iter().any(|node| node.name == "_"));
+        let ids = artifact
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(ids.len(), artifact.nodes.len());
+    }
+
+    #[test]
+    fn writes_the_default_sidecar_path() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("main.go"), "package main\n").expect("Go source");
+        let (path, artifact) = write_go_codegraph(directory.path(), None).expect("write graph");
+        assert_eq!(
+            path,
+            directory.path().join(".zvec-grep").join(CODEGRAPH_FILE)
+        );
+        assert!(Path::new(&path).is_file());
+        assert!(!artifact.manifest_key.is_empty());
+        assert_eq!(
+            read_codegraph(&path).expect("decode compressed artifact"),
+            artifact
+        );
+        let publication_path = directory
+            .path()
+            .join(".zvec-grep")
+            .join(CODEGRAPH_PUBLICATION_FILE);
+        let publication = read_codegraph_publication(&publication_path).expect("read publication");
+        assert_eq!(
+            publication.graph.path,
+            format!(".zvec-grep/{CODEGRAPH_FILE}")
+        );
+        assert!(publication.sidecars.is_empty());
+        assert_eq!(
+            validate_codegraph_publication(directory.path()).expect("validate publication"),
+            artifact
+        );
+    }
+
+    #[test]
+    fn publication_validation_rejects_changed_sources_and_graph_bytes() {
+        let directory = tempdir().expect("workspace");
+        let source = directory.path().join("main.go");
+        fs::write(&source, "package main\n").expect("Go source");
+        let (path, _) = write_go_codegraph(directory.path(), None).expect("write graph");
+
+        fs::write(&source, "package main\n\nfunc changed() {}\n").expect("change source");
+        assert!(validate_codegraph_publication(directory.path()).is_err());
+
+        fs::write(&source, "package main\n").expect("restore source");
+        let mut graph = fs::read(&path).expect("read graph");
+        graph.push(0);
+        fs::write(&path, graph).expect("tamper graph");
+        assert!(validate_codegraph_publication(directory.path()).is_err());
+    }
+
+    #[test]
+    fn publication_manifest_round_trips_without_normalizing_sidecar_order() {
+        let publication = super::CodeGraphPublication {
+            schema: super::CODEGRAPH_PUBLICATION_SCHEMA.to_owned(),
+            version: super::CODEGRAPH_PUBLICATION_VERSION,
+            graph: super::CodeGraphPublicationGraph {
+                path: ".zvec-grep/codegraph-v2.json.zst".to_owned(),
+                sha256: "graph-digest".to_owned(),
+                schema: super::CODEGRAPH_SCHEMA.to_owned(),
+                version: super::CODEGRAPH_VERSION,
+                relation_generation: super::CODEGRAPH_RELATION_GENERATION,
+                manifest_key: "generation-key".to_owned(),
+            },
+            sidecars: vec![super::CodeGraphPublicationSidecar {
+                language: "python".to_owned(),
+                path: ".zvec-grep/python-callfacts-v1.json".to_owned(),
+                sha256: "sidecar-digest".to_owned(),
+                context_sha256: "context-digest".to_owned(),
+            }],
+        };
+        let encoded = serde_json::to_vec(&publication).expect("encode publication");
+        assert_eq!(
+            serde_json::from_slice::<super::CodeGraphPublication>(&encoded)
+                .expect("decode publication"),
+            publication
+        );
+    }
+
+    #[test]
+    fn reads_an_explicit_legacy_json_sidecar() {
+        let directory = tempdir().expect("workspace");
+        fs::write(directory.path().join("main.go"), "package main\n").expect("Go source");
+        let artifact = build_go_codegraph(directory.path()).expect("build graph");
+        let path = directory.path().join(CODEGRAPH_JSON_FILE);
+        fs::write(
+            &path,
+            serde_json::to_vec(&artifact).expect("encode legacy artifact"),
+        )
+        .expect("write legacy artifact");
+
+        assert_eq!(
+            read_codegraph(&path).expect("decode legacy artifact"),
+            artifact
+        );
+    }
+
+    #[test]
+    fn deleting_a_file_removes_its_definitions_and_invalidates_incoming_calls() {
+        let directory = tempdir().expect("workspace");
+        let helper = directory.path().join("helper.go");
+        fs::write(&helper, "package main\n\nfunc helper() {}\n").expect("helper source");
+        fs::write(
+            directory.path().join("caller.go"),
+            "package main\n\nfunc caller() { helper(helper()) }\n",
+        )
+        .expect("caller source");
+        let base = build_go_codegraph(directory.path()).expect("base graph");
+        let caller_id = node_id(&base, "function", "caller");
+
+        fs::remove_file(helper).expect("delete helper source");
+        let updated = update_go_codegraph(
+            &base,
+            directory.path(),
+            &[CodeGraphChange::Delete("helper.go".into())],
+        )
+        .expect("updated graph");
+
+        assert!(!updated.files.iter().any(|file| file.path == "helper.go"));
+        assert!(!updated.nodes.iter().any(|node| node.name == "helper"));
+        assert!(updated.edges.iter().any(|edge| {
+            edge.kind == "calls"
+                && edge.source == caller_id
+                && edge.target_name.as_deref() == Some("helper")
+                && edge.target.is_none()
+                && !edge.resolved
+        }));
+        assert_ne!(base.manifest_key, updated.manifest_key);
+        assert_eq!(
+            updated,
+            build_go_codegraph(directory.path()).expect("full graph")
+        );
+    }
+
+    #[test]
+    fn rename_replaces_logical_ids_and_retargets_incoming_calls() {
+        let directory = tempdir().expect("workspace");
+        let old_path = directory.path().join("old.go");
+        let new_path = directory.path().join("new.go");
+        fs::write(&old_path, "package main\n\nfunc helper() {}\n").expect("helper source");
+        fs::write(
+            directory.path().join("caller.go"),
+            "package main\n\nfunc caller() { helper() }\n",
+        )
+        .expect("caller source");
+        let base = build_go_codegraph(directory.path()).expect("base graph");
+        let old_id = node_id(&base, "function", "helper");
+
+        fs::rename(old_path, &new_path).expect("rename helper source");
+        let updated = update_go_codegraph(
+            &base,
+            directory.path(),
+            &[
+                CodeGraphChange::Delete("old.go".into()),
+                CodeGraphChange::Upsert("new.go".into()),
+            ],
+        )
+        .expect("updated graph");
+        let new_id = node_id(&updated, "function", "helper");
+
+        assert_ne!(old_id, new_id, "logical IDs include the source path");
+        assert!(!updated.files.iter().any(|file| file.path == "old.go"));
+        assert!(updated.files.iter().any(|file| file.path == "new.go"));
+        assert!(updated.edges.iter().any(|edge| {
+            edge.kind == "calls" && edge.target.as_deref() == Some(new_id.as_str()) && edge.resolved
+        }));
+        assert!(
+            !updated
+                .edges
+                .iter()
+                .any(|edge| edge.target.as_deref() == Some(old_id.as_str()))
+        );
+        assert_eq!(
+            updated,
+            build_go_codegraph(directory.path()).expect("full graph")
+        );
+    }
+}

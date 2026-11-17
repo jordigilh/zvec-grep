@@ -11,9 +11,10 @@ mod search_format;
 pub use search_format::SearchPreview;
 
 use std::{
+    collections::{BTreeMap, HashMap},
     fmt,
     path::{Component, Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use async_trait::async_trait;
@@ -57,7 +58,30 @@ use zg_engine::{
 };
 
 pub const AGENT_TOOL_NAME: &str = "zvec_grep_search";
-pub const FULL_TOOL_NAMES: [&str; 6] = [
+pub const AGENT_TOOL_NAMES: [&str; 11] = [
+    "zvec_grep_callgraph_blast_radius",
+    "zvec_grep_callgraph_cluster",
+    "zvec_grep_callgraph_communities",
+    "zvec_grep_callgraph_shortest_path",
+    "zvec_grep_codegraph_affected",
+    "zvec_grep_codegraph_capabilities",
+    "zvec_grep_codegraph_explain",
+    "zvec_grep_codegraph_neighbors",
+    "zvec_grep_codegraph_node",
+    "zvec_grep_codegraph_relation_path",
+    AGENT_TOOL_NAME,
+];
+pub const FULL_TOOL_NAMES: [&str; 16] = [
+    "zvec_grep_callgraph_blast_radius",
+    "zvec_grep_callgraph_cluster",
+    "zvec_grep_callgraph_communities",
+    "zvec_grep_callgraph_shortest_path",
+    "zvec_grep_codegraph_affected",
+    "zvec_grep_codegraph_capabilities",
+    "zvec_grep_codegraph_explain",
+    "zvec_grep_codegraph_neighbors",
+    "zvec_grep_codegraph_node",
+    "zvec_grep_codegraph_relation_path",
     "zvec_grep_index",
     "zvec_grep_index_drop",
     "zvec_grep_index_status",
@@ -257,8 +281,20 @@ pub struct ZvecGrepMcpServer {
     index_operations: Arc<dyn IndexOperationProvider>,
     status: Option<Arc<dyn ServerStatusProvider>>,
     toolset: McpToolset,
+    codegraph_cache: Arc<CodeGraphIndexCache>,
     router: ToolRouter<Self>,
     consent_state: Arc<consent::ContinuationState>,
+}
+
+#[derive(Default)]
+struct CodeGraphIndexCache {
+    indexes: Mutex<HashMap<PathBuf, CachedCodeGraphIndex>>,
+}
+
+#[derive(Clone)]
+struct CachedCodeGraphIndex {
+    source_stamps: BTreeMap<String, zg_engine::codegraph::CodeGraphSourceStamp>,
+    index: Arc<zg_engine::codegraph::CallGraphIndex>,
 }
 
 impl ZvecGrepMcpServer {
@@ -324,7 +360,7 @@ impl ZvecGrepMcpServer {
         }
         if toolset == McpToolset::Agent {
             for name in FULL_TOOL_NAMES {
-                if name != AGENT_TOOL_NAME {
+                if !AGENT_TOOL_NAMES.contains(&name) {
                     router.disable_route(name);
                 }
             }
@@ -334,9 +370,62 @@ impl ZvecGrepMcpServer {
             index_operations,
             status,
             toolset,
+            codegraph_cache: Arc::new(CodeGraphIndexCache::default()),
             router,
             consent_state: Arc::new(consent::ContinuationState::default()),
         }
+    }
+
+    async fn codegraph_index(
+        &self,
+        root: PathBuf,
+    ) -> Result<Arc<zg_engine::codegraph::CallGraphIndex>, String> {
+        let root = root
+            .canonicalize()
+            .map_err(|error| format!("resolve codegraph root {}: {error}", root.display()))?;
+        let cached = self
+            .codegraph_cache
+            .indexes
+            .lock()
+            .map_err(|_| "codegraph cache lock is poisoned".to_owned())?
+            .get(&root)
+            .cloned();
+        let scan_root = root.clone();
+        let source_stamps = tokio::task::spawn_blocking(move || {
+            zg_engine::codegraph::codegraph_source_stamps(&scan_root)
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|error| format!("codegraph freshness scan failed: {error}"))??;
+        if let Some(cached) = cached
+            && cached.source_stamps == source_stamps
+        {
+            return Ok(cached.index);
+        }
+
+        let refresh_root = root.clone();
+        let (artifact, source_stamps) = tokio::task::spawn_blocking(move || {
+            let (_, artifact) = zg_engine::codegraph::refresh_codegraph(&refresh_root)
+                .map_err(|error| error.to_string())?;
+            let source_stamps = zg_engine::codegraph::codegraph_source_stamps(&refresh_root)
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>((artifact, source_stamps))
+        })
+        .await
+        .map_err(|error| format!("codegraph refresh task failed: {error}"))??;
+        let index = Arc::new(zg_engine::codegraph::CallGraphIndex::new(&artifact));
+        self.codegraph_cache
+            .indexes
+            .lock()
+            .map_err(|_| "codegraph cache lock is poisoned".to_owned())?
+            .insert(
+                root,
+                CachedCodeGraphIndex {
+                    source_stamps,
+                    index: Arc::clone(&index),
+                },
+            );
+        Ok(index)
     }
 
     #[must_use]
@@ -529,6 +618,335 @@ impl ZvecGrepMcpServer {
                 Err(error) => error_result(&error),
             },
         )
+    }
+
+    #[tool(
+        name = "zvec_grep_callgraph_blast_radius",
+        description = "Find direct and transitive callers of a function in the selected live checkout. Omit depth for complete reverse reachability; explicit depth values limit hops without an artificial ten-hop ceiling. Returns resolved callers separately from possible callers reached through ambiguous candidates. An explicitly generated Go go/types sidecar is used only when source and recorded module/workspace context inputs match; the result includes its generation-context fingerprint. Facts are scoped to the recorded Go environment, so regenerate after changing Go toolchain, target, flags, workspace, or dependency configuration. Otherwise uses the syntax-derived graph. Refreshes from current source contents before querying, including uncommitted changes.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CallGraphBlastRadius>(),
+        annotations(
+            title = "Find code callers",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_callgraph_blast_radius(
+        &self,
+        Parameters(input): Parameters<CallGraphBlastRadiusInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("function", &input.function, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let function = input.function.trim();
+        let depth = input.depth;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .blast_radius(function, depth)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_affected",
+        description = "Find definite and possible reverse dependencies of any codegraph node over selected relation kinds. When relations are omitted, uses calls, references, imports, inheritance, implementation, embedding, re-export, test, mix-in, and manifest dependency relationships. Refreshes the selected live checkout from current source contents before querying, including uncommitted changes.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphAffected>(),
+        annotations(
+            title = "Find affected codegraph nodes",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_affected(
+        &self,
+        Parameters(input): Parameters<CodeGraphAffectedInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("query", &input.query, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let depth = input.depth.unwrap_or(2);
+        if depth > 10 {
+            return Err(ErrorData::invalid_params(
+                "depth must be between 0 and 10".to_owned(),
+                None,
+            ));
+        }
+        let relations = parse_codegraph_relations(input.relations.as_deref())
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .affected(
+                input.query.trim(),
+                depth,
+                relations.as_deref(),
+                input.include_possible.unwrap_or(false),
+            )
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_callgraph_shortest_path",
+        description = "Find a directed call path between two functions in the selected live checkout. Refreshes the root-scoped Go, Rust, TypeScript/TSX, and Python callgraph from current source contents before querying, including uncommitted changes.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CallGraphPath>(),
+        annotations(
+            title = "Find a code call path",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_callgraph_shortest_path(
+        &self,
+        Parameters(input): Parameters<CallGraphShortestPathInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("source", &input.source, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("target", &input.target, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let source = input.source.trim();
+        let target = input.target.trim();
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .shortest_path(source, target)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_callgraph_cluster",
+        description = "Return the callgraph community containing a function in the selected live checkout. Refreshes the root-scoped Go, Rust, TypeScript/TSX, and Python callgraph from current source contents before querying, including uncommitted changes.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CallGraphCluster>(),
+        annotations(
+            title = "Inspect a callgraph community",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_callgraph_cluster(
+        &self,
+        Parameters(input): Parameters<CallGraphClusterInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("function", &input.function, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let function = input.function.trim();
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .cluster(function)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_callgraph_communities",
+        description = "List callgraph communities for the selected live checkout. Refreshes the root-scoped Go, Rust, TypeScript/TSX, and Python callgraph from current source contents before querying, including uncommitted changes.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CallGraphClustering>(),
+        annotations(
+            title = "List callgraph communities",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_callgraph_communities(
+        &self,
+        Parameters(input): Parameters<RootInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .clustering()
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_capabilities",
+        description = "Report the languages present in a live checkout and the root-specific status of each codegraph relation. This is the capability surface for project-aware relation support; codegraph tools remain statically discoverable rather than being hidden by language.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphCapabilities>(),
+        annotations(
+            title = "Inspect codegraph capabilities",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_capabilities(
+        &self,
+        Parameters(input): Parameters<RootInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        Ok(structured_result(index.capabilities()))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_node",
+        description = "Inspect any source file, package, declaration, or other codegraph node and its directly attached relations. Refreshes the selected live checkout from current source contents before querying, including uncommitted changes.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphNodeResult>(),
+        annotations(
+            title = "Inspect a codegraph node",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_node(
+        &self,
+        Parameters(input): Parameters<CodeGraphNodeInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("query", &input.query, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .node(input.query.trim())
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_neighbors",
+        description = "List incoming and outgoing neighbors for any codegraph node, optionally restricted to relation kinds. Possible ambiguous targets are excluded unless includePossible is true.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphNeighbors>(),
+        annotations(
+            title = "List codegraph neighbors",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_neighbors(
+        &self,
+        Parameters(input): Parameters<CodeGraphNeighborsInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("query", &input.query, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let relations = parse_codegraph_relations(input.relations.as_deref())
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .neighbors(
+                input.query.trim(),
+                relations.as_deref(),
+                input.include_possible.unwrap_or(false),
+            )
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_relation_path",
+        description = "Find a shortest directed path between any two codegraph nodes over all relations or selected relation kinds. Possible ambiguous targets are excluded unless includePossible is true.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphRelationPath>(),
+        annotations(
+            title = "Find a codegraph relation path",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_relation_path(
+        &self,
+        Parameters(input): Parameters<CodeGraphRelationPathInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("source", &input.source, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("target", &input.target, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let relations = parse_codegraph_relations(input.relations.as_deref())
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .relation_path(
+                input.source.trim(),
+                input.target.trim(),
+                relations.as_deref(),
+                input.include_possible.unwrap_or(false),
+            )
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
+    }
+
+    #[tool(
+        name = "zvec_grep_codegraph_explain",
+        description = "Explain a codegraph node with attached relations, relation counts, manifest identity, and applied semantic context fingerprints.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<zg_engine::codegraph::CodeGraphExplanation>(),
+        annotations(
+            title = "Explain a codegraph node",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn zvec_grep_codegraph_explain(
+        &self,
+        Parameters(input): Parameters<CodeGraphNodeInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = absolute_root(&input.root)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        validate_text("query", &input.query, 1, MAX_QUERY_CHARS)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let index = self
+            .codegraph_index(root)
+            .await
+            .map_err(|message| ErrorData::internal_error(message, None))?;
+        let result = index
+            .explain(input.query.trim())
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        Ok(structured_result(result))
     }
 
     #[tool(
@@ -809,6 +1227,111 @@ pub struct RootInput {
     /// Absolute workspace root visible to the daemon.
     #[schemars(length(min = 1, max = 1024))]
     pub root: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CallGraphBlastRadiusInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Function or method name, optionally path-qualified.
+    #[schemars(length(min = 1, max = 4000))]
+    pub function: String,
+    /// Maximum call distance to include. Omit to traverse until the reverse
+    /// frontier is empty; explicit values are honored without an artificial
+    /// ten-hop ceiling.
+    pub depth: Option<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodeGraphAffectedInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Any source file, package, declaration, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub query: String,
+    /// Maximum reverse relation distance to include (defaults to 2; range 0-10).
+    #[schemars(range(min = 0, max = 10))]
+    pub depth: Option<usize>,
+    /// Optional relation allow-list. Omit to use the default affected relations.
+    #[schemars(length(max = 13))]
+    pub relations: Option<Vec<String>>,
+    /// Include ambiguous candidate paths as possible affected nodes.
+    pub include_possible: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CallGraphShortestPathInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Source function or method, optionally path-qualified.
+    #[schemars(length(min = 1, max = 4000))]
+    pub source: String,
+    /// Target function or method, optionally path-qualified.
+    #[schemars(length(min = 1, max = 4000))]
+    pub target: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CallGraphClusterInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Function or method name, optionally path-qualified.
+    #[schemars(length(min = 1, max = 4000))]
+    pub function: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodeGraphNodeInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Node name, path-qualified name, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub query: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodeGraphNeighborsInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Node name, path-qualified name, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub query: String,
+    /// Optional relation allow-list. Omit to traverse every serialized relation.
+    #[schemars(length(max = 13))]
+    pub relations: Option<Vec<String>>,
+    /// Include ambiguous candidate targets as possible neighbors.
+    pub include_possible: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodeGraphRelationPathInput {
+    /// Absolute workspace root of the live checkout to inspect.
+    #[schemars(length(min = 1, max = 1024))]
+    pub root: String,
+    /// Source node name, path-qualified name, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub source: String,
+    /// Target node name, path-qualified name, or exact sidecar node ID.
+    #[schemars(length(min = 1, max = 4000))]
+    pub target: String,
+    /// Optional relation allow-list. Omit to traverse every serialized relation.
+    #[schemars(length(max = 13))]
+    pub relations: Option<Vec<String>>,
+    /// Include ambiguous candidate targets as possible path steps.
+    pub include_possible: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -1918,6 +2441,31 @@ fn validate_text(name: &str, value: &str, min: usize, max: usize) -> Result<(), 
     Ok(())
 }
 
+fn parse_codegraph_relations(
+    values: Option<&[String]>,
+) -> Result<Option<Vec<zg_engine::codegraph::CodeGraphRelationKind>>, String> {
+    let Some(values) = values else {
+        return Ok(None);
+    };
+    if values.len() > 13 {
+        return Err("relations accepts at most 13 values".to_owned());
+    }
+    let mut relations = Vec::with_capacity(values.len());
+    for value in values {
+        validate_text("relation", value, 1, 64)?;
+        let Some(relation) = zg_engine::codegraph::CodeGraphRelationKind::parse(value.trim())
+        else {
+            return Err(format!(
+                "unknown graph relation `{value}`; expected one of defines, contains, imports, calls, inherits, implements, embeds, imports_from, re_exports, overrides, mixes_in, references, tests, depends_on"
+            ));
+        };
+        if !relations.contains(&relation) {
+            relations.push(relation);
+        }
+    }
+    Ok(Some(relations))
+}
+
 fn parse_optional_time(value: Option<TimeInput>, name: &str) -> Result<Option<u64>, String> {
     value.map(|value| parse_time(value, name)).transpose()
 }
@@ -2310,14 +2858,22 @@ fn range_label(range: &ContentRange) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc};
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        fs,
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
 
     use rmcp::ServerHandler;
     use rmcp::model::ContentBlock;
-    use zg_engine::{EngineError, ZvecGrep};
+    use serde_json::Value;
+    use tempfile::tempdir;
+    use zg_engine::{EngineError, ZvecGrep, codegraph::GoCallFactsContext};
 
     use super::{
-        AGENT_TOOL_NAME, FULL_TOOL_NAMES, FreshnessInput, IndexInput, IndexToolRequest,
+        AGENT_TOOL_NAME, AGENT_TOOL_NAMES, CodeGraphAffectedInput, CodeGraphNeighborsInput,
+        CodeGraphRelationPathInput, FULL_TOOL_NAMES, FreshnessInput, IndexInput, IndexToolRequest,
         QueryListInput, RgInput, SearchInput, ServerStatusProvider, ServerStatusSnapshot,
         ZvecGrepMcpServer, error_result,
     };
@@ -2701,16 +3257,21 @@ mod tests {
     }
 
     #[test]
-    fn agent_server_exposes_only_search() {
+    fn agent_server_exposes_search_and_graph_tools_without_admin_tools() {
         let server = ZvecGrepMcpServer::agent_direct(Arc::new(ZvecGrep::new()));
         let tools = server.listed_tools();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name, AGENT_TOOL_NAME);
+        let names = tools
+            .iter()
+            .map(|tool| tool.name.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(names, AGENT_TOOL_NAMES);
+        assert!(names.iter().all(|name| !name.contains("_index")));
+        assert!(!names.contains(&"zvec_grep_rg"));
         assert!(server.get_info().instructions.is_some());
     }
 
     #[test]
-    fn full_server_exposes_all_six_tools() {
+    fn full_server_exposes_all_tools() {
         let server =
             ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
         let names = server
@@ -2725,6 +3286,504 @@ mod tests {
                 .instructions
                 .is_some_and(|instructions| instructions.contains("zvec_grep_index"))
         );
+    }
+
+    #[tokio::test]
+    async fn codegraph_cache_is_root_scoped_and_refreshes_current_source() {
+        let first = tempdir().expect("first workspace");
+        let second = tempdir().expect("second workspace");
+        let first_source = first.path().join("module.py");
+        fs::write(
+            &first_source,
+            "def target():\n    pass\ndef caller():\n    target()\n",
+        )
+        .expect("first Python source");
+        fs::write(second.path().join("module.py"), "def target():\n    pass\n")
+            .expect("second Python source");
+        let server =
+            ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
+
+        let first_index = server
+            .codegraph_index(first.path().to_path_buf())
+            .await
+            .expect("first codegraph");
+        assert_eq!(
+            first_index
+                .blast_radius("target", Some(1))
+                .expect("first callers")
+                .callers_by_depth,
+            [vec!["module.py::caller".to_owned()]]
+        );
+        let second_index = server
+            .codegraph_index(second.path().to_path_buf())
+            .await
+            .expect("second codegraph");
+        assert!(
+            second_index
+                .blast_radius("target", Some(1))
+                .expect("second callers")
+                .callers_by_depth
+                .is_empty()
+        );
+
+        fs::write(
+            first_source,
+            "def target():\n    pass\ndef caller():\n    pass\n",
+        )
+        .expect("updated first source");
+        let refreshed = server
+            .codegraph_index(first.path().to_path_buf())
+            .await
+            .expect("refreshed first codegraph");
+        assert!(
+            refreshed
+                .blast_radius("target", Some(1))
+                .expect("refreshed callers")
+                .callers_by_depth
+                .is_empty()
+        );
+        assert!(
+            second_index
+                .blast_radius("target", Some(1))
+                .expect("second workspace remains isolated")
+                .callers_by_depth
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn codegraph_capabilities_are_root_scoped_and_report_reserved_relations() {
+        let workspace = tempdir().expect("workspace");
+        fs::write(
+            workspace.path().join("main.go"),
+            "package main\n\nfunc main() {}\n",
+        )
+        .expect("Go source");
+        fs::write(workspace.path().join("lib.rs"), "pub fn helper() {}\n").expect("Rust source");
+        let server =
+            ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
+
+        let result = server
+            .zvec_grep_codegraph_capabilities(super::Parameters(super::RootInput {
+                root: workspace.path().display().to_string(),
+            }))
+            .await
+            .expect("capabilities tool call");
+        let structured = result.structured_content.expect("structured capabilities");
+        assert_eq!(
+            structured["project_languages"],
+            serde_json::json!(["go", "rust"])
+        );
+        assert_eq!(
+            structured["relation_capabilities"]
+                .as_array()
+                .expect("relation capabilities")
+                .iter()
+                .find(|capability| capability["relation"] == "implements")
+                .expect("implements capability")["status"],
+            "supported"
+        );
+        assert_eq!(
+            structured["relation_capabilities"]
+                .as_array()
+                .expect("relation capabilities")
+                .iter()
+                .find(|capability| capability["relation"] == "overrides")
+                .expect("overrides capability")["status"],
+            "reserved"
+        );
+    }
+
+    #[tokio::test]
+    async fn codegraph_relation_qrels_are_stable_through_mcp_tools() {
+        let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../zg-codegraph/tests/fixtures/codegraph-relations-20260928");
+        for language in ["go", "rust", "typescript", "python"] {
+            let fixture = fixture_root.join(language);
+            let truth = read_relation_fixture_truth(&fixture);
+            let workspace = copy_relation_fixture(&fixture, &truth);
+            let root = workspace.path().display().to_string();
+            let server =
+                ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
+
+            for qrel in truth["topology_qrels"]["neighbors"]
+                .as_array()
+                .expect("neighbor qrels")
+            {
+                let result = server
+                    .zvec_grep_codegraph_neighbors(super::Parameters(CodeGraphNeighborsInput {
+                        root: root.clone(),
+                        query: qrel["query"].as_str().expect("neighbor query").to_owned(),
+                        relations: Some(relation_names(&qrel["relations"])),
+                        include_possible: Some(false),
+                    }))
+                    .await
+                    .expect("MCP neighbors tool call")
+                    .structured_content
+                    .expect("MCP neighbors structured output");
+                assert_mcp_neighbors(&result, qrel);
+            }
+
+            for qrel in truth["topology_qrels"]["paths"]
+                .as_array()
+                .expect("path qrels")
+            {
+                let result = server
+                    .zvec_grep_codegraph_relation_path(super::Parameters(
+                        CodeGraphRelationPathInput {
+                            root: root.clone(),
+                            source: qrel["source"].as_str().expect("path source").to_owned(),
+                            target: qrel["target"].as_str().expect("path target").to_owned(),
+                            relations: Some(relation_names(&qrel["relations"])),
+                            include_possible: Some(false),
+                        },
+                    ))
+                    .await
+                    .expect("MCP relation path tool call")
+                    .structured_content
+                    .expect("MCP relation path structured output");
+                assert_eq!(result["path"], qrel["path"]);
+                assert_eq!(result["relations"], qrel["edge_kinds"]);
+                assert_eq!(
+                    result["possible"].as_bool().unwrap_or(false),
+                    qrel["possible"]
+                );
+            }
+
+            for qrel in truth["affected_qrels"].as_array().expect("affected qrels") {
+                let result = server
+                    .zvec_grep_codegraph_affected(super::Parameters(CodeGraphAffectedInput {
+                        root: root.clone(),
+                        query: qrel["query"].as_str().expect("affected query").to_owned(),
+                        depth: Some(
+                            usize::try_from(qrel["depth"].as_u64().expect("affected depth"))
+                                .expect("affected depth fits usize"),
+                        ),
+                        relations: Some(relation_names(&qrel["relations"])),
+                        include_possible: Some(qrel["include_possible"].as_bool().unwrap_or(false)),
+                    }))
+                    .await
+                    .expect("MCP affected tool call")
+                    .structured_content
+                    .expect("MCP affected structured output");
+                assert_mcp_affected(&result, qrel);
+            }
+        }
+    }
+
+    fn read_relation_fixture_truth(fixture: &Path) -> Value {
+        serde_json::from_slice(
+            &fs::read(fixture.join("truth.json")).expect("relation fixture truth"),
+        )
+        .expect("valid relation fixture truth")
+    }
+
+    fn copy_relation_fixture(fixture: &Path, truth: &Value) -> tempfile::TempDir {
+        let workspace = tempdir().expect("relation fixture workspace");
+        for relative in truth["source_sha256"]
+            .as_object()
+            .expect("source hashes")
+            .keys()
+        {
+            let source = fixture.join(relative);
+            let target = workspace.path().join(relative);
+            fs::create_dir_all(target.parent().expect("fixture target parent"))
+                .expect("fixture target directory");
+            fs::copy(source, target).expect("copy relation fixture input");
+        }
+        workspace
+    }
+
+    fn relation_names(value: &Value) -> Vec<String> {
+        value
+            .as_array()
+            .expect("relation list")
+            .iter()
+            .map(|relation| relation.as_str().expect("relation name").to_owned())
+            .collect()
+    }
+
+    fn assert_mcp_neighbors(actual: &Value, qrel: &Value) {
+        assert_eq!(actual["relation_filter"], qrel["relations"]);
+        for direction in ["outgoing", "incoming"] {
+            let actual_edges = actual["neighbors"]
+                .as_array()
+                .expect("neighbors")
+                .iter()
+                .filter(|neighbor| neighbor["direction"] == direction)
+                .map(|neighbor| {
+                    (
+                        mcp_node_label(&neighbor["node"]),
+                        neighbor["relation"]["kind"]
+                            .as_str()
+                            .expect("relation kind")
+                            .to_owned(),
+                        neighbor["relation"]["target_name"]
+                            .as_str()
+                            .map(str::to_owned),
+                    )
+                })
+                .collect::<BTreeSet<_>>();
+            let expected_edges = qrel[direction]
+                .as_array()
+                .expect("expected neighbors")
+                .iter()
+                .map(|neighbor| {
+                    (
+                        neighbor["node"].as_str().expect("expected node").to_owned(),
+                        neighbor["kind"]
+                            .as_str()
+                            .expect("expected relation kind")
+                            .to_owned(),
+                        neighbor["target_name"].as_str().map(str::to_owned),
+                    )
+                })
+                .collect::<BTreeSet<_>>();
+            assert_eq!(actual_edges, expected_edges);
+        }
+    }
+
+    fn assert_mcp_affected(actual: &Value, qrel: &Value) {
+        assert_eq!(actual["relation_filter"], qrel["relations"]);
+        assert_mcp_affected_levels(&actual["affected_by_depth"], &qrel["definite"]);
+        assert_mcp_affected_levels(&actual["possible_affected_by_depth"], &qrel["possible"]);
+    }
+
+    fn assert_mcp_affected_levels(actual: &Value, expected: &Value) {
+        let actual_levels = actual.as_array().expect("affected levels");
+        let expected_levels = expected.as_array().expect("expected affected levels");
+        assert_eq!(actual_levels.len(), expected_levels.len());
+        for (actual_level, expected_level) in actual_levels.iter().zip(expected_levels) {
+            let actual_nodes = actual_level
+                .as_array()
+                .expect("affected level")
+                .iter()
+                .map(|neighbor| {
+                    (
+                        mcp_node_label(&neighbor["node"]),
+                        neighbor["relation"]["kind"]
+                            .as_str()
+                            .expect("relation kind")
+                            .to_owned(),
+                    )
+                })
+                .collect::<BTreeSet<_>>();
+            let expected_nodes = expected_level
+                .as_array()
+                .expect("expected affected level")
+                .iter()
+                .map(|neighbor| {
+                    (
+                        neighbor["node"].as_str().expect("expected node").to_owned(),
+                        neighbor["kind"]
+                            .as_str()
+                            .expect("expected relation kind")
+                            .to_owned(),
+                    )
+                })
+                .collect::<BTreeSet<_>>();
+            assert_eq!(actual_nodes, expected_nodes);
+        }
+    }
+
+    fn mcp_node_label(node: &Value) -> String {
+        node["path"].as_str().map_or_else(
+            || node["name"].as_str().expect("node name").to_owned(),
+            |path| format!("{path}::{}", node["name"].as_str().expect("node name")),
+        )
+    }
+
+    #[tokio::test]
+    async fn blast_radius_tool_consumes_source_pinned_go_callfacts() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../zg-codegraph/tests/fixtures/go-blast-radius");
+        let workspace = tempdir().expect("Go fixture workspace");
+        let context_sha256 = write_mcp_fixture_callfacts(&fixture, workspace.path());
+
+        let server =
+            ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
+        let result = server
+            .zvec_grep_callgraph_blast_radius(super::Parameters(super::CallGraphBlastRadiusInput {
+                root: workspace.path().display().to_string(),
+                function: "app.Target".to_owned(),
+                depth: Some(3),
+            }))
+            .await
+            .expect("blast-radius tool call");
+        let structured = result.structured_content.expect("structured tool result");
+        assert_eq!(
+            structured["callers_by_depth"],
+            serde_json::json!([
+                ["app/calls.go::Direct"],
+                ["app/calls.go::Transitive"],
+                ["app/calls.go::Deep"]
+            ])
+        );
+        assert_eq!(structured["go_callfacts_context_sha256"], context_sha256);
+
+        let possible = server
+            .zvec_grep_callgraph_blast_radius(super::Parameters(super::CallGraphBlastRadiusInput {
+                root: workspace.path().display().to_string(),
+                function: "app.Worker.Execute".to_owned(),
+                depth: Some(2),
+            }))
+            .await
+            .expect("interface blast-radius tool call")
+            .structured_content
+            .expect("structured interface result");
+        assert_eq!(possible["callers_by_depth"], serde_json::json!([]));
+        assert_eq!(
+            possible["possible_callers_by_depth"],
+            serde_json::json!([
+                ["app/calls.go::InterfaceCaller"],
+                ["app/calls.go::InterfaceCallerOuter"]
+            ])
+        );
+
+        fs::remove_file(workspace.path().join(".zvec-grep/go-callfacts-v2.json"))
+            .expect("remove opt-in sidecar");
+        let fallback = server
+            .zvec_grep_callgraph_blast_radius(super::Parameters(super::CallGraphBlastRadiusInput {
+                root: workspace.path().display().to_string(),
+                function: "app.Worker.Execute".to_owned(),
+                depth: Some(1),
+            }))
+            .await
+            .expect("syntax fallback tool call")
+            .structured_content
+            .expect("structured fallback result");
+        assert_eq!(
+            fallback["callers_by_depth"],
+            serde_json::json!([["app/calls.go::InterfaceCaller"]])
+        );
+        assert_eq!(fallback["possible_callers_by_depth"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn blast_radius_tool_omitted_depth_is_exhaustive() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../zg-codegraph/tests/fixtures/go-blast-radius");
+        let workspace = tempdir().expect("Go fixture workspace");
+        write_mcp_fixture_callfacts(&fixture, workspace.path());
+        let server =
+            ZvecGrepMcpServer::full_direct(Arc::new(ZvecGrep::new()), Arc::new(FixedStatus));
+        let result = server
+            .zvec_grep_callgraph_blast_radius(super::Parameters(super::CallGraphBlastRadiusInput {
+                root: workspace.path().display().to_string(),
+                function: "app.Target".to_owned(),
+                depth: None,
+            }))
+            .await
+            .expect("omitted-depth blast-radius tool call")
+            .structured_content
+            .expect("structured result");
+        assert_eq!(
+            result["callers_by_depth"],
+            serde_json::json!([
+                ["app/calls.go::Direct"],
+                ["app/calls.go::Transitive"],
+                ["app/calls.go::Deep"]
+            ])
+        );
+    }
+
+    fn write_mcp_fixture_callfacts(fixture: &std::path::Path, root: &std::path::Path) -> String {
+        for relative in ["go.mod", "app/calls.go", "dep/dep.go"] {
+            let source = fixture.join(relative);
+            let target = root.join(relative);
+            fs::create_dir_all(target.parent().expect("fixture parent"))
+                .expect("fixture directory");
+            fs::copy(source, target).expect("copy Go fixture source");
+        }
+
+        let truth: serde_json::Value =
+            serde_json::from_slice(&fs::read(fixture.join("truth.json")).expect("fixture truth"))
+                .expect("decode fixture truth");
+        let files = truth["source_sha256"]
+            .as_object()
+            .expect("source digests")
+            .iter()
+            .filter(|(path, _)| {
+                std::path::Path::new(path)
+                    .extension()
+                    .is_some_and(|extension| extension == "go")
+            })
+            .map(|(path, digest)| serde_json::json!({"path": path, "sha256": digest}))
+            .collect::<Vec<_>>();
+        let context_files = truth["source_sha256"]
+            .as_object()
+            .expect("source digests")
+            .iter()
+            .filter(|(path, _)| {
+                matches!(
+                    std::path::Path::new(path)
+                        .file_name()
+                        .and_then(|name| name.to_str()),
+                    Some("go.mod" | "go.sum" | "go.work" | "go.work.sum")
+                )
+            })
+            .map(|(path, digest)| zg_engine::codegraph::GoCallFactsFile {
+                path: path.clone(),
+                sha256: digest.as_str().expect("context digest").to_owned(),
+            })
+            .collect();
+        let context = GoCallFactsContext {
+            go_version: "go1.26.0".to_owned(),
+            go_mod: "go.mod".to_owned(),
+            go_work: String::new(),
+            settings: fixture_context_settings(),
+            context_files,
+        };
+        let context_sha256 = context.fingerprint();
+        let sidecar = serde_json::json!({
+            "schema": "zvec-grep.go-callfacts",
+            "version": 2,
+            "context": context,
+            "context_sha256": context_sha256.clone(),
+            "files": files,
+            "calls": truth["calls"],
+        });
+        let sidecar_path = root.join(".zvec-grep/go-callfacts-v2.json");
+        fs::create_dir_all(sidecar_path.parent().expect("sidecar parent"))
+            .expect("sidecar directory");
+        fs::write(
+            sidecar_path,
+            serde_json::to_vec_pretty(&sidecar).expect("serialize sidecar"),
+        )
+        .expect("write Go facts");
+        context_sha256
+    }
+
+    fn fixture_context_settings() -> BTreeMap<String, String> {
+        [
+            "GO111MODULE",
+            "GO386",
+            "GOAMD64",
+            "GOARCH",
+            "GOARM",
+            "GOARM64",
+            "CGO_ENABLED",
+            "GOEXPERIMENT",
+            "GOFLAGS",
+            "GOMIPS",
+            "GOMIPS64",
+            "GOOS",
+            "GOPPC64",
+            "GORISCV64",
+            "GOTOOLCHAIN",
+            "GOWASM",
+        ]
+        .into_iter()
+        .map(|name| {
+            let value = match name {
+                "GOOS" => "darwin",
+                "GOARCH" => "arm64",
+                "CGO_ENABLED" => "1",
+                _ => "",
+            };
+            (name.to_owned(), value.to_owned())
+        })
+        .collect()
     }
 
     #[test]

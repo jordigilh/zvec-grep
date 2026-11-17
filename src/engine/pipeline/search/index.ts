@@ -32,6 +32,7 @@ import type {
 } from "../../types.js";
 import { DEFAULT_SEMANTIC_FEATURES } from "../../types.js";
 import { TimingCollector } from "../../utils/timing.js";
+import { candidateFusionScore } from "./fusion.js";
 import {
   hasPathGlob,
   isAbsolutePathPattern,
@@ -83,7 +84,6 @@ type InternalSearchEvidence = {
 type PathFilterMatcher = (file: FileInfo) => boolean;
 
 const DEFAULT_LIMIT = 7;
-const RRF_K = 60;
 const RECALL_INITIAL_DEPTH = 200;
 const RECALL_MAX_DEPTH = 2000;
 const RECALL_GROWTH_FACTOR = 2;
@@ -162,7 +162,9 @@ export async function searchWorkspaceIndex(
       );
     }
 
-    const fused = timings.timeSync("fusion", () => fuseCandidates(candidates));
+    const fused = timings.timeSync("fusion", () =>
+      fuseCandidates(candidates, limit),
+    );
     const visible = fused.slice(0, limit);
     const tracked = normalized.trackEntityId
       ? fused.find((candidate) => candidate.id === normalized.trackEntityId)
@@ -1214,16 +1216,13 @@ function normalizePathFilterPattern(pattern: string): string {
   return normalizePathPattern(pattern);
 }
 
-function fuseCandidates(candidates: Map<string, Candidate>): Candidate[] {
+function fuseCandidates(
+  candidates: Map<string, Candidate>,
+  limit: number,
+): Candidate[] {
   for (const candidate of candidates.values()) {
-    candidate.score = 0;
+    candidate.score = candidateFusionScore(candidate.recall, limit);
     candidate.forced = candidate.recall.some((trace) => trace.forced);
-
-    for (const recall of candidate.recall) {
-      if (recall.found && recall.rank !== undefined) {
-        candidate.score += 1 / (RRF_K + recall.rank);
-      }
-    }
   }
 
   const fused = [...candidates.values()].sort((left, right) => {
@@ -1599,7 +1598,7 @@ async function chooseBestEntityInFile(
     ctx.storage,
   );
 
-  const [best] = fuseCandidates(candidates);
+  const [best] = fuseCandidates(candidates, 10);
   if (best) {
     return best.id;
   }

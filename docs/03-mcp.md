@@ -20,7 +20,8 @@ refresh, authentication, and logs.
 
 ## Default agent toolset
 
-The default `agent` toolset intentionally exposes only search:
+The default `agent` toolset exposes indexed semantic search and root-scoped
+callgraph queries. It omits index deletion and other workspace administration.
 
 Agents first decide whether the requested answer should be grounded in the
 current indexed workspace, then choose exact or semantic retrieval. The same
@@ -36,10 +37,49 @@ incidental, or comparative workspace mentions do not establish relevance.
 | Tool | Use it when | Index required |
 | --- | --- | --- |
 | `zvec_grep_search` | The answer is workspace-grounded and wording or location is unknown, or semantic, fuzzy, relationship, chronology, causality, comparison, or cross-file synthesis is required | Yes |
+| `zvec_grep_callgraph_blast_radius` | Finding direct and transitive callers of a function | No |
+| `zvec_grep_callgraph_shortest_path` | Checking whether one function can call another and how | No |
+| `zvec_grep_callgraph_cluster` | Inspecting the callgraph community around a function | No |
+| `zvec_grep_callgraph_communities` | Listing all callgraph communities | No |
+| `zvec_grep_codegraph_capabilities` | Reporting root-specific languages and relation support | No |
+| `zvec_grep_codegraph_node` | Inspecting any file, package, or declaration node and its relations | No |
+| `zvec_grep_codegraph_neighbors` | Listing incoming/outgoing neighbors with optional relation filters | No |
+| `zvec_grep_codegraph_relation_path` | Finding paths across selected codegraph relations | No |
+| `zvec_grep_codegraph_affected` | Finding definite and possible reverse dependencies of any codegraph node | No |
+| `zvec_grep_codegraph_explain` | Explaining a node with relation counts and snapshot provenance | No |
 
 Agents use native grep or rg when locating an exact word, quotation, name, date,
 key, filename, path, source fragment, or regex is sufficient. For mixed tasks,
 start with `zvec_grep_search`, then use native grep or rg for focused follow-up.
+For an exact callers, shortest-call-path, or callgraph-community question, use
+the corresponding `zvec_grep_callgraph_*` tool with the intended worktree root.
+For `zvec_grep_callgraph_blast_radius`, omit `depth` to traverse the complete
+reverse reachable callgraph; an explicit `depth` value limits traversal to
+that many hops. Definite and possible callers remain separate at each shortest
+distance, and cycles are deduplicated safely. This supports tracing a function
+through multiple source-present packages or libraries to application flows.
+`callers_by_depth` is definite static reachability;
+`possible_callers_by_depth` is ambiguous or dynamic-dispatch reachability; and
+`unresolved_calls`/`ambiguous_calls` expose incomplete or uncertain evidence.
+An empty bucket means no observed static path, not proof of safety.
+
+The graph does not establish runtime or deployment reachability. Paths may be
+absent when runtime configuration or feature flags, reflection, generated code,
+unsupported build tags, dynamic dispatch, function values, plugins, or
+incomplete source/build context affect execution. Validate those conditions
+separately.
+For source-file, package, declaration, neighbor, relation-path, or provenance
+questions, use the corresponding `zvec_grep_codegraph_*` tool. Call
+`zvec_grep_codegraph_capabilities` first when relation support is material to the
+answer. Relation filters are `defines`, `imports`, `calls`, `inherits`,
+`imports_from`, `re_exports`, `implements`, `embeds`, `overrides`, `mixes_in`,
+`references`, `tests`, and `depends_on`;
+possible ambiguous targets are excluded unless `includePossible` is requested.
+The capabilities result reports `supported`, `unsupported`, or `reserved` for
+each relation at the selected root. MCP discovery remains static; tools are not
+hidden based on the languages found in one project.
+`depends_on` is supported only when an explicit package manifest declares the
+dependency; it is not inferred from source import names.
 When semantic discovery is selected because no sufficient exact anchor is
 available and the user asks whether conceptually related material exists
 locally, agents make at most one focused search probe and stop when its results
@@ -49,6 +89,23 @@ open-world knowledge, current external facts, and web content that does not
 depend on local evidence use the appropriate external source instead.
 
 Every workspace tool input uses an absolute `root` visible to the daemon.
+Graph operations refresh a sidecar from current Go, Rust, TypeScript/TSX, and
+Python source before querying. The sidecar and in-memory query cache are scoped
+to the canonical root, so separate worktrees do not share graph state. Added,
+modified, deleted, and uncommitted source changes are reflected incrementally.
+Go, Rust, TypeScript, and Python callgraph queries can additionally consume
+explicitly generated call-facts sidecars when their complete source hashes,
+recorded analysis context, context-file hashes, and call-site ranges match.
+Results include the applied language context fingerprints. Facts are scoped to
+the environment in which they were generated; regenerate a sidecar after
+changing the relevant compiler/analyzer, target, build flags, workspace, or
+dependency configuration. Go interface-dispatch and Rust trait-dispatch
+callers are reported as possible, not definite. TypeScript `any`/`unknown`,
+unions, structural calls, and unsupported declarations, plus Python `Any`,
+dynamic imports, monkey patching, decorators, and unbound calls, remain
+non-definite. Missing, stale, malformed, or inconsistent facts fall back to
+syntax-derived edges, which may use name matching and are not
+compiler-verified.
 
 ## `zvec_grep_search`
 
@@ -76,6 +133,19 @@ Explicit query routes and scope:
   "fileTypes": ["ts"],
   "fuse": true,
   "limit": 10
+}
+```
+
+For a composite question, keep the original query as the primary hybrid group
+and add one focused supplemental group. Leave `fuse` unset when the agent needs
+to inspect each facet's own ranked results:
+
+```json
+{
+  "root": "/absolute/path/to/workspace",
+  "query": "Where is discovery state validated after list_workflows?",
+  "vector": ["Where is discovery state created and attached to context?"],
+  "limit": 5
 }
 ```
 
@@ -164,11 +234,20 @@ zg --server off
 zg --server on --mcp-toolset full
 ```
 
-The `full` toolset exposes six tools:
+The `full` toolset exposes fifteen tools:
 
 | Tool | Purpose |
 | --- | --- |
 | `zvec_grep_search` | Indexed retrieval |
+| `zvec_grep_callgraph_blast_radius` | Root-scoped callers and impact radius |
+| `zvec_grep_callgraph_shortest_path` | Root-scoped call path between two functions |
+| `zvec_grep_callgraph_cluster` | Callgraph community for a function |
+| `zvec_grep_callgraph_communities` | All callgraph communities |
+| `zvec_grep_codegraph_capabilities` | Root-specific languages and relation support |
+| `zvec_grep_codegraph_node` | Any codegraph node and attached relations |
+| `zvec_grep_codegraph_neighbors` | Relation-filtered incoming/outgoing neighbors |
+| `zvec_grep_codegraph_relation_path` | Relation-filtered shortest path |
+| `zvec_grep_codegraph_explain` | Node explanation and snapshot provenance |
 | `zvec_grep_rg` | No-index exhaustive search |
 | `zvec_grep_index` | Create, update, rebuild, or explicitly drop an index |
 | `zvec_grep_index_drop` | Explicitly delete an index |

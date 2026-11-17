@@ -8,6 +8,7 @@ import {
   diagnoseFileSearch,
   searchWorkspaceIndex,
 } from "../../dist/engine/pipeline/search/index.js";
+import { candidateFusionScore } from "../../dist/engine/pipeline/search/fusion.js";
 import { FakeEmbeddingModel } from "../helpers/fake-embedding.mjs";
 import { cachedArtifactDigest } from "../../dist/engine/utils/artifact-digest.js";
 
@@ -58,6 +59,13 @@ function fragment(storedEntity, options = {}) {
     content: storedEntity.content,
     metadata: storedEntity.metadata,
   };
+}
+
+function routeRecall(ftsRank, vectorRank) {
+  return [
+    { path: "fts", found: ftsRank !== undefined, rank: ftsRank },
+    { path: "vector", found: vectorRank !== undefined, rank: vectorRank },
+  ];
 }
 
 function createFixture() {
@@ -160,6 +168,34 @@ function createFixture() {
     },
   };
 }
+
+test("hybrid fusion preserves strong route hits and rewards close agreement", () => {
+  const score = (recall) => candidateFusionScore(recall, 10);
+  const retryMembership = score(routeRecall(1, 84));
+  const unrelatedRetry = score(routeRecall(10, 2));
+  assert.ok(retryMembership > unrelatedRetry);
+
+  const validatorGuard = score(routeRecall(2, 36));
+  const unrelatedSelection = score(routeRecall(3, 11));
+  assert.ok(validatorGuard > unrelatedSelection);
+
+  const discoveryGuard = score(routeRecall(4, 6));
+  const catalogFetch = score(routeRecall(5, 1));
+  assert.ok(discoveryGuard > catalogFetch);
+
+  const moderatelyRankedAgreement = score(routeRecall(76, 39));
+  const vectorOnly = score([{ path: "vector", found: true, rank: 39 }]);
+  assert.ok(
+    Math.abs(moderatelyRankedAgreement - (1 / 99 + (1 / 99) * 0.25)) < 1e-12,
+  );
+  assert.ok(moderatelyRankedAgreement > vectorOnly);
+
+  const transitionBandAgreement = score(routeRecall(26, 12));
+  assert.ok(
+    Math.abs(transitionBandAgreement - (1 / 72 + 0.07 * (1.1 / 86))) < 1e-12,
+  );
+  assert.ok(retryMembership > transitionBandAgreement);
+});
 
 test("search plan rejects malformed routes, filters, time ranges, and missing models", async () => {
   const { context } = createFixture();
@@ -275,6 +311,26 @@ test("hybrid search filters, deduplicates, fuses, traces, prefers symbols, and t
   assert.ok(result.timings.some((entry) => entry.name === "search_total"));
 });
 
+test("route-aware fusion protects discordant high-rank results and rewards close routes", () => {
+  const recall = (path, rank) => ({ path, found: true, rank });
+  const score = (ftsRank, vectorRank, limit = 10) =>
+    candidateFusionScore(
+      [recall("fts", ftsRank), recall("vector", vectorRank)],
+      limit,
+    );
+
+  assert.ok(score(1, 84) > score(10, 2));
+  assert.ok(score(1, 84) > score(14, 10));
+  assert.ok(score(2, 36) > score(3, 11));
+  assert.ok(score(2, 47) > score(30, 25));
+  assert.ok(score(4, 6) > score(1, 178));
+
+  const agreeing = score(76, 39);
+  const expected = (1 / (60 + 39)) * 1.25;
+  assert.ok(Math.abs(agreeing - expected) < 1e-12);
+  assert.ok(score(8, 4) > score(1, undefined));
+});
+
 test("hybrid fusion ties use source locations instead of workspace-specific entity IDs", async () => {
   function createTieFixture(firstId, secondId) {
     const fixture = createFixture();
@@ -286,50 +342,44 @@ test("hybrid fusion ties use source locations instead of workspace-specific enti
     const firstCandidate = { entity: first, id: firstId };
     const secondCandidate = { entity: second, id: secondId };
 
-    function sparseHits(path, rankSixCandidate, rankTenCandidate) {
+    function sparseHits(path, candidate) {
       const hits = new Array(10);
       hits[5] = {
-        fragment: fragment(rankSixCandidate.entity, {
-          id: rankSixCandidate.id,
+        fragment: fragment(candidate.entity, {
+          id: candidate.id,
         }),
-        file: rankSixCandidate === firstCandidate ? firstFile : secondFile,
-        path,
-        score: 1,
-      };
-      hits[9] = {
-        fragment: fragment(rankTenCandidate.entity, {
-          id: rankTenCandidate.id,
-        }),
-        file: rankTenCandidate === firstCandidate ? firstFile : secondFile,
+        file: candidate === firstCandidate ? firstFile : secondFile,
         path,
         score: 1,
       };
       return hits;
     }
 
-    fixture.storage.searchFts = () =>
-      sparseHits("fts", secondCandidate, firstCandidate);
-    fixture.storage.searchVector = () =>
-      sparseHits("vector", firstCandidate, secondCandidate);
+    // The retuned scorer weights routes asymmetrically, so a genuine score
+    // tie requires identical per-route best ranks. Serve each candidate the
+    // same rank from its own fts route; only the tie-break may order them.
+    fixture.storage.searchFts = (query) =>
+      query === "tie-first"
+        ? sparseHits("fts", firstCandidate)
+        : sparseHits("fts", secondCandidate);
     return fixture;
   }
 
+  const routes = [
+    { mode: "fts", query: "tie-first" },
+    { mode: "fts", query: "tie-second" },
+  ];
+
   const first = await searchWorkspaceIndex(
     {
-      routes: [
-        { mode: "fts", query: "tie" },
-        { mode: "vector", query: "tie" },
-      ],
+      routes,
       limit: 2,
     },
     createTieFixture("workspace-a", "workspace-b").context,
   );
   const second = await searchWorkspaceIndex(
     {
-      routes: [
-        { mode: "fts", query: "tie" },
-        { mode: "vector", query: "tie" },
-      ],
+      routes,
       limit: 2,
     },
     createTieFixture("workspace-z", "workspace-a").context,
@@ -364,27 +414,29 @@ test("hybrid fusion ties use entity IDs when source locations are identical", as
         score: 1 - index * 0.1,
       }));
 
-    fixture.storage.searchFts = () => hits("fts", order);
-    fixture.storage.searchVector = () => hits("vector", [...order].reverse());
+    // The retuned scorer weights routes asymmetrically, so a genuine score
+    // tie requires identical per-route best ranks. Serve each entity the
+    // same rank from its own fts route; only the tie-break may order them.
+    fixture.storage.searchFts = (query) =>
+      query === "tie-first" ? hits("fts", [order[0]]) : hits("fts", [order[1]]);
     return fixture;
   }
 
+  const routes = [
+    { mode: "fts", query: "tie-first" },
+    { mode: "fts", query: "tie-second" },
+  ];
+
   const first = await searchWorkspaceIndex(
     {
-      routes: [
-        { mode: "fts", query: "tie" },
-        { mode: "vector", query: "tie" },
-      ],
+      routes,
       limit: 2,
     },
     createIdenticalLocationFixture(["entity-z", "entity-a"]).context,
   );
   const second = await searchWorkspaceIndex(
     {
-      routes: [
-        { mode: "fts", query: "tie" },
-        { mode: "vector", query: "tie" },
-      ],
+      routes,
       limit: 2,
     },
     createIdenticalLocationFixture(["entity-a", "entity-z"]).context,

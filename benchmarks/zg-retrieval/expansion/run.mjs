@@ -15,7 +15,11 @@ import {
   parseVisibleResponse,
   validateSearchRoute,
 } from "../engines/zg/parse.mjs";
-import { freePort, packageCandidate } from "../engines/zg/run.mjs";
+import {
+  freePort,
+  isolatedStdioCommand,
+  packageCandidate,
+} from "../engines/zg/run.mjs";
 import { snapshotIndex } from "../engines/zg/snapshot.mjs";
 import { PILOT_SUITES_BY_ID } from "./config.mjs";
 import {
@@ -268,10 +272,11 @@ async function runGroup(pilot, group, candidate, options, report, mcp) {
   const indexTimeoutMs = pilot.config.indexTimeoutMinutes * 60_000;
   const home = join(evidence, "runtime-home");
   const opencode = join(evidence, "opencode.json");
+  const port = await freePort();
   await mkdir(home, { recursive: true });
   await writeJson(join(home, ".zvec-grep", "config.json"), {
     version: 1,
-    server: { host: "127.0.0.1", port: await freePort() },
+    server: { host: "127.0.0.1", port },
     defaults: {
       embedding: pilot.model,
       modelCacheDir: options.modelCache,
@@ -307,7 +312,7 @@ async function runGroup(pilot, group, candidate, options, report, mcp) {
     await writeJson(join(evidence, "install.json"), install);
     const config = JSON.parse(await readFile(opencode, "utf8"));
     assert.equal(config.mcp?.zvec_grep?.type, "local");
-    const command = config.mcp.zvec_grep.command;
+    const command = isolatedStdioCommand(config.mcp.zvec_grep.command, port);
     assert.ok(
       Array.isArray(command) &&
         command.length >= 3 &&

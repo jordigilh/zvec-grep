@@ -1,0 +1,189 @@
+{
+  "schema": "zvec-grep.callfacts-benchmark-v1",
+  "language": "python",
+  "input_files": [
+    "pyrightconfig.json",
+    "src/__init__.py",
+    "src/decoy.py",
+    "src/helper.py",
+    "src/lib.py"
+  ],
+  "source_files": [
+    "src/__init__.py",
+    "src/decoy.py",
+    "src/helper.py",
+    "src/lib.py"
+  ],
+  "context_files": [
+    "pyrightconfig.json"
+  ],
+  "input_sha256": {
+    "pyrightconfig.json": "d62b15c3cc135c8e3acddf7f822f0f7cd5beaa5193ae49c89ad6731de0b32bf3",
+    "src/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/decoy.py": "18c97b448b1d06e0642aa5408ce5038b361e66dfb1b52eb35ce316f6b2ce7cde",
+    "src/helper.py": "f5676cb6a74e060a046f493359c94cbcf83abdb0804779f9e38e64a980da1ba0",
+    "src/lib.py": "230c5136fe14763ea4cc8fc9b68eb2d74fff7b5d9292a46b2db4d66138e748a2"
+  },
+  "symbols": [
+    {
+      "id": "Worker.work",
+      "path": "src/lib.py",
+      "line": 6
+    },
+    {
+      "id": "Alpha.convert",
+      "path": "src/lib.py",
+      "line": 11
+    },
+    {
+      "id": "Beta.convert",
+      "path": "src/lib.py",
+      "line": 16
+    },
+    {
+      "id": "leaf",
+      "path": "src/lib.py",
+      "line": 20
+    },
+    {
+      "id": "caller",
+      "path": "src/lib.py",
+      "line": 24
+    },
+    {
+      "id": "chain",
+      "path": "src/lib.py",
+      "line": 28
+    },
+    {
+      "id": "trait_caller",
+      "path": "src/lib.py",
+      "line": 32
+    },
+    {
+      "id": "alpha_caller",
+      "path": "src/lib.py",
+      "line": 36
+    },
+    {
+      "id": "beta_caller",
+      "path": "src/lib.py",
+      "line": 40
+    },
+    {
+      "id": "alias_caller",
+      "path": "src/lib.py",
+      "line": 44
+    },
+    {
+      "id": "dynamic_caller",
+      "path": "src/lib.py",
+      "line": 49
+    },
+    {
+      "id": "external_caller",
+      "path": "src/lib.py",
+      "line": 54
+    },
+    {
+      "id": "src.helper.leaf",
+      "path": "src/helper.py",
+      "line": 1
+    },
+    {
+      "id": "src.decoy.leaf",
+      "path": "src/decoy.py",
+      "line": 1
+    },
+    {
+      "id": "imported_alias_caller",
+      "path": "src/lib.py",
+      "line": 62
+    },
+    {
+      "id": "decoy_alias_caller",
+      "path": "src/lib.py",
+      "line": 66
+    }
+  ],
+  "calls": [
+    {
+      "path": "src/lib.py",
+      "line": 25,
+      "caller": "caller",
+      "expected_class": "definite",
+      "target": "leaf"
+    },
+    {
+      "path": "src/lib.py",
+      "line": 29,
+      "caller": "chain",
+      "expected_class": "definite",
+      "target": "caller"
+    },
+    {
+      "path": "src/lib.py",
+      "line": 33,
+      "caller": "trait_caller",
+      "expected_class": "possible",
+      "possible_targets": [
+        "Worker.work"
+      ]
+    },
+    {
+      "path": "src/lib.py",
+      "line": 37,
+      "caller": "alpha_caller",
+      "expected_class": "definite",
+      "target": "Alpha.convert"
+    },
+    {
+      "path": "src/lib.py",
+      "line": 41,
+      "caller": "beta_caller",
+      "expected_class": "definite",
+      "target": "Beta.convert"
+    },
+    {
+      "path": "src/lib.py",
+      "line": 46,
+      "caller": "alias_caller",
+      "expected_class": "non-definite",
+      "allowed_resolutions": [
+        "function-value"
+      ]
+    },
+    {
+      "path": "src/lib.py",
+      "line": 51,
+      "caller": "dynamic_caller",
+      "expected_class": "non-definite",
+      "allowed_resolutions": [
+        "unresolved"
+      ]
+    },
+    {
+      "path": "src/lib.py",
+      "line": 55,
+      "caller": "external_caller",
+      "expected_class": "non-definite",
+      "allowed_resolutions": [
+        "external"
+      ]
+    },
+    {
+      "path": "src/lib.py",
+      "line": 63,
+      "caller": "imported_alias_caller",
+      "expected_class": "definite",
+      "target": "src.helper.leaf"
+    },
+    {
+      "path": "src/lib.py",
+      "line": 67,
+      "caller": "decoy_alias_caller",
+      "expected_class": "definite",
+      "target": "src.decoy.leaf"
+    }
+  ]
+}

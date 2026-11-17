@@ -1,0 +1,4 @@
+[package]
+name = "codegraph_relations_fixture"
+version = "0.1.0"
+edition = "2024"

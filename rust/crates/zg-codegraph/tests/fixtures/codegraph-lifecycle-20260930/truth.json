@@ -1,0 +1,36 @@
+{
+  "schema": "zvec-grep.codegraph-lifecycle-v1",
+  "source_sha256": {
+    "caller.go": "e670f900521fa8a699a831c7a36f289d69f664945bfded863b7771245ce9871a",
+    "helper.go": "5d5f2cafcd1163a80d928155cedcc163945532ecb2917a139f7e02e5294dd7a4",
+    "dist/generated.go": "b174d74772690442bd8acc3aa5682e880f2a4a9c1689c55911b6e9e9daf873e8",
+    "node_modules/pkg/index.ts": "a2557d91b4de72669fa9fad6946a8741dfe4f37e9b6aba88e394087baf31de2f"
+  },
+  "stages": [
+    {
+      "name": "initial",
+      "files": ["caller.go", "helper.go"],
+      "nodes": ["caller", "helper"]
+    },
+    {
+      "name": "modified",
+      "files": ["caller.go", "helper.go"],
+      "nodes": ["caller", "helper"]
+    },
+    {
+      "name": "added",
+      "files": ["added.go", "caller.go", "helper.go"],
+      "nodes": ["added", "caller", "helper"]
+    },
+    {
+      "name": "deleted",
+      "files": ["added.go", "caller.go"],
+      "nodes": ["added", "caller"]
+    },
+    {
+      "name": "renamed",
+      "files": ["caller.go", "renamed.go"],
+      "nodes": ["added", "caller"]
+    }
+  ]
+}

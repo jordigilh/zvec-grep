@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jordigilh/zvec-grep/schemas/code-ir-projection-v1.schema.json",
+  "title": "zvec-grep Code IR projection v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "version",
+    "ir_snapshot_id",
+    "model_identity",
+    "records"
+  ],
+  "properties": {
+    "schema": { "const": "zvec-grep.code-ir.projection" },
+    "version": { "const": 1 },
+    "ir_snapshot_id": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "model_identity": { "type": ["string", "null"] },
+    "records": { "type": "array", "items": { "$ref": "#/$defs/record" } }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "position": {
+      "type": "object",
+      "required": ["line", "column_byte"],
+      "properties": {
+        "line": { "type": "integer", "minimum": 1 },
+        "column_byte": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "file_id",
+        "sha256",
+        "start_byte",
+        "end_byte",
+        "start",
+        "end"
+      ],
+      "properties": {
+        "file_id": { "type": "string" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "start_byte": { "type": "integer", "minimum": 0 },
+        "end_byte": { "type": "integer", "minimum": 1 },
+        "start": { "$ref": "#/$defs/position" },
+        "end": { "$ref": "#/$defs/position" }
+      },
+      "additionalProperties": false
+    },
+    "record": {
+      "type": "object",
+      "required": [
+        "unit_id",
+        "group_id",
+        "window_index",
+        "unit_source",
+        "source",
+        "lexical_text",
+        "vector_input"
+      ],
+      "properties": {
+        "unit_id": { "type": "string" },
+        "group_id": { "type": "string" },
+        "window_index": { "type": "integer", "minimum": 0 },
+        "unit_source": { "$ref": "#/$defs/source" },
+        "source": { "$ref": "#/$defs/source" },
+        "lexical_text": { "type": "string" },
+        "vector_input": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

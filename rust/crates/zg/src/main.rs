@@ -1,12 +1,13 @@
 use std::{
     error::Error,
     io::{self, IsTerminal},
-    path::Path,
+    path::{Path, PathBuf},
     process::ExitCode,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Instant,
 };
 
 #[cfg(target_os = "macos")]
@@ -135,37 +136,21 @@ async fn execute_plan(plan: CliPlan) -> Result<(), Box<dyn Error>> {
             check_ready,
             output,
         } => execute_status(mode, home.as_deref(), request, check_ready, output).await,
-        CliPlan::Config(args) => {
-            use zg_cli::{ConfigAction, ModelAction, ProviderAction};
-            let (label, reference, path) = match args.action {
-                ConfigAction::Provider {
-                    action: ProviderAction::Set { reference, api_key },
-                } => {
-                    let path = zg_engine::config::set_provider(&reference, &api_key)?;
-                    ("Provider", reference, path)
-                }
-                ConfigAction::Model {
-                    action:
-                        ModelAction::Set {
-                            reference,
-                            endpoint,
-                            device,
-                            default_model,
-                        },
-                } => {
-                    let path = zg_engine::config::set_model(
-                        &reference,
-                        endpoint.as_deref(),
-                        device.map(Into::into),
-                        default_model,
-                    )?;
-                    ("Model", reference, path)
-                }
-            };
-            println!("{label} config: {reference}");
-            println!("Global config: {}", path.display());
-            Ok(())
-        }
+        CliPlan::Graph {
+            root,
+            output,
+            base,
+            changed,
+            deleted,
+        } => execute_graph(
+            &root,
+            output.as_deref(),
+            base.as_deref(),
+            &changed,
+            &deleted,
+        ),
+        CliPlan::GraphQuery { artifact, action } => execute_graph_query(&artifact, action),
+        CliPlan::Config(args) => execute_config(args),
         CliPlan::Auth(args) => {
             let root = args
                 .root
@@ -201,6 +186,180 @@ async fn execute_plan(plan: CliPlan) -> Result<(), Box<dyn Error>> {
         CliPlan::Uninstall(args) => zg_cli::execute_uninstall(&args).map_err(Into::into),
         CliPlan::Help(_) | CliPlan::Version => Ok(()),
     }
+}
+
+fn execute_config(args: zg_cli::ConfigArgs) -> Result<(), Box<dyn Error>> {
+    use zg_cli::{ConfigAction, ModelAction, ProviderAction};
+    let (label, reference, path) = match args.action {
+        ConfigAction::Provider {
+            action: ProviderAction::Set { reference, api_key },
+        } => {
+            let path = zg_engine::config::set_provider(&reference, &api_key)?;
+            ("Provider", reference, path)
+        }
+        ConfigAction::Model {
+            action:
+                ModelAction::Set {
+                    reference,
+                    endpoint,
+                    device,
+                    default_model,
+                },
+        } => {
+            let path = zg_engine::config::set_model(
+                &reference,
+                endpoint.as_deref(),
+                device.map(Into::into),
+                default_model,
+            )?;
+            ("Model", reference, path)
+        }
+    };
+    println!("{label} config: {reference}");
+    println!("Global config: {}", path.display());
+    Ok(())
+}
+
+fn execute_graph(
+    root: &Path,
+    output: Option<&Path>,
+    base: Option<&Path>,
+    changed: &[PathBuf],
+    deleted: &[PathBuf],
+) -> Result<(), Box<dyn Error>> {
+    let started = Instant::now();
+    let (path, artifact) = if let Some(base_path) = base {
+        let base_artifact = zg_engine::codegraph::read_codegraph(base_path)?;
+        let graph_changes = changed
+            .iter()
+            .cloned()
+            .map(zg_engine::codegraph::CodeGraphChange::Upsert)
+            .chain(
+                deleted
+                    .iter()
+                    .cloned()
+                    .map(zg_engine::codegraph::CodeGraphChange::Delete),
+            )
+            .collect::<Vec<_>>();
+        zg_engine::codegraph::write_codegraph_update(&base_artifact, root, output, &graph_changes)?
+    } else {
+        zg_engine::codegraph::write_codegraph(root, output)?
+    };
+    println!("Codegraph: {}", path.display());
+    println!("Manifest: {}", artifact.manifest_key);
+    if base.is_some() {
+        println!("Changed: {}", changed.len());
+        println!("Deleted: {}", deleted.len());
+    }
+    println!("Files: {}", artifact.files.len());
+    println!("Nodes: {}", artifact.nodes.len());
+    println!("Edges: {}", artifact.edges.len());
+    println!("Elapsed: {} ms", started.elapsed().as_millis());
+    Ok(())
+}
+
+fn execute_graph_query(
+    artifact_path: &Path,
+    action: zg_cli::GraphQueryAction,
+) -> Result<(), Box<dyn Error>> {
+    let artifact = zg_engine::codegraph::read_codegraph(artifact_path)?;
+    if artifact.schema != zg_engine::codegraph::CODEGRAPH_SCHEMA
+        || artifact.version != zg_engine::codegraph::CODEGRAPH_VERSION
+    {
+        return Err(format!(
+            "unsupported codegraph artifact schema/version: {} v{}",
+            artifact.schema, artifact.version
+        )
+        .into());
+    }
+    if artifact.relation_generation != zg_engine::codegraph::CODEGRAPH_RELATION_GENERATION {
+        return Err(format!(
+            "unsupported codegraph relation generation: {} (expected {})",
+            artifact.relation_generation,
+            zg_engine::codegraph::CODEGRAPH_RELATION_GENERATION
+        )
+        .into());
+    }
+    let index = zg_engine::codegraph::CallGraphIndex::new(&artifact);
+    let result = match action {
+        zg_cli::GraphQueryAction::BlastRadius { function, depth } => {
+            serde_json::to_value(index.blast_radius(&function, depth)?)?
+        }
+        zg_cli::GraphQueryAction::Affected {
+            query,
+            depth,
+            relations,
+            include_possible,
+        } => {
+            let relations = parse_graph_relations(&relations)?;
+            serde_json::to_value(index.affected(
+                &query,
+                depth,
+                relations.as_deref(),
+                include_possible,
+            )?)?
+        }
+        zg_cli::GraphQueryAction::ShortestPath { source, target } => {
+            serde_json::to_value(index.shortest_path(&source, &target)?)?
+        }
+        zg_cli::GraphQueryAction::Node { query } => serde_json::to_value(index.node(&query)?)?,
+        zg_cli::GraphQueryAction::Neighbors {
+            query,
+            relations,
+            include_possible,
+        } => {
+            let relations = parse_graph_relations(&relations)?;
+            serde_json::to_value(index.neighbors(
+                &query,
+                relations.as_deref(),
+                include_possible,
+            )?)?
+        }
+        zg_cli::GraphQueryAction::RelationPath {
+            source,
+            target,
+            relations,
+            include_possible,
+        } => {
+            let relations = parse_graph_relations(&relations)?;
+            serde_json::to_value(index.relation_path(
+                &source,
+                &target,
+                relations.as_deref(),
+                include_possible,
+            )?)?
+        }
+        zg_cli::GraphQueryAction::Explain { query } => {
+            serde_json::to_value(index.explain(&query)?)?
+        }
+        zg_cli::GraphQueryAction::Cluster { function } => {
+            serde_json::to_value(index.cluster(&function)?)?
+        }
+        zg_cli::GraphQueryAction::Communities => serde_json::to_value(index.clustering()?)?,
+    };
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+fn parse_graph_relations(
+    values: &[String],
+) -> Result<Option<Vec<zg_engine::codegraph::CodeGraphRelationKind>>, Box<dyn Error>> {
+    if values.is_empty() {
+        return Ok(None);
+    }
+    let mut relations = Vec::with_capacity(values.len());
+    for value in values {
+        let Some(relation) = zg_engine::codegraph::CodeGraphRelationKind::parse(value) else {
+            return Err(format!(
+                "unknown graph relation `{value}`; expected one of defines, contains, imports, calls, inherits, implements, embeds, imports_from, re_exports, overrides, mixes_in, references, tests, depends_on"
+            )
+            .into());
+        };
+        if !relations.contains(&relation) {
+            relations.push(relation);
+        }
+    }
+    Ok(Some(relations))
 }
 
 async fn execute_install_plan(args: &zg_cli::InstallArgs) -> Result<(), Box<dyn Error>> {

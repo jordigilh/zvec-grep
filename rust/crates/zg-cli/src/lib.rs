@@ -76,6 +76,10 @@ pub enum CommandLine {
     Index(IndexArgs),
     /// Show workspace and index status.
     Status(StatusArgs),
+    /// Build a structural codegraph snapshot for a workspace.
+    Graph(GraphArgs),
+    /// Query a previously generated codegraph snapshot.
+    GraphQuery(GraphQueryArgs),
     /// Manage the resident MCP daemon.
     Server(ServerArgs),
     /// Configure provider credentials and model defaults.
@@ -577,6 +581,75 @@ pub struct StatusArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct GraphArgs {
+    pub root: Option<PathBuf>,
+    #[arg(long, value_name = "PATH")]
+    pub output: Option<PathBuf>,
+    #[arg(long, value_name = "PATH")]
+    pub base: Option<PathBuf>,
+    #[arg(long = "changed", value_name = "PATH", action = clap::ArgAction::Append)]
+    pub changed: Vec<PathBuf>,
+    #[arg(long = "deleted", value_name = "PATH", action = clap::ArgAction::Append)]
+    pub deleted: Vec<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct GraphQueryArgs {
+    #[arg(value_name = "ARTIFACT")]
+    pub artifact: PathBuf,
+    #[command(subcommand)]
+    pub action: GraphQueryAction,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum GraphQueryAction {
+    /// List direct and transitive callers of a function. Omit `--depth` for
+    /// complete reverse reachability.
+    BlastRadius {
+        function: String,
+        #[arg(long)]
+        depth: Option<usize>,
+    },
+    /// List reverse dependencies of any codegraph node over selected relations.
+    Affected {
+        query: String,
+        #[arg(long, default_value_t = 2)]
+        depth: usize,
+        #[arg(long = "relation", value_name = "KIND", action = clap::ArgAction::Append)]
+        relations: Vec<String>,
+        #[arg(long)]
+        include_possible: bool,
+    },
+    /// Find a directed call path between two functions.
+    ShortestPath { source: String, target: String },
+    /// Inspect any codegraph node and its directly attached relations.
+    Node { query: String },
+    /// List incoming and outgoing neighbors for any codegraph node.
+    Neighbors {
+        query: String,
+        #[arg(long = "relation", value_name = "KIND", action = clap::ArgAction::Append)]
+        relations: Vec<String>,
+        #[arg(long)]
+        include_possible: bool,
+    },
+    /// Find a shortest path over the selected relation kinds.
+    RelationPath {
+        source: String,
+        target: String,
+        #[arg(long = "relation", value_name = "KIND", action = clap::ArgAction::Append)]
+        relations: Vec<String>,
+        #[arg(long)]
+        include_possible: bool,
+    },
+    /// Explain a node with relation counts and snapshot provenance.
+    Explain { query: String },
+    /// Return the Leiden community containing a function.
+    Cluster { function: String },
+    /// Return all communities in the graph.
+    Communities,
+}
+
+#[derive(Debug, Args)]
 pub struct ServerArgs {
     #[arg(long)]
     pub stdio: bool,
@@ -649,6 +722,17 @@ pub enum CliPlan {
         request: InfoOptions,
         check_ready: bool,
         output: OutputOptions,
+    },
+    Graph {
+        root: PathBuf,
+        output: Option<PathBuf>,
+        base: Option<PathBuf>,
+        changed: Vec<PathBuf>,
+        deleted: Vec<PathBuf>,
+    },
+    GraphQuery {
+        artifact: PathBuf,
+        action: GraphQueryAction,
     },
     Auth(AuthArgs),
     Config(ConfigArgs),
@@ -727,6 +811,8 @@ pub enum CliError {
     InvalidModeEnvironment,
     #[error("--mcp-token-env requires --mcp-transport http")]
     InstallTokenRequiresHttp,
+    #[error("zg --graph --changed and --deleted require --base")]
+    GraphChangesWithoutBase,
     #[error(transparent)]
     ManagedRg(#[from] ManagedRgArgumentError),
     #[error(transparent)]
@@ -833,6 +919,26 @@ impl Cli {
                     ..OutputOptions::default()
                 },
             }),
+            CommandLine::Graph(args) => {
+                if args.base.is_none() && (!args.changed.is_empty() || !args.deleted.is_empty()) {
+                    return Err(CliError::GraphChangesWithoutBase);
+                }
+                Ok(CliPlan::Graph {
+                    root: resolve_from(&current_dir, args.root.as_deref()),
+                    output: args
+                        .output
+                        .map(|path| resolve_from(&current_dir, Some(&path))),
+                    base: args
+                        .base
+                        .map(|path| resolve_from(&current_dir, Some(&path))),
+                    changed: args.changed,
+                    deleted: args.deleted,
+                })
+            }
+            CommandLine::GraphQuery(args) => Ok(CliPlan::GraphQuery {
+                artifact: resolve_from(&current_dir, Some(&args.artifact)),
+                action: args.action,
+            }),
             CommandLine::Server(args) => server_plan(args).map(CliPlan::Server),
             CommandLine::Help(args) => Ok(CliPlan::Help(args.topic)),
             CommandLine::Version => Ok(CliPlan::Version),
@@ -862,6 +968,8 @@ fn action_for_flag(value: &OsStr) -> Option<&'static str> {
         "--config" => Some("config"),
         "--auth" => Some("auth"),
         "--server" => Some("server"),
+        "--graph" => Some("graph"),
+        "--graph-query" => Some("graph-query"),
         _ => None,
     }
 }
@@ -883,6 +991,8 @@ pub fn compatibility_warning_for_args(arguments: &[OsString]) -> Option<String> 
             | "config"
             | "auth"
             | "server"
+            | "graph"
+            | "graph-query"
             | "help"
             | "version"
     ) {
@@ -949,24 +1059,7 @@ fn normalize_command(mut arguments: Vec<OsString>) -> Result<Vec<OsString>, clap
         }
         help_requested |= matches!(argument.to_str(), Some("-h" | "--help"));
         let text = argument.to_string_lossy();
-        index += if query_option_with_value(&text)
-            || managed_rg::takes_separate_value(&text)
-            || matches!(
-                text.as_ref(),
-                "--name"
-                    | "--embedding"
-                    | "--endpoint"
-                    | "--embedding-concurrency"
-                    | "--listen"
-                    | "--token-file"
-                    | "--mcp-toolset"
-                    | "--target"
-                    | "--mcp-transport"
-                    | "--mcp-tool-timeout"
-                    | "--mcp-token-env"
-                    | "--capability"
-                    | "--scope"
-            ) {
+        index += if command_option_takes_value(&text) {
             2
         } else {
             1
@@ -993,6 +1086,31 @@ fn normalize_command(mut arguments: Vec<OsString>) -> Result<Vec<OsString>, clap
         arguments.insert(1, command.into());
     }
     Ok(arguments)
+}
+
+fn command_option_takes_value(value: &str) -> bool {
+    query_option_with_value(value)
+        || managed_rg::takes_separate_value(value)
+        || matches!(
+            value,
+            "--name"
+                | "--embedding"
+                | "--endpoint"
+                | "--embedding-concurrency"
+                | "--listen"
+                | "--token-file"
+                | "--mcp-toolset"
+                | "--target"
+                | "--mcp-transport"
+                | "--mcp-tool-timeout"
+                | "--mcp-token-env"
+                | "--capability"
+                | "--scope"
+                | "--output"
+                | "--base"
+                | "--changed"
+                | "--deleted"
+        )
 }
 
 fn normalize_query_argument_order(arguments: Vec<OsString>) -> (Vec<OsString>, usize) {
@@ -1584,7 +1702,10 @@ pub fn parse_modified_time(value: &str) -> Result<u64, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, CliPlan, IndexOperation, QueryFilter, parse_byte_size, parse_modified_time};
+    use super::{
+        Cli, CliPlan, GraphQueryAction, IndexOperation, QueryFilter, parse_byte_size,
+        parse_modified_time,
+    };
     use std::path::PathBuf;
 
     fn plan(arguments: &[&str], terminal: bool) -> CliPlan {
@@ -1602,6 +1723,8 @@ mod tests {
             "search",
             "index",
             "status",
+            "graph",
+            "graph-query",
             "server",
             "config",
             "auth",
@@ -1629,6 +1752,14 @@ mod tests {
         assert!(matches!(
             plan(&["zg", "--status"], false),
             CliPlan::Status { .. }
+        ));
+        assert!(matches!(
+            plan(&["zg", "--graph", "repo"], false),
+            CliPlan::Graph { .. }
+        ));
+        assert!(matches!(
+            plan(&["zg", "--graph-query", "graph.json", "communities"], false),
+            CliPlan::GraphQuery { .. }
         ));
         assert!(matches!(
             plan(&["zg", "--install", "--yes"], false),
@@ -1706,6 +1837,150 @@ mod tests {
             .expect_err("invalid mode")
             .to_string();
         assert!(!error.contains("zg query"), "{error}");
+    }
+
+    #[test]
+    fn graph_plan_resolves_root_and_artifact_paths_and_requires_base_for_deltas() {
+        let plan = Cli::try_parse_from([
+            "zg",
+            "--graph",
+            "repo",
+            "--base",
+            "base.json",
+            "--changed",
+            "pkg/new.go",
+            "--deleted",
+            "pkg/old.go",
+        ])
+        .expect("parse")
+        .into_plan(PathBuf::from("/workspace"))
+        .expect("plan");
+        let CliPlan::Graph {
+            root,
+            base,
+            changed,
+            deleted,
+            ..
+        } = plan
+        else {
+            panic!("graph plan")
+        };
+        assert_eq!(root, PathBuf::from("/workspace/repo"));
+        assert_eq!(base, Some(PathBuf::from("/workspace/base.json")));
+        assert_eq!(changed, [PathBuf::from("pkg/new.go")]);
+        assert_eq!(deleted, [PathBuf::from("pkg/old.go")]);
+
+        let error = Cli::try_parse_from(["zg", "--graph", "repo", "--deleted", "old.go"])
+            .expect("parse")
+            .into_plan(PathBuf::from("/workspace"))
+            .expect_err("delta needs a base artifact");
+        assert!(error.to_string().contains("require --base"));
+    }
+
+    #[test]
+    fn graph_query_plan_resolves_artifact_path_and_action() {
+        let plan = Cli::try_parse_from([
+            "zg",
+            "--graph-query",
+            "graph.json",
+            "blast-radius",
+            "reconcile",
+            "--depth",
+            "4",
+        ])
+        .expect("parse")
+        .into_plan(PathBuf::from("/workspace"))
+        .expect("plan");
+        let CliPlan::GraphQuery { artifact, action } = plan else {
+            panic!("graph query plan")
+        };
+        assert_eq!(artifact, PathBuf::from("/workspace/graph.json"));
+        assert!(matches!(
+            action,
+            GraphQueryAction::BlastRadius { function, depth: Some(4) } if function == "reconcile"
+        ));
+
+        let plan = Cli::try_parse_from([
+            "zg",
+            "--graph-query",
+            "graph.json",
+            "blast-radius",
+            "reconcile",
+        ])
+        .expect("parse omitted depth")
+        .into_plan(PathBuf::from("/workspace"))
+        .expect("plan");
+        let CliPlan::GraphQuery { action, .. } = plan else {
+            panic!("graph query plan")
+        };
+        assert!(
+            matches!(action, GraphQueryAction::BlastRadius { function, depth: None } if function == "reconcile")
+        );
+    }
+
+    #[test]
+    fn graph_query_plan_parses_generic_relation_actions() {
+        let plan = Cli::try_parse_from([
+            "zg",
+            "--graph-query",
+            "graph.json",
+            "relation-path",
+            "Child",
+            "Base",
+            "--relation",
+            "inherits",
+            "--relation",
+            "implements",
+            "--include-possible",
+        ])
+        .expect("parse")
+        .into_plan(PathBuf::from("/workspace"))
+        .expect("plan");
+        let CliPlan::GraphQuery { action, .. } = plan else {
+            panic!("generic graph query plan")
+        };
+        assert!(matches!(
+            action,
+            GraphQueryAction::RelationPath {
+                source,
+                target,
+                relations,
+                include_possible: true,
+            } if source == "Child"
+                && target == "Base"
+                && relations == ["inherits", "implements"]
+        ));
+
+        let plan = Cli::try_parse_from([
+            "zg",
+            "--graph-query",
+            "graph.json",
+            "affected",
+            "src/main.rs::run",
+            "--depth",
+            "3",
+            "--relation",
+            "imports_from",
+            "--relation",
+            "re_exports",
+            "--include-possible",
+        ])
+        .expect("parse affected query")
+        .into_plan(PathBuf::from("/workspace"))
+        .expect("affected query plan");
+        let CliPlan::GraphQuery { action, .. } = plan else {
+            panic!("affected graph query plan")
+        };
+        assert!(matches!(
+            action,
+            GraphQueryAction::Affected {
+                query,
+                depth: 3,
+                relations,
+                include_possible: true,
+            } if query == "src/main.rs::run"
+                && relations == ["imports_from", "re_exports"]
+        ));
     }
 
     #[test]
@@ -1843,6 +2118,19 @@ mod tests {
         }
         assert!(
             matches!(plan(&["zg", "--index", "--help"], false), CliPlan::Help(Some(topic)) if topic == "index")
+        );
+        assert!(matches!(
+            plan(&["zg", "--graph", "--help"], false),
+            CliPlan::Help(Some(topic)) if topic == "graph"
+        ));
+        assert!(matches!(
+            plan(&["zg", "--graph-query", "--help"], false),
+            CliPlan::Help(Some(topic)) if topic == "graph-query"
+        ));
+        assert!(
+            super::help_text(Some("graph"))
+                .expect("graph help")
+                .contains("Rust, TypeScript/TSX, and\nPython")
         );
         for flag in ["--version", "-v"] {
             assert!(matches!(plan(&["zg", flag], false), CliPlan::Version));

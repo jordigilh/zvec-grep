@@ -7,6 +7,8 @@
 pub mod api;
 pub mod authorization;
 pub mod config;
+
+pub use zg_codegraph as codegraph;
 mod domain;
 mod error;
 mod extraction;

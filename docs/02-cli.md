@@ -63,7 +63,7 @@ Result controls:
 | --- | --- |
 | `--limit <n>` | Maximum returned items per group |
 | `--compact` | Force compact output intended for pipes |
-| `--preview none\|short\|full` | Indexed source preview size |
+| `--preview none\|short\|full` | Indexed source preview size; short previews include up to 320 characters of indexed code documentation, full previews include all available documentation |
 | `--refresh background\|wait\|off` | Index refresh policy |
 | `--mode direct\|server\|auto` | Execution transport |
 | `--debug` | Print diagnostics to stderr |
@@ -72,6 +72,10 @@ Result controls:
 | `--symbol-type <type>` | Restrict results to a symbol type |
 | `--modified-after <time>` | Search files modified after a time |
 | `--modified-before <time>` | Search files modified before a time |
+
+For indexed code results, `--preview short` includes up to 320 characters of
+extracted symbol documentation. `--preview full` includes the full documentation
+text; `--preview none` omits it.
 
 Indexed CLI results are separated by query group and preserve the rank assigned
 inside that group. The CLI does not apply the MCP response's cross-group
@@ -102,6 +106,44 @@ zg --rg -i -C 2 -g "*.ts" "dark mode" src
 
 See [Retrieval pipeline](./04-pipeline.md#3-query-through-one-search-layer) for
 route selection and freshness behavior.
+
+## `zg --graph` and `zg --graph-query`
+
+Build a versioned codegraph snapshot for Go, Rust, TypeScript/TSX, and Python:
+
+```bash
+zg --graph [root]
+zg --graph-query .zvec-grep/codegraph-v2.json.zst node src/main.rs::run
+zg --graph-query .zvec-grep/codegraph-v2.json.zst neighbors src/main.rs::run --relation calls
+zg --graph-query .zvec-grep/codegraph-v2.json.zst relation-path source target --relation calls --include-possible
+zg --graph-query .zvec-grep/codegraph-v2.json.zst blast-radius library.Parse
+zg --graph-query .zvec-grep/codegraph-v2.json.zst blast-radius library.Parse --depth 2
+zg --graph-query .zvec-grep/codegraph-v2.json.zst affected src/main.rs::run --depth 2 --relation calls
+zg --graph-query .zvec-grep/codegraph-v2.json.zst explain src/main.rs::run
+```
+
+The default graph sidecar is zstd-compressed. Existing
+`.zvec-grep/codegraph-v2.json` artifacts remain readable; pass an output path
+ending in `.json` when an uncompressed JSON artifact is required.
+
+Generic graph queries accept bare or path-qualified names and exact node IDs.
+For `blast-radius`, omit `--depth` for exhaustive reverse reachability; an
+explicit value limits the number of call hops. Definite and possible callers
+are reported separately by shortest-distance bucket. No observed static path
+is not proof of safety: runtime configuration, feature flags, reflection,
+generated code, unsupported build tags, dynamic dispatch, plugins, and
+incomplete source/build context can change actual reachability.
+Relation filters are `defines`, `imports`, `imports_from`, `re_exports`, `calls`,
+`inherits`, `implements`, `embeds`, `overrides`, `mixes_in`, `references`,
+`tests`, and `depends_on`. The `affected` query traverses incoming relations
+and separates definite results from possible ambiguous candidates. Possible
+ambiguous targets are excluded unless `--include-possible` is supplied. Query
+results include the graph manifest and applied language call-facts context
+fingerprints, project languages, and relation capability statuses. `implements`
+is supported structurally for Rust and TypeScript/TSX; Go reports it as
+unsupported because implicit interface satisfaction is not inferred. `depends_on`
+is supported only from explicit package manifests (`go.mod`, `Cargo.toml`,
+`pyproject.toml`, and `package.json`); `overrides` and `mixes_in` remain reserved.
 
 ## `zg --index`
 

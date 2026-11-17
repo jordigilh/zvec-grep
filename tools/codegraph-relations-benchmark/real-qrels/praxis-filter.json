@@ -1,0 +1,100 @@
+{
+  "schema": "zvec-grep.codegraph-real-qrels-v1",
+  "repository": "praxis-proxy/praxis",
+  "revision": "932098a3baa8ee267504c71abc481963aa60694b",
+  "scope": "crates/filter",
+  "source_sha256": {
+    "src/pipeline/clusters.rs": "3514e77df45d2c50adfa588030b07e5853a204fb95f731dc9b0d7c724c7d1a92",
+    "src/pipeline/branch.rs": "eead57209378014b9dbecb33e512ddf6fdb9b1a4fde614809e19f0a4738e6a20",
+    "src/filter.rs": "cf53e649b9d78757de8f16139b7a24a845b1514b5b7cd7295160eea602d0bb94",
+    "src/builtins/http/security/credential_injection/mod.rs": "f34fb0887eedcfcc4ebca7b067d7f14fb34cb431e1b2a23aaa17f3976583e934",
+    "src/builtins/http/security/credential_injection/filter.rs": "619702bfdeb29e8a04e82a132be93794c00648c220e5f50f9fa3f2f50c686be1",
+    "src/builtins/http/security/credential_injection/config.rs": "f2156129260b1bd8dcd3185dee5099ab0e4f4e866905018168a308f1d38e1599",
+    "src/factory.rs": "39548f6e1422a9e485d12f9929dce6b5917ad44340bc832ee81ba37160bf8402"
+  },
+  "relations": [
+    {
+      "category": "structural",
+      "kind": "contains",
+      "source": "src/pipeline/clusters.rs::src/pipeline/clusters.rs",
+      "target": "src/pipeline/clusters.rs::extract_selected_clusters",
+      "evidence": "clusters.rs defines extract_selected_clusters"
+    },
+    {
+      "category": "structural",
+      "kind": "imports_from",
+      "source": "src/pipeline/clusters.rs::src/pipeline/clusters.rs",
+      "target": "src/pipeline/branch.rs::src/pipeline/branch.rs",
+      "evidence": "clusters.rs imports crate::pipeline::branch"
+    },
+    {
+      "category": "structural",
+      "kind": "imports_from",
+      "source": "src/pipeline/branch.rs::src/pipeline/branch.rs",
+      "target": "src/filter.rs::src/filter.rs",
+      "evidence": "branch.rs imports PipelineFilter from filter.rs"
+    },
+    {
+      "category": "structural",
+      "kind": "re_exports",
+      "source": "src/builtins/http/security/credential_injection/mod.rs::src/builtins/http/security/credential_injection/mod.rs",
+      "target": "src/builtins/http/security/credential_injection/filter.rs::CredentialInjectionFilter",
+      "target_name": "CredentialInjectionFilter",
+      "evidence": "credential_injection/mod.rs publicly re-exports CredentialInjectionFilter"
+    },
+    {
+      "category": "structural",
+      "kind": "implements",
+      "source": "src/builtins/http/security/credential_injection/filter.rs::CredentialInjectionFilter",
+      "target": "src/filter.rs::HttpFilter",
+      "target_name": "HttpFilter",
+      "evidence": "CredentialInjectionFilter implements HttpFilter"
+    },
+    {
+      "category": "references",
+      "kind": "references",
+      "source": "src/builtins/http/security/credential_injection/filter.rs::resolve_credential",
+      "target": "src/builtins/http/security/credential_injection/config.rs::ClusterCredentialConfig",
+      "target_name": "ClusterCredentialConfig",
+      "evidence": "resolve_credential reads ClusterCredentialConfig"
+    },
+    {
+      "category": "tests",
+      "kind": "tests",
+      "source": "src/pipeline/clusters.rs::deduplicates_selected_clusters",
+      "target": "src/pipeline/clusters.rs::extract_selected_clusters",
+      "target_name": "extract_selected_clusters",
+      "evidence": "the unit test exercises extract_selected_clusters"
+    },
+    {
+      "category": "calls",
+      "kind": "calls",
+      "source": "src/builtins/http/security/credential_injection/filter.rs::from_config",
+      "target": "src/factory.rs::parse_filter_config",
+      "target_name": "parse_filter_config",
+      "evidence": "from_config delegates filter configuration parsing"
+    }
+  ],
+  "absent_relations": [
+    {
+      "kind": "re_exports",
+      "source": "src/pipeline/clusters.rs::src/pipeline/clusters.rs",
+      "target": "src/pipeline/branch.rs::src/pipeline/branch.rs",
+      "evidence": "clusters.rs imports branch but does not re-export it"
+    }
+  ],
+  "community_pairs": [
+    {
+      "left": "src/pipeline/clusters.rs::extract_selected_clusters",
+      "right": "src/pipeline/clusters.rs::deduplicates_selected_clusters",
+      "expected": "same",
+      "evidence": "the unit test and implementation form one cluster-extraction unit"
+    },
+    {
+      "left": "src/pipeline/clusters.rs::extract_selected_clusters",
+      "right": "src/builtins/http/security/credential_injection/filter.rs::from_config",
+      "expected": "different",
+      "evidence": "cluster extraction and credential-filter construction are separate subsystems"
+    }
+  ]
+}

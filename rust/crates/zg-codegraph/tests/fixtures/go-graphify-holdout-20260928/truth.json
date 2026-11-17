@@ -1,0 +1,190 @@
+{
+  "dataset": "go-callgraph-graphify-holdout-20260928",
+  "truth_authored_before_tool_runs": true,
+  "source_sha256": {
+    "go.mod": "766c407d2cf040c3e54b1308be676f17bd6e3df9e1de281fabd75481144c1bde",
+    "app/flow.go": "3ee966f6f96e20e58b63f91ae301677074957f0ab905a9cf48b940523cc40ae4",
+    "rival/rival.go": "dbc7e3f915ecf8c04c1acfa800928c72d0509fccde4bae279f491ecb58d1d7f0",
+    "wire/wire.go": "2dc42ed9e95206374ec9ba3f553a9e2edcaa21a5c025432282a70866717c5b4e"
+  },
+  "symbols": [
+    {"path": "app/flow.go", "line": 11, "id": "app/flow.go::app.Alpha.Convert"},
+    {"path": "app/flow.go", "line": 12, "id": "app/flow.go::app.Beta.Convert"},
+    {"path": "app/flow.go", "line": 14, "id": "app/flow.go::app.AlphaCaller"},
+    {"path": "app/flow.go", "line": 15, "id": "app/flow.go::app.BetaCaller"},
+    {"path": "app/flow.go", "line": 23, "id": "app/flow.go::app.Message.Publish"},
+    {"path": "app/flow.go", "line": 25, "id": "app/flow.go::app.PublisherCaller"},
+    {"path": "app/flow.go", "line": 26, "id": "app/flow.go::app.PublisherCallerOuter"},
+    {"path": "app/flow.go", "line": 28, "id": "app/flow.go::app.Clear"},
+    {"path": "app/flow.go", "line": 30, "id": "app/flow.go::app.LocalClearCaller"},
+    {"path": "app/flow.go", "line": 31, "id": "app/flow.go::app.WireClearCaller"},
+    {"path": "app/flow.go", "line": 32, "id": "app/flow.go::app.RivalClearCaller"},
+    {"path": "app/flow.go", "line": 34, "id": "app/flow.go::app.Root"},
+    {"path": "app/flow.go", "line": 35, "id": "app/flow.go::app.LevelOne"},
+    {"path": "app/flow.go", "line": 36, "id": "app/flow.go::app.LevelTwo"},
+    {"path": "app/flow.go", "line": 37, "id": "app/flow.go::app.LevelThree"},
+    {"path": "app/flow.go", "line": 39, "id": "app/flow.go::app.Identity"},
+    {"path": "app/flow.go", "line": 40, "id": "app/flow.go::app.GenericCaller"},
+    {"path": "app/flow.go", "line": 42, "id": "app/flow.go::app.Dispatch"},
+    {"path": "app/flow.go", "line": 44, "id": "app/flow.go::app.ShadowedDispatchCaller"},
+    {"path": "app/flow.go", "line": 49, "id": "app/flow.go::app.FunctionValueCaller"},
+    {"path": "rival/rival.go", "line": 3, "id": "rival/rival.go::rival.Clear"},
+    {"path": "wire/wire.go", "line": 3, "id": "wire/wire.go::wire.Clear"}
+  ],
+  "calls": [
+    {
+      "line": 14,
+      "expression": "a.Convert()",
+      "caller": "app/flow.go::app.AlphaCaller",
+      "target": "app/flow.go::app.Alpha.Convert",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "line": 15,
+      "expression": "b.Convert()",
+      "caller": "app/flow.go::app.BetaCaller",
+      "target": "app/flow.go::app.Beta.Convert",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "line": 25,
+      "expression": "p.Publish()",
+      "caller": "app/flow.go::app.PublisherCaller",
+      "target": null,
+      "possible_targets": ["app/flow.go::app.Message.Publish"],
+      "resolution": "interface-dispatch"
+    },
+    {
+      "line": 26,
+      "expression": "PublisherCaller(Message{})",
+      "caller": "app/flow.go::app.PublisherCallerOuter",
+      "target": "app/flow.go::app.PublisherCaller",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "line": 30,
+      "expression": "Clear()",
+      "caller": "app/flow.go::app.LocalClearCaller",
+      "target": "app/flow.go::app.Clear",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "line": 31,
+      "expression": "wire.Clear()",
+      "caller": "app/flow.go::app.WireClearCaller",
+      "target": "wire/wire.go::wire.Clear",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "line": 32,
+      "expression": "rival.Clear()",
+      "caller": "app/flow.go::app.RivalClearCaller",
+      "target": "rival/rival.go::rival.Clear",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "line": 35,
+      "expression": "Root()",
+      "caller": "app/flow.go::app.LevelOne",
+      "target": "app/flow.go::app.Root",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "line": 36,
+      "expression": "LevelOne()",
+      "caller": "app/flow.go::app.LevelTwo",
+      "target": "app/flow.go::app.LevelOne",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "line": 37,
+      "expression": "LevelTwo()",
+      "caller": "app/flow.go::app.LevelThree",
+      "target": "app/flow.go::app.LevelTwo",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "line": 40,
+      "expression": "Identity(7)",
+      "caller": "app/flow.go::app.GenericCaller",
+      "target": "app/flow.go::app.Identity",
+      "possible_targets": [],
+      "resolution": "static"
+    },
+    {
+      "line": 46,
+      "expression": "Dispatch()",
+      "caller": "app/flow.go::app.ShadowedDispatchCaller",
+      "target": null,
+      "possible_targets": [],
+      "resolution": "function-value"
+    },
+    {
+      "line": 49,
+      "expression": "fn()",
+      "caller": "app/flow.go::app.FunctionValueCaller",
+      "target": null,
+      "possible_targets": [],
+      "resolution": "function-value"
+    }
+  ],
+  "blast_radius": [
+    {
+      "target": "app/flow.go::app.Root",
+      "depth": 3,
+      "definite_by_depth": [
+        ["app/flow.go::app.LevelOne"],
+        ["app/flow.go::app.LevelTwo"],
+        ["app/flow.go::app.LevelThree"]
+      ]
+    },
+    {
+      "target": "app/flow.go::app.Alpha.Convert",
+      "depth": 1,
+      "definite_by_depth": [["app/flow.go::app.AlphaCaller"]]
+    },
+    {
+      "target": "app/flow.go::app.Beta.Convert",
+      "depth": 1,
+      "definite_by_depth": [["app/flow.go::app.BetaCaller"]]
+    },
+    {
+      "target": "app/flow.go::app.Clear",
+      "depth": 1,
+      "definite_by_depth": [["app/flow.go::app.LocalClearCaller"]]
+    },
+    {
+      "target": "wire/wire.go::wire.Clear",
+      "depth": 1,
+      "definite_by_depth": [["app/flow.go::app.WireClearCaller"]]
+    },
+    {
+      "target": "rival/rival.go::rival.Clear",
+      "depth": 1,
+      "definite_by_depth": [["app/flow.go::app.RivalClearCaller"]]
+    },
+    {
+      "target": "app/flow.go::app.Identity",
+      "depth": 1,
+      "definite_by_depth": [["app/flow.go::app.GenericCaller"]]
+    },
+    {
+      "target": "app/flow.go::app.Message.Publish",
+      "depth": 2,
+      "definite_by_depth": [],
+      "possible_by_depth": [
+        ["app/flow.go::app.PublisherCaller"],
+        ["app/flow.go::app.PublisherCallerOuter"]
+      ]
+    }
+  ]
+}
