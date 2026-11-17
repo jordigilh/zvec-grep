@@ -15,6 +15,10 @@ import {
   createWorkspaceIndexStorage,
   type WorkspaceIndexStorage,
 } from "../storage/index.js";
+import {
+  cachedArtifactDigest,
+  invalidateArtifactDigest as invalidateCachedArtifactDigest,
+} from "../utils/artifact-digest.js";
 import type {
   WorkspaceIndexEmbeddingSchema,
   WorkspaceIndexStatus,
@@ -35,6 +39,7 @@ export class WorkspaceIndex {
   private readonly storage: WorkspaceIndexStorage;
   private readonly embedding: WorkspaceIndexEmbeddingSchema;
   private readonly embeddingModel?: EmbeddingModel;
+  private artifactDigest?: { token: object; promise: Promise<string> };
   private closed = false;
 
   constructor(
@@ -66,7 +71,7 @@ export class WorkspaceIndex {
     return this.info.name;
   }
 
-  index(options: IndexOptions = {}): Promise<IndexResult> {
+  async index(options: IndexOptions = {}): Promise<IndexResult> {
     if (this.storage.readOnly) {
       throw new EngineError("Cannot update a read-only workspace index", {
         code: "ZVEC_GREP.ENGINE.WORKSPACE_INDEX.READ_ONLY",
@@ -84,21 +89,64 @@ export class WorkspaceIndex {
       onProgress: options.onProgress,
       signal: options.signal,
     };
-    return options.changedPaths && options.changedPaths.length > 0
-      ? indexWorkspacePaths(context, options.changedPaths)
-      : indexWorkspace(context);
+    try {
+      return await (options.changedPaths && options.changedPaths.length > 0
+        ? indexWorkspacePaths(context, options.changedPaths)
+        : indexWorkspace(context));
+    } finally {
+      this.invalidateArtifactDigest();
+    }
   }
 
   status(): Promise<WorkspaceIndexStatus> {
     return getWorkspaceIndexStatus(this.info, this.storage.listFiles());
   }
 
+  prepareArtifactDigest(): void {
+    void this.getArtifactDigest();
+  }
+
+  invalidateArtifactDigest(): void {
+    invalidateCachedArtifactDigest(this.info.path);
+    this.artifactDigest = undefined;
+  }
+
   searchPlan(plan: SearchPlan): Promise<SearchPlanResult> {
+    const semanticTraceRequested = plan.semanticFeatures
+      ? plan.semanticFeatures.trace !== "off"
+      : plan.trace === true;
     return searchWorkspaceIndex(plan, {
       workspaceIndex: this.info,
       embeddingModel: this.embeddingModel,
       storage: this.storage,
+      indexDigest: semanticTraceRequested
+        ? this.getArtifactDigest()
+        : undefined,
     });
+  }
+
+  private getArtifactDigest(): Promise<string> {
+    if (this.artifactDigest) {
+      return this.artifactDigest.promise;
+    }
+
+    const token = {};
+    const digest = cachedArtifactDigest(
+      this.info.path,
+      `${this.info.id}\0${this.info.indexVersion ?? null}\0${this.info.updatedTime}`,
+      {
+        workspace_index_id: this.info.id,
+        index_version: this.info.indexVersion ?? null,
+        updated_time: this.info.updatedTime,
+      },
+      () => {
+        if (this.artifactDigest?.token === token) {
+          this.artifactDigest = undefined;
+        }
+      },
+    );
+    this.artifactDigest = { token, promise: digest };
+    return digest;
   }
 
   close(): void {

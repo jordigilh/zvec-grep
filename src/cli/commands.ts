@@ -686,7 +686,10 @@ async function runDirectRgQuery(
       console.error(line);
     }
     if (commandOptions.debug) {
-      printDebug(result, { trace: false });
+      printDebug(result, {
+        trace: false,
+        semanticFeatures: commandOptions.semanticFeatures,
+      });
     }
   } finally {
     await zvecGrep.close();
@@ -773,6 +776,7 @@ async function runDirectQuery(
     if (commandOptions.debug) {
       printDebug(result, {
         trace: commandOptions.trace === true,
+        semanticFeatures: commandOptions.semanticFeatures,
       });
     }
   } catch (error) {
@@ -862,6 +866,7 @@ async function runServerQuery(
       fuse: options.fuse,
       limit: options.limit,
       trace: options.trace,
+      semantic_features: options.semanticFeatures,
       preferSymbol: options.preferSymbol,
       symbolTypes: options.symbolTypes,
       globs: options.globs,
@@ -896,7 +901,10 @@ async function runServerQuery(
     printStaleIndexStatus(response.indexing?.state, response.indexing);
   }
   if (options.debug) {
-    printDebug(response.result, { trace: options.trace === true });
+    printDebug(response.result, {
+      trace: options.trace === true,
+      semanticFeatures: options.semanticFeatures,
+    });
   }
 }
 
@@ -975,7 +983,7 @@ function printServerControlStatus(
   if (status.mcpToolset) console.log(`MCP toolset: ${status.mcpToolset}`);
 }
 
-function contextOptions(
+export function contextOptions(
   options: CliOptions,
   queries: readonly string[],
   onAutoUpdateProgress?: (progress: IndexProgress) => void,
@@ -992,6 +1000,7 @@ function contextOptions(
     autoUpdate: policy.autoUpdate,
     onAutoUpdateProgress,
     trace: options.trace,
+    semanticFeatures: options.semanticFeatures,
     preferSymbol: options.preferSymbol,
     globs: options.globs,
     insensitiveGlobs: options.insensitiveGlobs,

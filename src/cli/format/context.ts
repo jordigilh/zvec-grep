@@ -86,7 +86,11 @@ function cliAgentContextLines(
     return agentContextLines(result, options);
   }
 
-  const lines = [`query groups (${result.groupResults.length}):`];
+  const semanticTrace = semanticTraceSummary(result, options);
+  const lines = [
+    ...(semanticTrace ? [semanticTrace, ""] : []),
+    `query groups (${result.groupResults.length}):`,
+  ];
   for (const [index, group] of result.groupResults.entries()) {
     if (index > 0) {
       lines.push("");
@@ -116,6 +120,7 @@ function contextResultForGroup(
       coverageGroup: undefined,
     })),
     groupResults: undefined,
+    trace: undefined,
     diagnostics: {
       ...result.diagnostics,
       emptyReason: group.items.length === 0 ? "no_matches" : undefined,
@@ -146,9 +151,14 @@ function agentContextLines(
   const preview = previewMode(result, options);
   const items = [...result.items].sort(compareContextItems);
   const lines: string[] = [];
+  const semanticTrace = semanticTraceSummary(result, options);
 
   if (items.length === 0) {
-    return [emptyContextLabel(result), ...emptyContextDetailLines(result)];
+    return [
+      emptyContextLabel(result),
+      ...emptyContextDetailLines(result),
+      ...(semanticTrace ? ["", semanticTrace] : []),
+    ];
   }
 
   const queryGroups = result.diagnostics.index?.queryGroups ?? [];
@@ -161,6 +171,9 @@ function agentContextLines(
       "selection: primary-group coverage then global_fill; prioritized<=6; all candidates detailed",
       "",
     );
+  }
+  if (semanticTrace) {
+    lines.push(semanticTrace, "");
   }
 
   let first = true;
@@ -486,6 +499,7 @@ function printCliHumanContextResult(
   printHumanField(theme, "Groups", String(result.groupResults.length));
   printHumanField(theme, "Files", String(groupContextItems(allItems).length));
   printHumanField(theme, "Hits", String(allItems.length));
+  printHumanSemanticTrace(result, options, theme);
 
   for (const group of result.groupResults) {
     console.log("");
@@ -531,6 +545,7 @@ export function printHumanContextResult(
   printHumanField(theme, "Coverage", theme.status(result.coverage));
   printHumanField(theme, "Files", String(groups.length));
   printHumanField(theme, "Hits", String(result.items.length));
+  printHumanSemanticTrace(result, options, theme);
 
   if (groups.length === 0) {
     printHumanField(
@@ -1065,6 +1080,41 @@ function traceDetailLine(item: ZvecGrepContextItem): string | null {
   }
 
   return parts.length > 0 ? parts.join("; ") : null;
+}
+
+function semanticTraceSummary(
+  result: ZvecGrepContextResult,
+  options: CliOptions,
+): string | undefined {
+  const trace = result.trace;
+  if (!trace || !semanticTraceRequested(options)) {
+    return undefined;
+  }
+
+  return `semantic_trace: mode=${trace.feature_config.trace} generation_id=${trace.generation_id} candidates=${trace.candidates.length}/${trace.candidate_count} candidates_truncated=${trace.candidates_truncated}`;
+}
+
+function semanticTraceRequested(options: CliOptions): boolean {
+  return (
+    options.trace === true ||
+    (options.semanticFeatures?.trace !== undefined &&
+      options.semanticFeatures.trace !== "off")
+  );
+}
+
+function printHumanSemanticTrace(
+  result: ZvecGrepContextResult,
+  options: CliOptions,
+  theme: ReturnType<typeof createHumanTheme>,
+): void {
+  const summary = semanticTraceSummary(result, options);
+  if (summary) {
+    printHumanField(
+      theme,
+      "Semantic trace",
+      summary.slice("semantic_trace: ".length),
+    );
+  }
 }
 
 function traceRecallSummaries(

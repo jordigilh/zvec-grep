@@ -1,4 +1,8 @@
-import type { CodeSymbolType, ZvecGrepContextRoute } from "../index.js";
+import type {
+  CodeSymbolType,
+  SemanticFeatures,
+  ZvecGrepContextRoute,
+} from "../index.js";
 import type {
   CliCommand,
   CliOptions,
@@ -11,6 +15,7 @@ import type {
 } from "./types.js";
 import { VALID_SYMBOL_TYPES } from "./types.js";
 import { parseMcpToolset } from "../mcp/toolset.js";
+import { semanticFeaturesInputSchema } from "../mcp/schemas.js";
 
 const RG_OPTIONS_WITH_VALUE = new Set([
   "--dfa-size-limit",
@@ -292,6 +297,14 @@ export function parseArgs(args: readonly string[]): ParsedArgs {
       options.debug = true;
     } else if (arg === "--trace") {
       options.trace = true;
+    } else if (isLongOptionWithValue(arg, "--semantic-features")) {
+      options.semanticFeatures = parseSemanticFeatures(
+        valueFromLongOption(arg),
+      );
+    } else if (arg === "--semantic-features") {
+      options.semanticFeatures = parseSemanticFeatures(
+        readOptionValue(commandArgs, ++index, arg),
+      );
     } else if (arg === "--human") {
       throw new Error(
         "--human has been removed; terminal output is human-readable by default",
@@ -712,6 +725,7 @@ function validateCliShape(
     [options.fuse, "--fuse"],
     [options.trace, "--trace"],
     [options.human, "--compact"],
+    [options.semanticFeatures, "--semantic-features"],
     [options.preview, "--preview"],
     [options.limit, "--limit"],
     [options.refresh, "--refresh"],
@@ -867,6 +881,9 @@ function validateCliShape(
   }
   if (options.rg && options.trace) {
     throw new Error("--rg cannot be combined with --trace");
+  }
+  if (options.rg && options.semanticFeatures) {
+    throw new Error("--rg cannot be combined with --semantic-features");
   }
   if (options.rg && (options.preferSymbol || options.symbolTypes?.length)) {
     throw new Error("--rg cannot be combined with indexed symbol options");
@@ -1422,6 +1439,28 @@ function parsePreviewMode(value: string): PreviewMode {
   }
 
   throw new Error(`Unsupported preview mode: ${value}`);
+}
+
+function parseSemanticFeatures(value: string): SemanticFeatures {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error("--semantic-features requires valid JSON", {
+      cause: error,
+    });
+  }
+
+  const result = semanticFeaturesInputSchema.safeParse(parsed);
+  if (!result.success) {
+    throw new Error(
+      `--semantic-features is invalid: ${result.error.issues
+        .map((issue) => issue.message)
+        .join("; ")}`,
+    );
+  }
+
+  return result.data;
 }
 
 export function parseDevice(

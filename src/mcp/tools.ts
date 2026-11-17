@@ -492,6 +492,8 @@ export function registerZvecGrepTools(
             response.result,
             {
               preview: input.preview ?? "short",
+              trace: input.trace,
+              semanticFeatures: input.semantic_features,
             },
           )}`;
           return options.includeSearchStructuredContent
