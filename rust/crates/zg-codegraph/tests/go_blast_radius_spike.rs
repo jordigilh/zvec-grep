@@ -53,9 +53,11 @@ fn name_only_baseline_misses_frozen_go_call_truth() {
     let symbols = symbol_ids(&baseline);
     let baseline_scores = exact_static_scores(&baseline, &truth, &symbols);
 
-    // One cross-package same-name false positive, two missed receiver-specific
-    // calls, and one interface dispatch incorrectly treated as exact.
-    assert_eq!(baseline_scores, (5, 7, 8));
+    // The receiver-disambiguation heuristics now resolve the two previously
+    // missed receiver-specific calls exactly. The remaining baseline
+    // imperfections are one cross-package same-name false positive and one
+    // interface dispatch incorrectly treated as exact.
+    assert_eq!(baseline_scores, (7, 9, 8));
     let precision_milli = baseline_scores.0 * 1_000 / baseline_scores.1;
     let recall_milli = baseline_scores.0 * 1_000 / baseline_scores.2;
     eprintln!(
@@ -95,22 +97,22 @@ fn name_only_baseline_misses_frozen_go_call_truth() {
             .callers_by_depth,
         [vec!["app/calls.go::InterfaceCaller".to_owned()]]
     );
-    assert!(
+    assert_eq!(
         index
             .blast_radius("app.Alpha.Run", Some(1))
             .expect("Alpha.Run callers")
-            .callers_by_depth
-            .is_empty()
+            .callers_by_depth,
+        // Receiver-type qualification resolves `a.Run()` inside AlphaCaller
+        // (parameter `a Alpha`) to Alpha.Run exactly; this call was
+        // previously ambiguous with BetaCaller's `b.Run()`.
+        [vec!["app/calls.go::AlphaCaller".to_owned()]]
     );
     assert_eq!(
         index
             .blast_radius("app.Alpha.Run", Some(1))
             .expect("Alpha.Run candidates")
             .possible_callers_by_depth,
-        [vec![
-            "app/calls.go::AlphaCaller".to_owned(),
-            "app/calls.go::BetaCaller".to_owned(),
-        ]]
+        Vec::<Vec<String>>::new()
     );
 }
 

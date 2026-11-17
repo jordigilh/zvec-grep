@@ -508,6 +508,9 @@ struct ParsedFile {
     import_sites: Vec<ImportSite>,
     calls: Vec<CallSite>,
     relations: Vec<StructuralRelation>,
+    /// Full UTF-8 source text. Empty for synthetic parsed files built from
+    /// already-persisted metadata; used by Go receiver disambiguation.
+    source: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -816,7 +819,7 @@ fn merge_codegraph_delta(
         .collect::<BTreeSet<_>>();
 
     let mut base_edges = base.edges.clone();
-    resolve_call_edges(&mut base_edges, &base.nodes);
+    resolve_call_edges(&mut base_edges, &base.nodes, &parsed_sources(changed_files));
     let mut edges = base_edges
         .iter()
         .filter(|edge| {
@@ -834,7 +837,7 @@ fn merge_codegraph_delta(
         .chain(changed_artifact.edges)
         .collect::<Vec<_>>();
     refresh_import_edge_targets(&mut edges, &files, &nodes, package_manifests);
-    resolve_call_edges(&mut edges, &nodes);
+    resolve_call_edges(&mut edges, &nodes, &parsed_sources(changed_files));
     resolve_relation_edges(&mut edges, &nodes);
     refresh_import_symbol_edges(&mut edges, changed_files, &files, &nodes, package_manifests);
 
@@ -973,6 +976,7 @@ fn refresh_import_symbol_edges(
             import_sites: Vec::new(),
             calls: Vec::new(),
             relations: Vec::new(),
+            source: String::new(),
         })
         .collect::<Vec<_>>();
     for file in changed_files {
@@ -1100,7 +1104,7 @@ fn build_artifact(
     append_call_edges(parsed, &mut edges);
 
     nodes.sort_by(|left, right| left.id.cmp(&right.id));
-    resolve_call_edges(&mut edges, &nodes);
+    resolve_call_edges(&mut edges, &nodes, &parsed_sources(parsed));
     resolve_relation_edges(&mut edges, &nodes);
     sort_graph(&mut nodes, &mut edges);
 
@@ -1595,6 +1599,7 @@ fn refresh_import_edge_targets(
             import_sites: Vec::new(),
             calls: Vec::new(),
             relations: Vec::new(),
+            source: String::new(),
         })
         .collect::<Vec<_>>();
     let nodes_by_id = nodes
@@ -1735,7 +1740,11 @@ fn sort_edges(edges: &mut [CodeGraphEdge]) {
     });
 }
 
-fn resolve_call_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) {
+fn resolve_call_edges(
+    edges: &mut [CodeGraphEdge],
+    nodes: &[CodeGraphNode],
+    sources: &HashMap<String, String>,
+) {
     let definitions = nodes
         .iter()
         .filter(|node| matches!(node.kind.as_str(), "function" | "method"))
@@ -1761,6 +1770,10 @@ fn resolve_call_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) {
             .or_default()
             .push(definition);
     }
+    let sources: HashMap<&str, &str> = sources
+        .iter()
+        .map(|(path, source)| (path.as_str(), source.as_str()))
+        .collect();
 
     for edge in edges.iter_mut().filter(|edge| edge.kind == "calls") {
         let Some(target_name) = edge.target_name.as_deref() else {
@@ -1793,7 +1806,22 @@ fn resolve_call_edges(edges: &mut [CodeGraphEdge], nodes: &[CodeGraphNode]) {
         let caller_path = nodes_by_id
             .get(edge.source.as_str())
             .and_then(|node| node.path.as_deref());
-        let (target, ambiguous_candidates) = resolve_call(&call, caller_path, &by_name);
+        let caller_node = nodes_by_id.get(edge.source.as_str()).copied();
+        let caller_function_text = caller_node.and_then(|node| {
+            let path = node.path.as_deref()?;
+            let source = sources.get(path)?;
+            let range = node.range.as_ref()?;
+            source
+                .get(range.start_byte..range.end_byte)
+                .map(str::to_owned)
+        });
+        let (target, ambiguous_candidates) = resolve_call(
+            &call,
+            caller_path,
+            &by_name,
+            caller_node,
+            caller_function_text.as_deref(),
+        );
         edge.target = target.map(|definition| definition.node.id.clone());
         edge.resolved = edge.target.is_some();
         edge.ambiguous_candidates = ambiguous_candidates;
@@ -1986,7 +2014,7 @@ fn relation_target_kind(relation: &str, node_kind: &str) -> bool {
 fn apply_semantic_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> CodeGraphResult<()> {
     // Start from parser-derived names so replacing/removing a prior overlay
     // cannot leave semantic edges behind.
-    restore_syntax_call_edges(artifact);
+    restore_syntax_call_edges(artifact, root);
     artifact.manifest_key = package_manifest_key_for_root(root, &artifact.files)?;
     if let Err(error) = try_apply_go_callfacts(root, artifact) {
         // Semantic facts are an optional enhancement. Invalid, unsupported, or
@@ -1994,7 +2022,7 @@ fn apply_semantic_callfacts(root: &Path, artifact: &mut CodeGraphArtifact) -> Co
         // remaining queryable. A Rust sidecar may still be valid when the Go
         // sidecar is not, so restore only the syntax overlay before continuing.
         match error {
-            CodeGraphError::GoCallFacts { .. } => restore_syntax_call_edges(artifact),
+            CodeGraphError::GoCallFacts { .. } => restore_syntax_call_edges(artifact, root),
             error => return Err(error),
         }
     }
@@ -4042,12 +4070,36 @@ fn python_callfacts_error(path: &Path, reason: String) -> CodeGraphError {
     }
 }
 
-fn restore_syntax_call_edges(artifact: &mut CodeGraphArtifact) {
-    resolve_call_edges(&mut artifact.edges, &artifact.nodes);
+fn restore_syntax_call_edges(artifact: &mut CodeGraphArtifact, root: &Path) {
+    let sources = read_graph_sources(root, artifact);
+    resolve_call_edges(&mut artifact.edges, &artifact.nodes, &sources);
     artifact.go_callfacts_context_sha256 = None;
     artifact.rust_callfacts_context_sha256 = None;
     artifact.typescript_callfacts_context_sha256 = None;
     artifact.python_callfacts_context_sha256 = None;
+}
+
+/// Parse-time source text keyed by fixture-relative path.
+fn parsed_sources(parsed: &[ParsedFile]) -> HashMap<String, String> {
+    parsed
+        .iter()
+        .filter(|file| !file.source.is_empty())
+        .map(|file| (file.file.path.clone(), file.source.clone()))
+        .collect()
+}
+
+/// Re-read artifact file sources from disk so call re-resolution keeps
+/// receiver-type context. Missing or non-UTF-8 files are skipped.
+fn read_graph_sources(root: &Path, artifact: &CodeGraphArtifact) -> HashMap<String, String> {
+    artifact
+        .files
+        .iter()
+        .filter_map(|file| {
+            let bytes = fs::read(root.join(&file.path)).ok()?;
+            let source = String::from_utf8(bytes).ok()?;
+            Some((file.path.clone(), source))
+        })
+        .collect()
 }
 
 fn manifest_key_with_callfacts(
@@ -5810,6 +5862,7 @@ fn parse_file(root: &Path, path: &Path) -> CodeGraphResult<ParsedFile> {
         import_sites,
         calls,
         relations,
+        source: String::from_utf8_lossy(&bytes).into_owned(),
     })
 }
 
@@ -6981,10 +7034,75 @@ fn resolve_call<'a>(
     call: &CallSite,
     caller_path: Option<&str>,
     by_name: &HashMap<&str, Vec<&'a Definition>>,
+    caller: Option<&CodeGraphNode>,
+    caller_function_text: Option<&str>,
 ) -> (Option<&'a Definition>, Vec<String>) {
     let Some(candidates) = by_name.get(call.target_name.as_str()) else {
         return (None, Vec::new());
     };
+
+    // Go receiver disambiguation. Both heuristics engage only for qualified
+    // call targets (`receiver.Name(...)`) in Go files: (b) receiver-type
+    // qualification prefers the unique method matching the receiver
+    // expression's declared type, and (a) the self-loop guard stops a
+    // same-name collision from resolving a qualified call to the caller
+    // itself. Unqualified calls and non-Go files keep the exact prior
+    // behavior.
+    if let (Some(receiver_expression), Some(caller_node)) = (
+        call.qualified_target
+            .as_deref()
+            .and_then(qualified_target_receiver),
+        caller,
+    ) {
+        let is_go_caller = caller_node.path.as_deref().is_some_and(|path| {
+            path.rsplit('.')
+                .next()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("go"))
+        });
+        if is_go_caller {
+            // (b) RECEIVER-TYPE QUALIFICATION: when the receiver expression's
+            // declared type in the enclosing function matches exactly one
+            // candidate method, that method is the call target.
+            if let Some(resolved) = receiver_type_preference(
+                candidates,
+                call,
+                receiver_expression,
+                caller_function_text,
+            ) {
+                return (Some(resolved), Vec::new());
+            }
+
+            let same_file_candidates = caller_path.map_or_else(Vec::new, |path| {
+                candidates
+                    .iter()
+                    .copied()
+                    .filter(|definition| definition.node.path.as_deref() == Some(path))
+                    .collect::<Vec<_>>()
+            });
+            let default_candidates = if same_file_candidates.is_empty() {
+                candidates
+            } else {
+                &same_file_candidates
+            };
+            if let [only] = default_candidates.as_slice()
+                && only.node.id == caller_node.id
+            {
+                // (a) SELF-LOOP GUARD: a qualified call whose receiver
+                // expression differs from the caller's own receiver name
+                // cannot target the caller itself.
+                let caller_receiver_ident = caller_receiver_identifier(caller_node);
+                if caller_receiver_ident.as_deref() != Some(receiver_expression) {
+                    let guarded: Vec<&Definition> = candidates
+                        .iter()
+                        .copied()
+                        .filter(|definition| definition.node.id != caller_node.id)
+                        .collect();
+                    return resolve_candidate_slice(&guarded);
+                }
+            }
+        }
+    }
+
     let same_file_candidates = caller_path.map_or_else(Vec::new, |path| {
         candidates
             .iter()
@@ -6997,7 +7115,13 @@ fn resolve_call<'a>(
     } else {
         &same_file_candidates
     };
-    match candidates.as_slice() {
+    resolve_candidate_slice(candidates)
+}
+
+fn resolve_candidate_slice<'a>(
+    candidates: &[&'a Definition],
+) -> (Option<&'a Definition>, Vec<String>) {
+    match candidates {
         [candidate] => (Some(*candidate), Vec::new()),
         [] => (None, Vec::new()),
         ambiguous => {
@@ -7009,6 +7133,151 @@ fn resolve_call<'a>(
             (None, candidate_ids)
         }
     }
+}
+
+/// The receiver expression of a qualified call target (`catalog.Name` -> `catalog`).
+fn qualified_target_receiver(qualified_target: &str) -> Option<&str> {
+    let receiver = qualified_target.rsplit_once('.')?.0;
+    (!receiver.is_empty()).then_some(receiver)
+}
+
+/// The receiver identifier of a Go method definition parsed from its
+/// signature (`func (c *Type) Name(...)` -> `c`); `None` for plain functions.
+fn caller_receiver_identifier(caller: &CodeGraphNode) -> Option<String> {
+    let signature = caller.signature.as_deref()?;
+    let rest = signature.strip_prefix("func (")?;
+    let receiver = rest.split(')').next()?;
+    let ident = receiver
+        .split(|character: char| character.is_whitespace() || character == ',')
+        .find(|part| !part.is_empty())?;
+    (ident != "_").then(|| ident.to_owned())
+}
+
+/// Prefer the candidate whose receiver type matches the declared type of the
+/// receiver expression in the enclosing Go function source. Only applies when
+/// the match is unique. Method qualified names are shaped
+/// `package.receiver Type.Method` (for example
+/// `discovery.c *WorkflowCatalog.ListWorkflows`), so both the import
+/// package and the local type name are matched.
+fn receiver_type_preference<'a>(
+    candidates: &[&'a Definition],
+    call: &CallSite,
+    receiver_expression: &str,
+    caller_function_text: Option<&str>,
+) -> Option<&'a Definition> {
+    let function_text = caller_function_text?;
+    let receiver_type = go_receiver_type(function_text, receiver_expression)?;
+    let type_local = receiver_type.rsplit('.').next().unwrap_or(&receiver_type);
+    let package = receiver_type.strip_suffix(&format!(".{type_local}"));
+    let exact = format!("{receiver_type}.{}", call.target_name);
+    let method_suffix = format!(".{type_local}.{}", call.target_name);
+    let receiver_suffix = format!("*{type_local}.{}", call.target_name);
+    let mut matching = candidates
+        .iter()
+        .copied()
+        .filter(|definition| {
+            let qualified = definition.qualified_name.as_str();
+            let package_matches = package.is_none_or(|package| {
+                qualified.starts_with(package) || qualified.contains(&format!(" {package}"))
+            });
+            package_matches
+                && (qualified == exact
+                    || qualified.ends_with(&method_suffix)
+                    || qualified.ends_with(&receiver_suffix))
+        })
+        .collect::<Vec<_>>();
+    if matching.len() == 1 {
+        return Some(matching.remove(0));
+    }
+    None
+}
+
+/// Resolve the declared type of a local receiver expression from Go function
+/// text. Recognizes, in order: a `var recv [*/]pkg.Type` declaration, a
+/// `recv := pkg.NewThing(...)` constructor, a `recv := &pkg.Type{...}`
+/// composite literal, and a `recv [*/]pkg.Type` parameter in the signature.
+/// Returns the package-qualified type name when unambiguous.
+fn go_receiver_type(function_text: &str, receiver: &str) -> Option<String> {
+    for line in function_text.lines() {
+        let trimmed = line.trim_start();
+        // var recv [*/]pkg.Type
+        if let Some(rest) = trimmed.strip_prefix("var ")
+            && let Some(type_name) = declared_type_after_ident(rest, receiver)
+        {
+            return Some(type_name);
+        }
+        // recv := pkg.NewThing(  /  recv := &pkg.Type{  /  recv := pkg.Type{
+        if let Some((before, after)) = trimmed.split_once(":=")
+            && before.trim() == receiver
+            && let Some(type_name) = constructor_type(after.trim_start())
+        {
+            return Some(type_name);
+        }
+    }
+    // Parameter in the signature: `recv *pkg.Type` or `recv pkg.Type`.
+    if let Some(signature_end) = function_text.find('{') {
+        let signature = &function_text[..signature_end];
+        let mut rest = signature;
+        while let Some(open) = rest.find('(') {
+            let after = &rest[open + 1..];
+            let Some(close) = after.find(')') else {
+                break;
+            };
+            for parameter in after[..close].split(',') {
+                if let Some(type_name) = declared_type_after_ident(parameter.trim(), receiver) {
+                    return Some(type_name);
+                }
+            }
+            rest = &after[close + 1..];
+        }
+    }
+    None
+}
+
+/// `recv *pkg.Type` / `recv pkg.Type` (after trimming) -> `pkg.Type`.
+fn declared_type_after_ident(text: &str, receiver: &str) -> Option<String> {
+    let mut words = text.split_whitespace();
+    if words.next()? != receiver {
+        return None;
+    }
+    let mut type_name = words.next()?.trim_start_matches('*').to_owned();
+    if type_name.ends_with(')') {
+        type_name.pop();
+    }
+    is_go_type_name(&type_name).then_some(type_name)
+}
+
+/// `pkg.NewThing(` -> `pkg.Thing`; `&pkg.Type{` / `pkg.Type{` -> `pkg.Type`.
+fn constructor_type(rhs: &str) -> Option<String> {
+    let rhs = rhs.trim_start_matches('&');
+    if let Some((package, constructor)) = rhs.split_once("New")
+        && package.ends_with('.')
+    {
+        let constructor = constructor.split(['(', '{']).next().unwrap_or(constructor);
+        let type_name = format!("{package}{constructor}");
+        return is_go_type_name(&type_name).then_some(type_name);
+    }
+    // Composite literal: &pkg.Type{ or pkg.Type{
+    let literal = rhs
+        .split('(')
+        .next()
+        .unwrap_or(rhs)
+        .split('{')
+        .next()
+        .unwrap_or(rhs)
+        .trim();
+    if is_go_type_name(literal) && literal.contains('.') {
+        return Some(literal.to_owned());
+    }
+    None
+}
+
+fn is_go_type_name(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_' || character == '.')
+        && value.split('.').count() <= 2
 }
 
 fn manifest_key(files: &[CodeGraphFile]) -> String {
@@ -7157,6 +7426,160 @@ mod tests {
         assert_eq!(
             context.fingerprint(),
             "5b7f099e8fbdb5261a1e04b1a2183cbecc299f34b7f13a2583f7d0e9f48e0505"
+        );
+    }
+
+    fn write_go_fixture(root: &Path) {
+        fs::create_dir_all(root.join("internal/discovery")).expect("create discovery dir");
+        fs::create_dir_all(root.join("internal/tools")).expect("create tools dir");
+        fs::write(
+            root.join("go.mod"),
+            "module example.com/disambiguation\n\ngo 1.22\n",
+        )
+        .expect("write go.mod");
+        fs::write(
+            root.join("internal/discovery/catalog.go"),
+            "package discovery\n\n\
+             type WorkflowCatalog struct{ workflows []string }\n\n\
+             func (c *WorkflowCatalog) ListWorkflows() []string {\n\
+             \treturn c.workflows\n\
+             }\n\n\
+             func NewWorkflowCatalog() *WorkflowCatalog {\n\
+             \treturn &WorkflowCatalog{}\n\
+             }\n",
+        )
+        .expect("write catalog.go");
+        fs::write(
+            root.join("internal/tools/list_workflows.go"),
+            "package tools\n\n\
+             import \"example.com/disambiguation/internal/discovery\"\n\n\
+             func ListWorkflows(catalog *discovery.WorkflowCatalog) []string {\n\
+             \treturn catalog.ListWorkflows()\n\
+             }\n\n\
+             func ListFromVar() []string {\n\
+             \tvar catalog *discovery.WorkflowCatalog\n\
+             \treturn catalog.ListWorkflows()\n\
+             }\n\n\
+             func ListFromConstructor() []string {\n\
+             \tcatalog := discovery.NewWorkflowCatalog()\n\
+             \treturn catalog.ListWorkflows()\n\
+             }\n",
+        )
+        .expect("write list_workflows.go");
+    }
+
+    #[test]
+    fn go_receiver_disambiguation_avoids_self_loops() {
+        let root = tempdir().expect("tempdir");
+        write_go_fixture(root.path());
+        let artifact = build_codegraph(root.path()).expect("build codegraph");
+        let nodes: std::collections::HashMap<&str, &super::CodeGraphNode> = artifact
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node))
+            .collect();
+
+        let caller = artifact
+            .nodes
+            .iter()
+            .find(|node| node.qualified_name.as_deref() == Some("tools.ListWorkflows"))
+            .expect("caller function");
+        let method = artifact
+            .nodes
+            .iter()
+            .find(|node| {
+                node.qualified_name
+                    .as_deref()
+                    .is_some_and(|qualified| qualified.ends_with("WorkflowCatalog.ListWorkflows"))
+            })
+            .expect("catalog method");
+
+        for caller_name in [
+            "tools.ListWorkflows",
+            "tools.ListFromVar",
+            "tools.ListFromConstructor",
+        ] {
+            let caller = artifact
+                .nodes
+                .iter()
+                .find(|node| node.qualified_name.as_deref() == Some(caller_name))
+                .expect("caller function");
+            let edges: Vec<&super::CodeGraphEdge> = artifact
+                .edges
+                .iter()
+                .filter(|edge| edge.kind == "calls" && edge.source == caller.id)
+                .collect();
+            let list_edge = edges
+                .iter()
+                .find(|edge| edge.target_name.as_deref() == Some("catalog.ListWorkflows"))
+                .or_else(|| {
+                    edges
+                        .iter()
+                        .find(|edge| edge.target_name.as_deref() == Some("ListWorkflows"))
+                })
+                .expect("ListWorkflows call edge");
+            assert!(
+                list_edge.resolved,
+                "{caller_name}: ListWorkflows edge resolved"
+            );
+            assert_eq!(
+                list_edge.target.as_deref(),
+                Some(method.id.as_str()),
+                "{caller_name}: resolves to the catalog method, not the caller"
+            );
+            assert_ne!(list_edge.target.as_deref(), Some(caller.id.as_str()));
+        }
+        let _ = nodes;
+        let _ = caller;
+    }
+
+    #[test]
+    fn go_receiver_type_helpers_extract_declared_types() {
+        use super::{caller_receiver_identifier, constructor_type, go_receiver_type};
+
+        let function_text = "func (v *Validator) Validate(catalog *discovery.WorkflowCatalog) bool {\n\
+             \tvar local *discovery.WorkflowState\n\
+             \tbuilt := discovery.NewWorkflowCatalog()\n\
+             \tcomposite := &discovery.WorkflowState{}\n\
+             \treturn catalog.ListWorkflows() != nil\n\
+             }";
+        assert_eq!(
+            go_receiver_type(function_text, "catalog"),
+            Some("discovery.WorkflowCatalog".to_owned())
+        );
+        assert_eq!(
+            go_receiver_type(function_text, "local"),
+            Some("discovery.WorkflowState".to_owned())
+        );
+        assert_eq!(
+            go_receiver_type(function_text, "built"),
+            Some("discovery.WorkflowCatalog".to_owned())
+        );
+        assert_eq!(
+            go_receiver_type(function_text, "composite"),
+            Some("discovery.WorkflowState".to_owned())
+        );
+        assert_eq!(go_receiver_type(function_text, "unknown"), None);
+
+        assert_eq!(
+            caller_receiver_identifier(&super::CodeGraphNode {
+                id: "x".to_owned(),
+                kind: "method".to_owned(),
+                path: None,
+                name: "Validate".to_owned(),
+                qualified_name: None,
+                range: None,
+                signature: Some("func (v *Validator) Validate(x int) bool ".to_owned()),
+            }),
+            Some("v".to_owned())
+        );
+        assert_eq!(
+            constructor_type("discovery.NewWorkflowCatalog()"),
+            Some("discovery.WorkflowCatalog".to_owned())
+        );
+        assert_eq!(
+            constructor_type("&discovery.WorkflowState{}"),
+            Some("discovery.WorkflowState".to_owned())
         );
     }
 
