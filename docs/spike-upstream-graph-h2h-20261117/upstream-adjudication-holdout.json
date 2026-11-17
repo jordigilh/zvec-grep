@@ -1,0 +1,555 @@
+{
+ "schema": "graph-shootout-adjudication-v1",
+ "tool": "upstream-zg-0.3.1",
+ "input": "upstream-edges-holdout.json",
+ "truth": "/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/go-holdout-fixture/truth/truth.json",
+ "edge_count": 16,
+ "unique_pairs": 16,
+ "verdicts": {
+  "CONFIRMED": 16
+ },
+ "failure_modes": {},
+ "direction_flips": 0,
+ "precision": 1.0,
+ "recall": 0.9411764705882353,
+ "compiler_pairs_total": 17,
+ "compiler_pairs_present": 16,
+ "compiler_pairs_missed": [
+  {
+   "caller": "CheckAccess",
+   "callee": "AssetState.Contains",
+   "caller_file": "internal/audit/review.go",
+   "callee_file": "internal/inventory/state.go"
+  }
+ ],
+ "edges": [
+  {
+   "source": {
+    "key": [
+     "internal/tools/list_assets.go",
+     "RecordScanned"
+    ],
+    "status": "callable",
+    "raw_symbol": "RecordScanned",
+    "raw_file": "internal/tools/list_assets.go"
+   },
+   "target": {
+    "key": [
+     "internal/inventory/state.go",
+     "AssetState.Add"
+    ],
+    "status": "callable",
+    "raw_symbol": "AssetState::Add",
+    "raw_file": "internal/inventory/state.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/list_assets.go",
+     "start_line": 24,
+     "end_line": 24,
+     "start_byte": 739,
+     "end_byte": 739
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/audit/review.go",
+     "CheckAccess"
+    ],
+    "status": "callable",
+    "raw_symbol": "CheckAccess",
+    "raw_file": "internal/audit/review.go"
+   },
+   "target": {
+    "key": [
+     "internal/inventory/state.go",
+     "AssetStateFromContext"
+    ],
+    "status": "callable",
+    "raw_symbol": "AssetStateFromContext",
+    "raw_file": "internal/inventory/state.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/audit/review.go",
+     "start_line": 14,
+     "end_line": 14,
+     "start_byte": 482,
+     "end_byte": 482
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/inventory/registry.go",
+     "AssetRegistry.ListAssets"
+    ],
+    "status": "callable",
+    "raw_symbol": "AssetRegistry::ListAssets",
+    "raw_file": "internal/inventory/registry.go"
+   },
+   "target": {
+    "key": [
+     "internal/inventory/filters.go",
+     "ApplyTagFilters"
+    ],
+    "status": "callable",
+    "raw_symbol": "ApplyTagFilters",
+    "raw_file": "internal/inventory/filters.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/inventory/registry.go",
+     "start_line": 31,
+     "end_line": 31,
+     "start_byte": 802,
+     "end_byte": 802
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/list_assets.go",
+     "ListAssets"
+    ],
+    "status": "callable",
+    "raw_symbol": "ListAssets",
+    "raw_file": "internal/tools/list_assets.go"
+   },
+   "target": {
+    "key": [
+     "internal/inventory/registry.go",
+     "AssetRegistry.ListAssets"
+    ],
+    "status": "callable",
+    "raw_symbol": "AssetRegistry::ListAssets",
+    "raw_file": "internal/inventory/registry.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/list_assets.go",
+     "start_line": 13,
+     "end_line": 13,
+     "start_byte": 476,
+     "end_byte": 476
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/select_asset.go",
+     "HandleSelectAsset"
+    ],
+    "status": "callable",
+    "raw_symbol": "HandleSelectAsset",
+    "raw_file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "key": [
+     "internal/inventory/registry.go",
+     "AssetRegistry.GetAsset"
+    ],
+    "status": "callable",
+    "raw_symbol": "AssetRegistry::GetAsset",
+    "raw_file": "internal/inventory/registry.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 53,
+     "end_line": 53,
+     "start_byte": 1739,
+     "end_byte": 1739
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/permissions/enforcer.go",
+     "Enforcer.CheckAccess"
+    ],
+    "status": "callable",
+    "raw_symbol": "Enforcer::CheckAccess",
+    "raw_file": "internal/permissions/enforcer.go"
+   },
+   "target": {
+    "key": [
+     "internal/permissions/policy.go",
+     "PolicySet.IsGranted"
+    ],
+    "status": "callable",
+    "raw_symbol": "PolicySet::IsGranted",
+    "raw_file": "internal/permissions/policy.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/permissions/enforcer.go",
+     "start_line": 14,
+     "end_line": 14,
+     "start_byte": 384,
+     "end_byte": 384
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/permissions/enforcer.go",
+     "Enforcer.RequirePermission"
+    ],
+    "status": "callable",
+    "raw_symbol": "Enforcer::RequirePermission",
+    "raw_file": "internal/permissions/enforcer.go"
+   },
+   "target": {
+    "key": [
+     "internal/permissions/enforcer.go",
+     "Enforcer.CheckAccess"
+    ],
+    "status": "callable",
+    "raw_symbol": "Enforcer::CheckAccess",
+    "raw_file": "internal/permissions/enforcer.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/permissions/enforcer.go",
+     "start_line": 20,
+     "end_line": 20,
+     "start_byte": 585,
+     "end_byte": 585
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/audit/ledger.go",
+     "AuditLedger.Record"
+    ],
+    "status": "callable",
+    "raw_symbol": "AuditLedger::Record",
+    "raw_file": "internal/audit/ledger.go"
+   },
+   "target": {
+    "key": [
+     "internal/permissions/enforcer.go",
+     "Enforcer.RequirePermission"
+    ],
+    "status": "callable",
+    "raw_symbol": "Enforcer::RequirePermission",
+    "raw_file": "internal/permissions/enforcer.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/audit/ledger.go",
+     "start_line": 26,
+     "end_line": 26,
+     "start_byte": 645,
+     "end_byte": 645
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/select_asset.go",
+     "authorizeAccess"
+    ],
+    "status": "callable",
+    "raw_symbol": "authorizeAccess",
+    "raw_file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "key": [
+     "internal/permissions/enforcer.go",
+     "Enforcer.RequirePermission"
+    ],
+    "status": "callable",
+    "raw_symbol": "Enforcer::RequirePermission",
+    "raw_file": "internal/permissions/enforcer.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 41,
+     "end_line": 41,
+     "start_byte": 1122,
+     "end_byte": 1122
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/select_asset.go",
+     "HandleSelectAsset"
+    ],
+    "status": "callable",
+    "raw_symbol": "HandleSelectAsset",
+    "raw_file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "key": [
+     "internal/audit/ledger.go",
+     "AuditLedger.Record"
+    ],
+    "status": "callable",
+    "raw_symbol": "AuditLedger::Record",
+    "raw_file": "internal/audit/ledger.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 57,
+     "end_line": 57,
+     "start_byte": 1843,
+     "end_byte": 1843
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/audit/review.go",
+     "CheckAccess"
+    ],
+    "status": "callable",
+    "raw_symbol": "CheckAccess",
+    "raw_file": "internal/audit/review.go"
+   },
+   "target": {
+    "key": [
+     "internal/audit/ledger.go",
+     "AuditLedger.Entries"
+    ],
+    "status": "callable",
+    "raw_symbol": "AuditLedger::Entries",
+    "raw_file": "internal/audit/ledger.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/audit/review.go",
+     "start_line": 18,
+     "end_line": 18,
+     "start_byte": 566,
+     "end_byte": 566
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/select_asset.go",
+     "HandleSelectAsset"
+    ],
+    "status": "callable",
+    "raw_symbol": "HandleSelectAsset",
+    "raw_file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "key": [
+     "internal/audit/review.go",
+     "CheckAccess"
+    ],
+    "status": "callable",
+    "raw_symbol": "CheckAccess",
+    "raw_file": "internal/audit/review.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 50,
+     "end_line": 50,
+     "start_byte": 1603,
+     "end_byte": 1603
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/list_assets.go",
+     "ListAssets"
+    ],
+    "status": "callable",
+    "raw_symbol": "ListAssets",
+    "raw_file": "internal/tools/list_assets.go"
+   },
+   "target": {
+    "key": [
+     "internal/tools/list_assets.go",
+     "RecordScanned"
+    ],
+    "status": "callable",
+    "raw_symbol": "RecordScanned",
+    "raw_file": "internal/tools/list_assets.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/list_assets.go",
+     "start_line": 18,
+     "end_line": 18,
+     "start_byte": 609,
+     "end_byte": 609
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/select_asset.go",
+     "authorizeAccess"
+    ],
+    "status": "callable",
+    "raw_symbol": "authorizeAccess",
+    "raw_file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "key": [
+     "internal/tools/select_asset.go",
+     "isAssetInScanResult"
+    ],
+    "status": "callable",
+    "raw_symbol": "isAssetInScanResult",
+    "raw_file": "internal/tools/select_asset.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 38,
+     "end_line": 38,
+     "start_byte": 1009,
+     "end_byte": 1009
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/select_asset.go",
+     "HandleSelectAsset"
+    ],
+    "status": "callable",
+    "raw_symbol": "HandleSelectAsset",
+    "raw_file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "key": [
+     "internal/tools/select_asset.go",
+     "authorizeAccess"
+    ],
+    "status": "callable",
+    "raw_symbol": "authorizeAccess",
+    "raw_file": "internal/tools/select_asset.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 47,
+     "end_line": 47,
+     "start_byte": 1503,
+     "end_byte": 1503
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/select_asset.go",
+     "HandleSelectAsset"
+    ],
+    "status": "callable",
+    "raw_symbol": "HandleSelectAsset",
+    "raw_file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "key": [
+     "internal/tools/select_asset.go",
+     "applySelectedAsset"
+    ],
+    "status": "callable",
+    "raw_symbol": "applySelectedAsset",
+    "raw_file": "internal/tools/select_asset.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 60,
+     "end_line": 60,
+     "start_byte": 1999,
+     "end_byte": 1999
+    }
+   ]
+  }
+ ]
+}

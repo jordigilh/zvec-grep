@@ -1,0 +1,614 @@
+{
+ "schema": "graph-shootout-adjudication-v1",
+ "tool": "upstream-zg-0.3.1",
+ "input": "upstream-edges-tuning.json",
+ "truth": "/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/go-graph-truth-output/truth.json",
+ "edge_count": 18,
+ "unique_pairs": 18,
+ "verdicts": {
+  "CONFIRMED": 18
+ },
+ "failure_modes": {},
+ "direction_flips": 0,
+ "precision": 1.0,
+ "recall": 1.0,
+ "compiler_pairs_total": 18,
+ "compiler_pairs_present": 18,
+ "compiler_pairs_missed": [],
+ "edges": [
+  {
+   "source": {
+    "key": [
+     "internal/tools/list_workflows.go",
+     "RecordDiscovered"
+    ],
+    "status": "callable",
+    "raw_symbol": "RecordDiscovered",
+    "raw_file": "internal/tools/list_workflows.go"
+   },
+   "target": {
+    "key": [
+     "internal/discovery/state.go",
+     "WorkflowState.Add"
+    ],
+    "status": "callable",
+    "raw_symbol": "WorkflowState::Add",
+    "raw_file": "internal/discovery/state.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/list_workflows.go",
+     "start_line": 21,
+     "end_line": 21,
+     "start_byte": 594,
+     "end_byte": 594
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/selection/validator.go",
+     "Validator.IsAllowed"
+    ],
+    "status": "callable",
+    "raw_symbol": "Validator::IsAllowed",
+    "raw_file": "internal/selection/validator.go"
+   },
+   "target": {
+    "key": [
+     "internal/discovery/state.go",
+     "WorkflowState.Contains"
+    ],
+    "status": "callable",
+    "raw_symbol": "WorkflowState::Contains",
+    "raw_file": "internal/discovery/state.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/selection/validator.go",
+     "start_line": 41,
+     "end_line": 41,
+     "start_byte": 972,
+     "end_byte": 972
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/selection/retry.go",
+     "SelfCorrectSelection"
+    ],
+    "status": "callable",
+    "raw_symbol": "SelfCorrectSelection",
+    "raw_file": "internal/selection/retry.go"
+   },
+   "target": {
+    "key": [
+     "internal/discovery/state.go",
+     "WorkflowStateFromContext"
+    ],
+    "status": "callable",
+    "raw_symbol": "WorkflowStateFromContext",
+    "raw_file": "internal/discovery/state.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/selection/retry.go",
+     "start_line": 10,
+     "end_line": 10,
+     "start_byte": 249,
+     "end_byte": 249
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/discovery/catalog.go",
+     "WorkflowCatalog.ListActions"
+    ],
+    "status": "callable",
+    "raw_symbol": "WorkflowCatalog::ListActions",
+    "raw_file": "internal/discovery/catalog.go"
+   },
+   "target": {
+    "key": [
+     "internal/discovery/catalog.go",
+     "WorkflowCatalog.ListWorkflows"
+    ],
+    "status": "callable",
+    "raw_symbol": "WorkflowCatalog::ListWorkflows",
+    "raw_file": "internal/discovery/catalog.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/discovery/catalog.go",
+     "start_line": 27,
+     "end_line": 27,
+     "start_byte": 699,
+     "end_byte": 699
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/list_workflows.go",
+     "ListWorkflows"
+    ],
+    "status": "callable",
+    "raw_symbol": "ListWorkflows",
+    "raw_file": "internal/tools/list_workflows.go"
+   },
+   "target": {
+    "key": [
+     "internal/discovery/catalog.go",
+     "WorkflowCatalog.ListWorkflows"
+    ],
+    "status": "callable",
+    "raw_symbol": "WorkflowCatalog::ListWorkflows",
+    "raw_file": "internal/discovery/catalog.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/list_workflows.go",
+     "start_line": 10,
+     "end_line": 10,
+     "start_byte": 304,
+     "end_byte": 304
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/discovery/catalog.go",
+     "WorkflowCatalog.ListActions"
+    ],
+    "status": "callable",
+    "raw_symbol": "WorkflowCatalog::ListActions",
+    "raw_file": "internal/discovery/catalog.go"
+   },
+   "target": {
+    "key": [
+     "internal/discovery/filters.go",
+     "ApplyLabelFilters"
+    ],
+    "status": "callable",
+    "raw_symbol": "ApplyLabelFilters",
+    "raw_file": "internal/discovery/filters.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/discovery/catalog.go",
+     "start_line": 27,
+     "end_line": 27,
+     "start_byte": 678,
+     "end_byte": 678
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/select_workflow.go",
+     "HandleSelectWorkflow"
+    ],
+    "status": "callable",
+    "raw_symbol": "HandleSelectWorkflow",
+    "raw_file": "internal/tools/select_workflow.go"
+   },
+   "target": {
+    "key": [
+     "internal/discovery/catalog.go",
+     "WorkflowCatalog.GetWorkflow"
+    ],
+    "status": "callable",
+    "raw_symbol": "WorkflowCatalog::GetWorkflow",
+    "raw_file": "internal/discovery/catalog.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 38,
+     "end_line": 38,
+     "start_byte": 959,
+     "end_byte": 959
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/selection/retry.go",
+     "SelfCorrectSelection"
+    ],
+    "status": "callable",
+    "raw_symbol": "SelfCorrectSelection",
+    "raw_file": "internal/selection/retry.go"
+   },
+   "target": {
+    "key": [
+     "internal/selection/validator.go",
+     "Validator.SetWorkflowState"
+    ],
+    "status": "callable",
+    "raw_symbol": "Validator::SetWorkflowState",
+    "raw_file": "internal/selection/validator.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/selection/retry.go",
+     "start_line": 12,
+     "end_line": 12,
+     "start_byte": 292,
+     "end_byte": 292
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/selection/validator.go",
+     "Validator.Validate"
+    ],
+    "status": "callable",
+    "raw_symbol": "Validator::Validate",
+    "raw_file": "internal/selection/validator.go"
+   },
+   "target": {
+    "key": [
+     "internal/selection/validator.go",
+     "Validator.IsAllowed"
+    ],
+    "status": "callable",
+    "raw_symbol": "Validator::IsAllowed",
+    "raw_file": "internal/selection/validator.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/selection/validator.go",
+     "start_line": 45,
+     "end_line": 45,
+     "start_byte": 1059,
+     "end_byte": 1059
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/selection/retry.go",
+     "SelfCorrectSelection"
+    ],
+    "status": "callable",
+    "raw_symbol": "SelfCorrectSelection",
+    "raw_file": "internal/selection/retry.go"
+   },
+   "target": {
+    "key": [
+     "internal/selection/validator.go",
+     "Validator.Validate"
+    ],
+    "status": "callable",
+    "raw_symbol": "Validator::Validate",
+    "raw_file": "internal/selection/validator.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/selection/retry.go",
+     "start_line": 14,
+     "end_line": 14,
+     "start_byte": 329,
+     "end_byte": 329
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/selection/retry.go",
+     "SelectWithRetry"
+    ],
+    "status": "callable",
+    "raw_symbol": "SelectWithRetry",
+    "raw_file": "internal/selection/retry.go"
+   },
+   "target": {
+    "key": [
+     "internal/selection/retry.go",
+     "SelfCorrectSelection"
+    ],
+    "status": "callable",
+    "raw_symbol": "SelfCorrectSelection",
+    "raw_file": "internal/selection/retry.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/selection/retry.go",
+     "start_line": 18,
+     "end_line": 18,
+     "start_byte": 465,
+     "end_byte": 465
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/selection/retry.go",
+     "retrySelection"
+    ],
+    "status": "callable",
+    "raw_symbol": "retrySelection",
+    "raw_file": "internal/selection/retry.go"
+   },
+   "target": {
+    "key": [
+     "internal/selection/retry.go",
+     "SelfCorrectSelection"
+    ],
+    "status": "callable",
+    "raw_symbol": "SelfCorrectSelection",
+    "raw_file": "internal/selection/retry.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/selection/retry.go",
+     "start_line": 25,
+     "end_line": 25,
+     "start_byte": 693,
+     "end_byte": 693
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/selection/retry.go",
+     "SelectWithRetry"
+    ],
+    "status": "callable",
+    "raw_symbol": "SelectWithRetry",
+    "raw_file": "internal/selection/retry.go"
+   },
+   "target": {
+    "key": [
+     "internal/selection/retry.go",
+     "retrySelection"
+    ],
+    "status": "callable",
+    "raw_symbol": "retrySelection",
+    "raw_file": "internal/selection/retry.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/selection/retry.go",
+     "start_line": 19,
+     "end_line": 19,
+     "start_byte": 530,
+     "end_byte": 530
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/list_workflows.go",
+     "ListWorkflows"
+    ],
+    "status": "callable",
+    "raw_symbol": "ListWorkflows",
+    "raw_file": "internal/tools/list_workflows.go"
+   },
+   "target": {
+    "key": [
+     "internal/tools/list_workflows.go",
+     "RecordDiscovered"
+    ],
+    "status": "callable",
+    "raw_symbol": "RecordDiscovered",
+    "raw_file": "internal/tools/list_workflows.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/list_workflows.go",
+     "start_line": 15,
+     "end_line": 15,
+     "start_byte": 452,
+     "end_byte": 452
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/select_workflow.go",
+     "authorizeSelectionDriver"
+    ],
+    "status": "callable",
+    "raw_symbol": "authorizeSelectionDriver",
+    "raw_file": "internal/tools/select_workflow.go"
+   },
+   "target": {
+    "key": [
+     "internal/tools/select_workflow.go",
+     "isWorkflowInDiscoveryResult"
+    ],
+    "status": "callable",
+    "raw_symbol": "isWorkflowInDiscoveryResult",
+    "raw_file": "internal/tools/select_workflow.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 28,
+     "end_line": 28,
+     "start_byte": 560,
+     "end_byte": 560
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/select_workflow.go",
+     "HandleSelectWorkflow"
+    ],
+    "status": "callable",
+    "raw_symbol": "HandleSelectWorkflow",
+    "raw_file": "internal/tools/select_workflow.go"
+   },
+   "target": {
+    "key": [
+     "internal/tools/select_workflow.go",
+     "authorizeSelectionDriver"
+    ],
+    "status": "callable",
+    "raw_symbol": "authorizeSelectionDriver",
+    "raw_file": "internal/tools/select_workflow.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 35,
+     "end_line": 35,
+     "start_byte": 854,
+     "end_byte": 854
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/select_workflow.go",
+     "HandleSelectWorkflow"
+    ],
+    "status": "callable",
+    "raw_symbol": "HandleSelectWorkflow",
+    "raw_file": "internal/tools/select_workflow.go"
+   },
+   "target": {
+    "key": [
+     "internal/tools/select_workflow.go",
+     "applySelectedWorkflow"
+    ],
+    "status": "callable",
+    "raw_symbol": "applySelectedWorkflow",
+    "raw_file": "internal/tools/select_workflow.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 42,
+     "end_line": 42,
+     "start_byte": 1094,
+     "end_byte": 1094
+    }
+   ]
+  },
+  {
+   "source": {
+    "key": [
+     "internal/tools/select_workflow.go",
+     "applySelectedWorkflow"
+    ],
+    "status": "callable",
+    "raw_symbol": "applySelectedWorkflow",
+    "raw_file": "internal/tools/select_workflow.go"
+   },
+   "target": {
+    "key": [
+     "internal/tools/select_workflow.go",
+     "lookupDiscoveredParameters"
+    ],
+    "status": "callable",
+    "raw_symbol": "lookupDiscoveredParameters",
+    "raw_file": "internal/tools/select_workflow.go"
+   },
+   "resolved": true,
+   "raw": {},
+   "verdict": "CONFIRMED",
+   "direction": "correct",
+   "compiler_evidence": [
+    {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 51,
+     "end_line": 51,
+     "start_byte": 1377,
+     "end_byte": 1377
+    }
+   ]
+  }
+ ]
+}

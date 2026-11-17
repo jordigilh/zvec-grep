@@ -1,0 +1,267 @@
+{
+ "schema": "upstream-zg-cli-edges-v1",
+ "tool": "upstream zg 0.3.1 (7504720) --callers/--callees",
+ "fixture_root": "/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/zvec-upstream-h2h-artifacts/go-inventory-audit-holdout",
+ "edges": [
+  {
+   "source": {
+    "symbol": "RecordScanned",
+    "file": "internal/tools/list_assets.go"
+   },
+   "target": {
+    "symbol": "AssetState::Add",
+    "file": "internal/inventory/state.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/list_assets.go",
+    "internal/tools/list_assets.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "CheckAccess",
+    "file": "internal/audit/review.go"
+   },
+   "target": {
+    "symbol": "AssetStateFromContext",
+    "file": "internal/inventory/state.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/audit/review.go",
+    "internal/audit/review.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "AssetRegistry::ListAssets",
+    "file": "internal/inventory/registry.go"
+   },
+   "target": {
+    "symbol": "ApplyTagFilters",
+    "file": "internal/inventory/filters.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/inventory/registry.go",
+    "internal/inventory/registry.go",
+    "internal/inventory/registry.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "ListAssets",
+    "file": "internal/tools/list_assets.go"
+   },
+   "target": {
+    "symbol": "AssetRegistry::ListAssets",
+    "file": "internal/inventory/registry.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/list_assets.go",
+    "internal/tools/list_assets.go",
+    "internal/tools/list_assets.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "HandleSelectAsset",
+    "file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "symbol": "AssetRegistry::GetAsset",
+    "file": "internal/inventory/registry.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/select_asset.go",
+    "internal/tools/select_asset.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "Enforcer::CheckAccess",
+    "file": "internal/permissions/enforcer.go"
+   },
+   "target": {
+    "symbol": "PolicySet::IsGranted",
+    "file": "internal/permissions/policy.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/permissions/enforcer.go",
+    "internal/permissions/enforcer.go",
+    "internal/permissions/enforcer.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "Enforcer::RequirePermission",
+    "file": "internal/permissions/enforcer.go"
+   },
+   "target": {
+    "symbol": "Enforcer::CheckAccess",
+    "file": "internal/permissions/enforcer.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/permissions/enforcer.go",
+    "internal/permissions/enforcer.go",
+    "internal/permissions/enforcer.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "AuditLedger::Record",
+    "file": "internal/audit/ledger.go"
+   },
+   "target": {
+    "symbol": "Enforcer::RequirePermission",
+    "file": "internal/permissions/enforcer.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/audit/ledger.go",
+    "internal/audit/ledger.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "authorizeAccess",
+    "file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "symbol": "Enforcer::RequirePermission",
+    "file": "internal/permissions/enforcer.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/select_asset.go",
+    "internal/tools/select_asset.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "HandleSelectAsset",
+    "file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "symbol": "AuditLedger::Record",
+    "file": "internal/audit/ledger.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/select_asset.go",
+    "internal/tools/select_asset.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "CheckAccess",
+    "file": "internal/audit/review.go"
+   },
+   "target": {
+    "symbol": "AuditLedger::Entries",
+    "file": "internal/audit/ledger.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/audit/review.go",
+    "internal/audit/review.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "HandleSelectAsset",
+    "file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "symbol": "CheckAccess",
+    "file": "internal/audit/review.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/select_asset.go",
+    "internal/tools/select_asset.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "ListAssets",
+    "file": "internal/tools/list_assets.go"
+   },
+   "target": {
+    "symbol": "RecordScanned",
+    "file": "internal/tools/list_assets.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/list_assets.go",
+    "internal/tools/list_assets.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "authorizeAccess",
+    "file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "symbol": "isAssetInScanResult",
+    "file": "internal/tools/select_asset.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/select_asset.go",
+    "internal/tools/select_asset.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "HandleSelectAsset",
+    "file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "symbol": "authorizeAccess",
+    "file": "internal/tools/select_asset.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/select_asset.go",
+    "internal/tools/select_asset.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "HandleSelectAsset",
+    "file": "internal/tools/select_asset.go"
+   },
+   "target": {
+    "symbol": "applySelectedAsset",
+    "file": "internal/tools/select_asset.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/select_asset.go",
+    "internal/tools/select_asset.go"
+   ],
+   "raw": {}
+  }
+ ]
+}

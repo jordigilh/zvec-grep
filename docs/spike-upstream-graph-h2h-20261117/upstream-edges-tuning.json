@@ -1,0 +1,297 @@
+{
+ "schema": "upstream-zg-cli-edges-v1",
+ "tool": "upstream zg 0.3.1 (7504720) --callers/--callees",
+ "fixture_root": "/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/zvec-upstream-h2h-artifacts/fixture-go-tuning",
+ "edges": [
+  {
+   "source": {
+    "symbol": "RecordDiscovered",
+    "file": "internal/tools/list_workflows.go"
+   },
+   "target": {
+    "symbol": "WorkflowState::Add",
+    "file": "internal/discovery/state.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/list_workflows.go",
+    "internal/tools/list_workflows.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "Validator::IsAllowed",
+    "file": "internal/selection/validator.go"
+   },
+   "target": {
+    "symbol": "WorkflowState::Contains",
+    "file": "internal/discovery/state.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/selection/validator.go",
+    "internal/selection/validator.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "SelfCorrectSelection",
+    "file": "internal/selection/retry.go"
+   },
+   "target": {
+    "symbol": "WorkflowStateFromContext",
+    "file": "internal/discovery/state.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/selection/retry.go",
+    "internal/selection/retry.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "WorkflowCatalog::ListActions",
+    "file": "internal/discovery/catalog.go"
+   },
+   "target": {
+    "symbol": "WorkflowCatalog::ListWorkflows",
+    "file": "internal/discovery/catalog.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/discovery/catalog.go",
+    "internal/discovery/catalog.go",
+    "internal/discovery/catalog.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "ListWorkflows",
+    "file": "internal/tools/list_workflows.go"
+   },
+   "target": {
+    "symbol": "WorkflowCatalog::ListWorkflows",
+    "file": "internal/discovery/catalog.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/list_workflows.go",
+    "internal/tools/list_workflows.go",
+    "internal/tools/list_workflows.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "WorkflowCatalog::ListActions",
+    "file": "internal/discovery/catalog.go"
+   },
+   "target": {
+    "symbol": "ApplyLabelFilters",
+    "file": "internal/discovery/filters.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/discovery/catalog.go",
+    "internal/discovery/catalog.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "HandleSelectWorkflow",
+    "file": "internal/tools/select_workflow.go"
+   },
+   "target": {
+    "symbol": "WorkflowCatalog::GetWorkflow",
+    "file": "internal/discovery/catalog.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/select_workflow.go",
+    "internal/tools/select_workflow.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "SelfCorrectSelection",
+    "file": "internal/selection/retry.go"
+   },
+   "target": {
+    "symbol": "Validator::SetWorkflowState",
+    "file": "internal/selection/validator.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/selection/retry.go",
+    "internal/selection/retry.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "Validator::Validate",
+    "file": "internal/selection/validator.go"
+   },
+   "target": {
+    "symbol": "Validator::IsAllowed",
+    "file": "internal/selection/validator.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/selection/validator.go",
+    "internal/selection/validator.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "SelfCorrectSelection",
+    "file": "internal/selection/retry.go"
+   },
+   "target": {
+    "symbol": "Validator::Validate",
+    "file": "internal/selection/validator.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/selection/retry.go",
+    "internal/selection/retry.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "SelectWithRetry",
+    "file": "internal/selection/retry.go"
+   },
+   "target": {
+    "symbol": "SelfCorrectSelection",
+    "file": "internal/selection/retry.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/selection/retry.go",
+    "internal/selection/retry.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "retrySelection",
+    "file": "internal/selection/retry.go"
+   },
+   "target": {
+    "symbol": "SelfCorrectSelection",
+    "file": "internal/selection/retry.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/selection/retry.go",
+    "internal/selection/retry.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "SelectWithRetry",
+    "file": "internal/selection/retry.go"
+   },
+   "target": {
+    "symbol": "retrySelection",
+    "file": "internal/selection/retry.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/selection/retry.go",
+    "internal/selection/retry.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "ListWorkflows",
+    "file": "internal/tools/list_workflows.go"
+   },
+   "target": {
+    "symbol": "RecordDiscovered",
+    "file": "internal/tools/list_workflows.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/list_workflows.go",
+    "internal/tools/list_workflows.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "authorizeSelectionDriver",
+    "file": "internal/tools/select_workflow.go"
+   },
+   "target": {
+    "symbol": "isWorkflowInDiscoveryResult",
+    "file": "internal/tools/select_workflow.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/select_workflow.go",
+    "internal/tools/select_workflow.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "HandleSelectWorkflow",
+    "file": "internal/tools/select_workflow.go"
+   },
+   "target": {
+    "symbol": "authorizeSelectionDriver",
+    "file": "internal/tools/select_workflow.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/select_workflow.go",
+    "internal/tools/select_workflow.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "HandleSelectWorkflow",
+    "file": "internal/tools/select_workflow.go"
+   },
+   "target": {
+    "symbol": "applySelectedWorkflow",
+    "file": "internal/tools/select_workflow.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/select_workflow.go",
+    "internal/tools/select_workflow.go"
+   ],
+   "raw": {}
+  },
+  {
+   "source": {
+    "symbol": "applySelectedWorkflow",
+    "file": "internal/tools/select_workflow.go"
+   },
+   "target": {
+    "symbol": "lookupDiscoveredParameters",
+    "file": "internal/tools/select_workflow.go"
+   },
+   "resolved": true,
+   "call_sites": [
+    "internal/tools/select_workflow.go",
+    "internal/tools/select_workflow.go"
+   ],
+   "raw": {}
+  }
+ ]
+}
