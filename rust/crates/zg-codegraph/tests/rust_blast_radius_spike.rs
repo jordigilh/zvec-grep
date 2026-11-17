@@ -3,9 +3,10 @@ use std::{collections::BTreeMap, fs, path::Path};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use zg_codegraph::{
-    CallGraphIndex, CodeGraphArtifact, CodeGraphNode, RUST_CALLFACTS_FILE, RUST_CALLFACTS_SCHEMA,
-    RUST_CALLFACTS_VERSION, RustCallFact, RustCallFactsArtifact, RustCallFactsContext,
-    RustCallFactsFile, RustCallFactsSymbol, build_codegraph, refresh_codegraph,
+    CODEGRAPH_PUBLICATION_FILE, CallGraphIndex, CodeGraphArtifact, CodeGraphNode,
+    RUST_CALLFACTS_FILE, RUST_CALLFACTS_SCHEMA, RUST_CALLFACTS_VERSION, RustCallFact,
+    RustCallFactsArtifact, RustCallFactsContext, RustCallFactsFile, RustCallFactsSymbol,
+    build_codegraph, read_codegraph_publication, refresh_codegraph, validate_codegraph_publication,
 };
 
 #[test]
@@ -80,14 +81,14 @@ fn rust_callfacts_replace_supported_sites_and_keep_possible_dispatch_separate() 
     let index = CallGraphIndex::new(&semantic);
     assert_eq!(
         index
-            .blast_radius("helper", 1)
+            .blast_radius("helper", Some(1))
             .expect("helper callers")
             .callers_by_depth,
         [vec!["src/lib.rs::caller".to_owned()]]
     );
     assert_eq!(
         index
-            .blast_radius("Worker.work", 1)
+            .blast_radius("Worker.work", Some(1))
             .expect("trait method callers")
             .possible_callers_by_depth,
         [vec!["src/lib.rs::dyn_caller".to_owned()]]
@@ -166,6 +167,26 @@ fn rust_callfacts_refresh_revalidates_context_and_malformed_sidecars() {
         .rust_callfacts_context_sha256
         .clone()
         .expect("Rust context fingerprint");
+    let publication = read_codegraph_publication(
+        &workspace
+            .path()
+            .join(".zvec-grep")
+            .join(CODEGRAPH_PUBLICATION_FILE),
+    )
+    .expect("semantic publication");
+    assert_eq!(publication.sidecars.len(), 1);
+    assert_eq!(publication.sidecars[0].language, "rust");
+    assert_eq!(
+        validate_codegraph_publication(workspace.path()).expect("validate semantic publication"),
+        initial
+    );
+    let sidecar_path = rust_callfacts_path(workspace.path());
+    let sidecar = fs::read(&sidecar_path).expect("read Rust sidecar");
+    let mut changed_sidecar = sidecar.clone();
+    changed_sidecar.extend_from_slice(b"\n");
+    fs::write(&sidecar_path, changed_sidecar).expect("change Rust sidecar");
+    assert!(validate_codegraph_publication(workspace.path()).is_err());
+    fs::write(&sidecar_path, sidecar).expect("restore Rust sidecar");
     let module_path = workspace.path().join("Cargo.toml");
     let module = fs::read(&module_path).expect("read Cargo.toml");
     let mut changed_module = module.clone();

@@ -65,6 +65,14 @@ CSV_FIELDS = [
 ]
 
 
+def default_zg(repo: Path) -> Path:
+    for profile in ("release", "debug"):
+        candidate = repo / f"rust/target/{profile}/zg"
+        if candidate.is_file():
+            return candidate
+    return repo / "rust/target/release/zg"
+
+
 def run(command: list[str], cwd: Path, *, quiet: bool = False) -> str:
     completed = subprocess.run(
         command,
@@ -516,7 +524,10 @@ def benchmark_fixture(
 
         syntax_root = repeat_root / "zvec-syntax"
         syntax_files, syntax_loc = copy_inputs(fixture, syntax_root, truth)
-        syntax_elapsed = timed([str(zg), "--graph", str(syntax_root)], repo)
+        syntax_artifact = syntax_root / ".zvec-grep/codegraph-v2.json"
+        syntax_elapsed = timed(
+            [str(zg), "--graph", str(syntax_root), "--output", str(syntax_artifact)], repo
+        )
         syntax_graph = json.loads((syntax_root / ".zvec-grep/codegraph-v2.json").read_text())
         syntax_predictions_data = zvec_predictions(syntax_graph, syntax_root, truth)
         rows.append(
@@ -548,7 +559,11 @@ def benchmark_fixture(
                 facts,
             )
         )
-        semantic_graph_elapsed = timed([str(zg), "--graph", str(semantic_root)], repo)
+        semantic_artifact = semantic_root / ".zvec-grep/codegraph-v2.json"
+        semantic_graph_elapsed = timed(
+            [str(zg), "--graph", str(semantic_root), "--output", str(semantic_artifact)],
+            repo,
+        )
         semantic_graph = json.loads(
             (semantic_root / ".zvec-grep/codegraph-v2.json").read_text()
         )
@@ -661,7 +676,7 @@ def main() -> int:
             raise SystemExit(f"refusing non-empty output directory: {output} (use --force)")
         shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
-    zg = (args.zg or repo / "rust/target/debug/zg").resolve()
+    zg = (args.zg or default_zg(repo)).resolve()
     if not zg.is_file():
         raise SystemExit(f"zvec binary not found: {zg}; build it before benchmarking")
 

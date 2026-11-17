@@ -41,3 +41,21 @@ impl Impl {
 pub fn inherent_caller(value: i32) -> i32 {
     Impl::adjust(value)
 }
+
+mod helper;
+mod decoy;
+
+use crate::decoy::leaf as decoy_leaf;
+use crate::helper::leaf as helper_leaf;
+
+pub fn imported_alias_caller(value: i32) -> i32 {
+    helper_leaf(value)
+}
+
+pub fn qualified_import_caller(value: i32) -> i32 {
+    crate::helper::leaf(value)
+}
+
+pub fn decoy_alias_caller(value: i32) -> i32 {
+    decoy_leaf(value)
+}

@@ -45,6 +45,7 @@ incidental, or comparative workspace mentions do not establish relevance.
 | `zvec_grep_codegraph_node` | Inspecting any file, package, or declaration node and its relations | No |
 | `zvec_grep_codegraph_neighbors` | Listing incoming/outgoing neighbors with optional relation filters | No |
 | `zvec_grep_codegraph_relation_path` | Finding paths across selected codegraph relations | No |
+| `zvec_grep_codegraph_affected` | Finding definite and possible reverse dependencies of any codegraph node | No |
 | `zvec_grep_codegraph_explain` | Explaining a node with relation counts and snapshot provenance | No |
 
 Agents use native grep or rg when locating an exact word, quotation, name, date,
@@ -52,11 +53,27 @@ key, filename, path, source fragment, or regex is sufficient. For mixed tasks,
 start with `zvec_grep_search`, then use native grep or rg for focused follow-up.
 For an exact callers, shortest-call-path, or callgraph-community question, use
 the corresponding `zvec_grep_callgraph_*` tool with the intended worktree root.
+For `zvec_grep_callgraph_blast_radius`, omit `depth` to traverse the complete
+reverse reachable callgraph; an explicit `depth` value limits traversal to
+that many hops. Definite and possible callers remain separate at each shortest
+distance, and cycles are deduplicated safely. This supports tracing a function
+through multiple source-present packages or libraries to application flows.
+`callers_by_depth` is definite static reachability;
+`possible_callers_by_depth` is ambiguous or dynamic-dispatch reachability; and
+`unresolved_calls`/`ambiguous_calls` expose incomplete or uncertain evidence.
+An empty bucket means no observed static path, not proof of safety.
+
+The graph does not establish runtime or deployment reachability. Paths may be
+absent when runtime configuration or feature flags, reflection, generated code,
+unsupported build tags, dynamic dispatch, function values, plugins, or
+incomplete source/build context affect execution. Validate those conditions
+separately.
 For source-file, package, declaration, neighbor, relation-path, or provenance
 questions, use the corresponding `zvec_grep_codegraph_*` tool. Call
 `zvec_grep_codegraph_capabilities` first when relation support is material to the
 answer. Relation filters are `defines`, `imports`, `calls`, `inherits`,
-`implements`, `overrides`, `mixes_in`, `references`, `tests`, and `depends_on`;
+`imports_from`, `re_exports`, `implements`, `embeds`, `overrides`, `mixes_in`,
+`references`, `tests`, and `depends_on`;
 possible ambiguous targets are excluded unless `includePossible` is requested.
 The capabilities result reports `supported`, `unsupported`, or `reserved` for
 each relation at the selected root. MCP discovery remains static; tools are not

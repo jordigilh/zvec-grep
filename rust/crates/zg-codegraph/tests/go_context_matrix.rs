@@ -118,7 +118,7 @@ fn graph_query_name(symbol: &str) -> String {
 
 fn assert_callers(index: &CallGraphIndex, target: &str, expected: &[&str], fingerprint: &str) {
     let result = index
-        .blast_radius(target, 1)
+        .blast_radius(target, Some(1))
         .unwrap_or_else(|error| panic!("blast radius for {target}: {error}"));
     let expected: Vec<Vec<String>> = if expected.is_empty() {
         Vec::new()

@@ -2,7 +2,8 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "CommonJS",
+    "jsx": "preserve",
     "strict": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*"]
 }

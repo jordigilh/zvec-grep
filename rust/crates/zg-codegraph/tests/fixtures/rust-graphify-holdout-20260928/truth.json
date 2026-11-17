@@ -4,9 +4,13 @@
   "input_files": [
     "Cargo.lock",
     "Cargo.toml",
+    "src/decoy.rs",
+    "src/helper.rs",
     "src/lib.rs"
   ],
   "source_files": [
+    "src/decoy.rs",
+    "src/helper.rs",
     "src/lib.rs"
   ],
   "context_files": [
@@ -16,7 +20,9 @@
   "input_sha256": {
     "Cargo.lock": "26dc3aec5ddaae05f5249dafdeb6b31abfa13835662a29380120dee2880bfbf0",
     "Cargo.toml": "a16d3ffe447b014d874097edd48845fb855ebeb0c19d0d0d5f3e7e6398619512",
-    "src/lib.rs": "06765a9ba747715c9d16b794a91d342d4f002f9ec25058882bd61c4aad95b3a3"
+    "src/decoy.rs": "b5633ab182c37216483d783057accef8682d486f4ce9243ccb947501230530cc",
+    "src/helper.rs": "5fb1600462a690f4895221684421c8628b8e08a5a4b6b09db2ea8137d993a343",
+    "src/lib.rs": "9b82707e8de3553d7af1f8eef2cb8253199cbb3d508b82b59261972adb502cef"
   },
   "symbols": [
     {
@@ -58,6 +64,31 @@
       "id": "Impl.adjust",
       "path": "src/lib.rs",
       "line": 36
+    },
+    {
+      "id": "helper::leaf",
+      "path": "src/helper.rs",
+      "line": 1
+    },
+    {
+      "id": "decoy::leaf",
+      "path": "src/decoy.rs",
+      "line": 1
+    },
+    {
+      "id": "imported_alias_caller",
+      "path": "src/lib.rs",
+      "line": 51
+    },
+    {
+      "id": "qualified_import_caller",
+      "path": "src/lib.rs",
+      "line": 55
+    },
+    {
+      "id": "decoy_alias_caller",
+      "path": "src/lib.rs",
+      "line": 59
     },
     {
       "id": "inherent_caller",
@@ -104,6 +135,27 @@
       "caller": "inherent_caller",
       "expected_class": "definite",
       "target": "Impl.adjust"
+    },
+    {
+      "path": "src/lib.rs",
+      "line": 52,
+      "caller": "imported_alias_caller",
+      "expected_class": "definite",
+      "target": "helper::leaf"
+    },
+    {
+      "path": "src/lib.rs",
+      "line": 56,
+      "caller": "qualified_import_caller",
+      "expected_class": "definite",
+      "target": "helper::leaf"
+    },
+    {
+      "path": "src/lib.rs",
+      "line": 60,
+      "caller": "decoy_alias_caller",
+      "expected_class": "definite",
+      "target": "decoy::leaf"
     }
   ]
 }

@@ -593,11 +593,22 @@ pub struct GraphQueryArgs {
 
 #[derive(Clone, Debug, Subcommand)]
 pub enum GraphQueryAction {
-    /// List direct and transitive callers of a function.
+    /// List direct and transitive callers of a function. Omit `--depth` for
+    /// complete reverse reachability.
     BlastRadius {
         function: String,
+        #[arg(long)]
+        depth: Option<usize>,
+    },
+    /// List reverse dependencies of any codegraph node over selected relations.
+    Affected {
+        query: String,
         #[arg(long, default_value_t = 2)]
         depth: usize,
+        #[arg(long = "relation", value_name = "KIND", action = clap::ArgAction::Append)]
+        relations: Vec<String>,
+        #[arg(long)]
+        include_possible: bool,
     },
     /// Find a directed call path between two functions.
     ShortestPath { source: String, target: String },
@@ -1844,8 +1855,25 @@ mod tests {
         assert_eq!(artifact, PathBuf::from("/workspace/graph.json"));
         assert!(matches!(
             action,
-            GraphQueryAction::BlastRadius { function, depth: 4 } if function == "reconcile"
+            GraphQueryAction::BlastRadius { function, depth: Some(4) } if function == "reconcile"
         ));
+
+        let plan = Cli::try_parse_from([
+            "zg",
+            "--graph-query",
+            "graph.json",
+            "blast-radius",
+            "reconcile",
+        ])
+        .expect("parse omitted depth")
+        .into_plan(PathBuf::from("/workspace"))
+        .expect("plan");
+        let CliPlan::GraphQuery { action, .. } = plan else {
+            panic!("graph query plan")
+        };
+        assert!(
+            matches!(action, GraphQueryAction::BlastRadius { function, depth: None } if function == "reconcile")
+        );
     }
 
     #[test]
@@ -1879,6 +1907,37 @@ mod tests {
             } if source == "Child"
                 && target == "Base"
                 && relations == ["inherits", "implements"]
+        ));
+
+        let plan = Cli::try_parse_from([
+            "zg",
+            "--graph-query",
+            "graph.json",
+            "affected",
+            "src/main.rs::run",
+            "--depth",
+            "3",
+            "--relation",
+            "imports_from",
+            "--relation",
+            "re_exports",
+            "--include-possible",
+        ])
+        .expect("parse affected query")
+        .into_plan(PathBuf::from("/workspace"))
+        .expect("affected query plan");
+        let CliPlan::GraphQuery { action, .. } = plan else {
+            panic!("affected graph query plan")
+        };
+        assert!(matches!(
+            action,
+            GraphQueryAction::Affected {
+                query,
+                depth: 3,
+                relations,
+                include_possible: true,
+            } if query == "src/main.rs::run"
+                && relations == ["imports_from", "re_exports"]
         ));
     }
 

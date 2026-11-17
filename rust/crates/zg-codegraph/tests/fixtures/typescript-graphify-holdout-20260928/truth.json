@@ -3,17 +3,26 @@
   "language": "typescript",
   "input_files": [
     "tsconfig.json",
+    "src/component.tsx",
+    "src/decoy.ts",
+    "src/helper.ts",
     "src/lib.ts"
   ],
   "source_files": [
+    "src/component.tsx",
+    "src/decoy.ts",
+    "src/helper.ts",
     "src/lib.ts"
   ],
   "context_files": [
     "tsconfig.json"
   ],
   "input_sha256": {
-    "tsconfig.json": "c9fc8a2188b607c05c26997d2cce496660e16cc6afb917b3c06a38fa8b24294e",
-    "src/lib.ts": "e1f24bd67db7f179e5ff70be3de0cb4fbe8d05f886f074d29280a86efb7c6fe3"
+    "tsconfig.json": "755bc2f986b93189a8d40358ebfee96c3c0bc274b2ace3781828b1d52fe8dea6",
+    "src/component.tsx": "eec36ec4e2fc7c4fb90006076e6bf9e2c1ec54d24d6215597aeea287d2a244fc",
+    "src/decoy.ts": "6a39c0330a744b9baa84b3c4f515f05da2084a1733b8a5df93731a5713949acb",
+    "src/helper.ts": "d2f99a3b98a961b35aab5c5dc960b5d5875f90ddd63a3fa10ce40b5531456370",
+    "src/lib.ts": "c486a361f92e0773cc5830ea2c0195a3daae7f284d824b6c4873e369949c25bc"
   },
   "symbols": [
     {
@@ -70,6 +79,31 @@
       "id": "dynamicCaller",
       "path": "src/lib.ts",
       "line": 46
+    },
+    {
+      "id": "helper.leaf",
+      "path": "src/helper.ts",
+      "line": 1
+    },
+    {
+      "id": "decoy.leaf",
+      "path": "src/decoy.ts",
+      "line": 1
+    },
+    {
+      "id": "componentAliasCaller",
+      "path": "src/component.tsx",
+      "line": 3
+    },
+    {
+      "id": "importedAliasCaller",
+      "path": "src/lib.ts",
+      "line": 54
+    },
+    {
+      "id": "decoyAliasCaller",
+      "path": "src/lib.ts",
+      "line": 58
     }
   ],
   "calls": [
@@ -127,6 +161,27 @@
       "allowed_resolutions": [
         "unresolved"
       ]
+    },
+    {
+      "path": "src/component.tsx",
+      "line": 4,
+      "caller": "componentAliasCaller",
+      "expected_class": "definite",
+      "target": "helper.leaf"
+    },
+    {
+      "path": "src/lib.ts",
+      "line": 55,
+      "caller": "importedAliasCaller",
+      "expected_class": "definite",
+      "target": "helper.leaf"
+    },
+    {
+      "path": "src/lib.ts",
+      "line": 59,
+      "caller": "decoyAliasCaller",
+      "expected_class": "definite",
+      "target": "decoy.leaf"
     }
   ]
 }

@@ -8,3 +8,7 @@ fn test_impl() {
 fn attribute_test() {
     helper();
 }
+
+fn negative_call() {
+    missing();
+}

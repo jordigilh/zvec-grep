@@ -113,15 +113,30 @@ Build a versioned codegraph snapshot for Go, Rust, TypeScript/TSX, and Python:
 
 ```bash
 zg --graph [root]
-zg --graph-query .zvec-grep/codegraph-v2.json node src/main.rs::run
-zg --graph-query .zvec-grep/codegraph-v2.json neighbors src/main.rs::run --relation calls
-zg --graph-query .zvec-grep/codegraph-v2.json relation-path source target --relation calls --include-possible
-zg --graph-query .zvec-grep/codegraph-v2.json explain src/main.rs::run
+zg --graph-query .zvec-grep/codegraph-v2.json.zst node src/main.rs::run
+zg --graph-query .zvec-grep/codegraph-v2.json.zst neighbors src/main.rs::run --relation calls
+zg --graph-query .zvec-grep/codegraph-v2.json.zst relation-path source target --relation calls --include-possible
+zg --graph-query .zvec-grep/codegraph-v2.json.zst blast-radius library.Parse
+zg --graph-query .zvec-grep/codegraph-v2.json.zst blast-radius library.Parse --depth 2
+zg --graph-query .zvec-grep/codegraph-v2.json.zst affected src/main.rs::run --depth 2 --relation calls
+zg --graph-query .zvec-grep/codegraph-v2.json.zst explain src/main.rs::run
 ```
 
+The default graph sidecar is zstd-compressed. Existing
+`.zvec-grep/codegraph-v2.json` artifacts remain readable; pass an output path
+ending in `.json` when an uncompressed JSON artifact is required.
+
 Generic graph queries accept bare or path-qualified names and exact node IDs.
-Relation filters are `defines`, `imports`, `calls`, `inherits`, `implements`,
-`overrides`, `mixes_in`, `references`, `tests`, and `depends_on`. Possible
+For `blast-radius`, omit `--depth` for exhaustive reverse reachability; an
+explicit value limits the number of call hops. Definite and possible callers
+are reported separately by shortest-distance bucket. No observed static path
+is not proof of safety: runtime configuration, feature flags, reflection,
+generated code, unsupported build tags, dynamic dispatch, plugins, and
+incomplete source/build context can change actual reachability.
+Relation filters are `defines`, `imports`, `imports_from`, `re_exports`, `calls`,
+`inherits`, `implements`, `embeds`, `overrides`, `mixes_in`, `references`,
+`tests`, and `depends_on`. The `affected` query traverses incoming relations
+and separates definite results from possible ambiguous candidates. Possible
 ambiguous targets are excluded unless `--include-possible` is supplied. Query
 results include the graph manifest and applied language call-facts context
 fingerprints, project languages, and relation capability statuses. `implements`

@@ -47,3 +47,14 @@ export function dynamicCaller(value: number): number {
   const fn: any = leaf;
   return fn(value);
 }
+
+import { leaf as helperLeaf } from "./helper";
+import { leaf as decoyLeaf } from "./decoy";
+
+export function importedAliasCaller(value: number): number {
+  return helperLeaf(value);
+}
+
+export function decoyAliasCaller(value: number): number {
+  return decoyLeaf(value);
+}

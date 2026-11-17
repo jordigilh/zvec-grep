@@ -796,3 +796,111 @@ rebuilt. Focused coverage exercises all four ecosystems and manifest refresh.
 **Upstream disposition:** Included in draft fork PR
 [#24](https://github.com/jordigilh/zvec-grep/pull/24); no upstream PR has been
 opened.
+
+## 2026-09-29 — LCL-026: Structural topology and generic affected traversal
+
+Fork PR [#24](https://github.com/jordigilh/zvec-grep/pull/24) merged into
+`integration/zvec-live-code-intelligence` at `b37694f`. The follow-up is isolated
+on `spike/codegraph-graphify-followup` and advances the relation vocabulary to v2
+and the extractor generation to `3`.
+
+The structural graph now emits source-anchored `imports_from` and `re_exports`
+relations with syntax ranges, resolves supported local Go, Rust, TypeScript/TSX,
+and Python module paths to file nodes, preserves external imports as name-only
+package targets, and emits Go `embeds` for anonymous struct fields. Rust module
+declarations/public `use` re-exports and TypeScript variable declarations have
+bounded coverage without guessing compiler-only relationships.
+
+`CallGraphIndex::affected` now traverses incoming relations for any serialized
+node, accepts explicit relation filters, and keeps definite and possible paths
+separate. The CLI and MCP expose the query, the MCP tool lists and lifecycle
+counts are updated, and deletion/alias/multi-language topology tests cover the
+live refresh path.
+
+Local verification: codegraph unit/integration tests (36), strict Clippy for
+`zg-codegraph`, `zg-cli`, `zg-transport-mcp`, and `zg`, CLI tests (53), MCP tests
+(35), and server lifecycle tests (13) passed. Native macOS builds required
+command-scoped `xcrun` clang plus the CLT libc++ include path.
+
+**Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.
+
+## 2026-09-30 — LCL-030: SWE-QA20 retrieval-only baseline
+
+Captured the first complete local run of the frozen Rust retrieval-only
+protocol: 20 SWE-QA questions across 11 pinned repositories, three public MCP
+search modes, five repetitions, and 300 successful calls. All modes produced
+20/20 stable Top-10 cases with no product errors. Repository-macro nDCG@10 was
+`0.3527` for `zg-hybrid`, `0.2996` for `zg-fts`, and `0.3254` for `zg-vector`;
+hybrid therefore remains the strongest aggregate arm in this run. Full Hit,
+MRR, output-size, latency, interpretation, and limitations are recorded in
+[`docs/zg-retrieval-only-sweqa20-results-20260930.md`](./zg-retrieval-only-sweqa20-results-20260930.md).
+
+This is a file-localization regression baseline under the frozen protocol, not
+an external semantic-search leaderboard result or an answer-quality evaluation.
+It is separate from the earlier Sense-improvement qevals and from the
+Graphify/codegraph call-edge benchmarks. The protocol quality gate remains
+report-only until a reviewed baseline comparison is established.
+
+**Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.
+
+## 2026-09-29 — LCL-027: Source-pinned relation qrels and local comparator
+
+The four checked-in relation fixtures now cover local imports, Rust and
+TypeScript/TSX re-exports, TypeScript/TSX parsing, ambiguous duplicate-name
+calls, unresolved negative calls, exact source SHA-256 inputs, topology qrels,
+and generic affected-query qrels. A deterministic `zg-codegraph` integration
+test validates the in-memory graph, persisted v2 artifact, source restoration,
+and full-build versus incremental-update parity for Go, Rust, TypeScript/TSX,
+and Python. The `zg` CLI integration test validates persisted graph-query JSON;
+the MCP transport test validates structured neighbors, relation-path, and
+affected results.
+
+Added the opt-in local runner under
+`tools/codegraph-relations-benchmark/`. It compares Graphify `0.9.71` only on
+the explicit `imports_from`, `re_exports`, `inherits`, and `implements`
+endpoint overlap, while reporting calls, references, tests, embedding,
+container edges, and Graphify granularity differences as unsupported or
+unscored. Graphify remains outside runtime, build, and CI dependencies.
+
+Focused verification passed for the new codegraph, CLI, and MCP qrel tests and
+the local comparator completed on all four fixtures. The comparator observed
+full scored overlap where Graphify supplied compatible endpoints; Rust
+module-item import and re-export granularity remains explicitly outside the
+measured overlap.
+
+**Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.
+
+## 2026-09-29 — LCL-028: Cross-file semantic callfacts holdouts
+
+Enriched the source-pinned Rust, TypeScript/TSX, and Python callfacts holdouts
+with same-name helper/decoy modules, imported aliases, and a cross-file TSX
+caller. The existing Go holdout already covers cross-package same-name calls,
+interface dispatch, and function values. The reusable local runner now
+exercises syntax-only zvec, the language callfacts producer plus semantic zvec,
+and Graphify against the same independently authored call qrels.
+
+On a fresh five-repeat local run, semantic zvec improved static recall from
+0.50 to 1.00 for Rust, 0.29 to 1.00 for TypeScript/TSX, and 0.33 to 1.00 for
+Python, with 1.00 precision in each case. Producer class accuracy was Rust
+8/8, TypeScript/TSX 9/10, and Python 10/10; the TypeScript mismatch is the
+intentional conservative structural/interface case. Graphify remained subject
+to false definite promotions or missed possible targets on the same certainty
+qrels.
+
+**Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.
+
+## 2026-09-29 — LCL-029: Compressed graph persistence and parallel parsing
+
+Changed the default codegraph sidecar from the monolithic plain
+`codegraph-v2.json` file to zstd-compressed `codegraph-v2.json.zst` without
+changing the logical v2 artifact schema. CLI graph queries and refreshes read
+both formats; explicit `.json` output remains available for compatibility, and
+legacy default artifacts are migrated after a successful refresh. Full and
+incremental source parsing, plus refresh hashing, now use Rayon parallelism.
+Benchmark runners prefer release binaries while retaining a debug fallback.
+
+Verification passed with the release build, codegraph and CLI/MCP test suites,
+strict codegraph Clippy, and compressed-artifact query smoke coverage. No
+semantic callfacts acceptance behavior was changed.
+
+**Upstream disposition:** Follow-up PR pending; no upstream PR has been opened.

@@ -11,6 +11,7 @@ publish.workspace = true
 hex = "0.4.3"
 leiden-rs = { version = "0.8.1", default-features = false, features = ["petgraph"] }
 petgraph = { version = "0.8.3", default-features = false, features = ["std"] }
+rayon.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -21,6 +22,7 @@ tree-sitter-go.workspace = true
 tree-sitter-python.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

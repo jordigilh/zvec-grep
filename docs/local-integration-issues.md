@@ -115,9 +115,10 @@ logging is enabled. Quality acceptance is pending.
 
 **Status:** Active local issue; design captured in
 [`docs/four-language-codegraph-parity-design-20260928.md`](./four-language-codegraph-parity-design-20260928.md).
-Fork PR [#24](https://github.com/jordigilh/zvec-grep/pull/24) is open as a
-draft against `integration/zvec-live-code-intelligence`; no upstream PR is open
-yet.
+Fork PR [#24](https://github.com/jordigilh/zvec-grep/pull/24) merged into
+`integration/zvec-live-code-intelligence`. The structural-relation and generic
+affected-query follow-up is being prepared on
+`spike/codegraph-graphify-followup`; no upstream PR is open yet.
 
 ### Scope
 
@@ -133,12 +134,29 @@ objects; all other programming languages are out of scope.
   and MCP surfaces already exist.
 - Independent opt-in semantic producers exist for all four languages, with
   source/context validation and syntax fallback.
-- Go cross-package semantic blast-radius behavior is validated. Rust,
-  TypeScript, and Python semantic holdouts still need multi-file validation.
-- The first generic relation-aware follow-up is implemented on top of the v1
+- Go cross-package semantic blast-radius behavior and bounded real-root semantic
+  qrels for Rust, TypeScript/TSX, and Python are validated; all four producer
+  lanes remain opt-in and fallback-safe.
+- The first generic relation-aware follow-up is implemented on top of the v2
   artifact: versioned relation kinds, node/neighbors/relation-path/explain
   queries, CLI/MCP surfaces, and checked-in four-language multi-file fixtures
-  for syntax-attested inheritance, implementation, references, and tests.
+  for syntax-attested inheritance, implementation, embedding, references, and
+  tests.
+- Those fixtures are now source-hash pinned and include local imports,
+  re-exports where the language supports them, absent relations, ambiguous and
+  unresolved calls, topology qrels, and affected-query qrels. Deterministic
+  tests cover the in-memory graph, persisted artifact, CLI JSON, MCP structured
+  JSON, full-build versus incremental-refresh parity, and normalized community
+  assignments.
+- Source-pinned witness qrels now cover structural relations, calls,
+  references, tests, and same/different community pairs in real praxis-filter,
+  koku-operator, and kubernaut-console checkouts. A local-only validator checks
+  the pinned revisions and source digests without adding external tools to the
+  product.
+- The optional Graphify comparison runner is local-only. It scores only the
+  explicit `imports_from`, `re_exports`, `inherits`, and `implements` endpoint
+  overlap and reports calls, references, tests, embedding, and granularity
+  mismatches separately.
 
 ### Parity gap to close
 
@@ -152,11 +170,15 @@ objects; all other programming languages are out of scope.
    output with edge provenance.
 4. Add independent multi-file fixtures for all four languages covering imports,
    re-exports/aliases, duplicate names, receiver methods, inheritance and
-   implementation relationships, and stale-context behavior.
+   implementation relationships, and stale-context behavior. **Implemented for
+   structural topology/query qrels and bounded real-root semantic qrels.**
 5. Define a consistent snapshot publication boundary for the structural graph
-   and accepted semantic overlays.
+   and accepted semantic overlays. **Implemented with the v1 publication
+   manifest and validation contract.**
 6. Validate incremental update, ignore/selection, cache, and current-source
-   behavior against the code-only comparator.
+   behavior against the code-only comparator. **Source-pinned full versus
+   incremental refresh parity and the add/modify/delete/rename/ignore/cache/
+   reconciliation/publication lifecycle differential fixture are implemented.**
 
 ### Opportunities to surpass Graphify
 
@@ -241,8 +263,24 @@ evidence. Create a fresh review branch named, for example,
 
 This handoff is complete: the dedicated branch was created from the updated
 integration tip, the parity commits were applied there, and fork PR #24 was
-opened. The PR remains draft while the follow-up relation/query work below is
-implemented.
+opened and merged. The follow-up relation/query work is isolated on the
+successor review branch.
 
 The original source branch should not be rewritten or reset; it remains the
 provenance copy. The dedicated parity branch is the active review checkout.
+
+## ZGI-009 — Structural topology and generic affected traversal follow-up
+
+**Status:** Active on `spike/codegraph-graphify-followup`, based on the merged
+PR #24 tip.
+
+- Version the relation vocabulary and extractor generation for Go `embeds`,
+  syntax-backed `imports_from`, and `re_exports`.
+- Preserve source ranges and explicit syntax evidence while resolving supported
+  local Go, Rust, TypeScript/TSX, and Python module paths to file nodes; retain
+  external imports as name-only package targets.
+- Add generic reverse affected traversal for any serialized node, with explicit
+  relation filters and separate definite/possible result buckets.
+- Exercise aliases, public/module re-exports, Rust module declarations,
+  TypeScript variable declarations, deletion refreshes, and CLI/MCP tool-list
+  wiring.
