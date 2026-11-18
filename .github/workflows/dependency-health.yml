@@ -43,7 +43,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --onnxruntime-node-install-cuda=skip
       - name: Build the candidate tarball
         run: |
           mkdir -p "$RUNNER_TEMP/package"
