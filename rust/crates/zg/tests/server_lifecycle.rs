@@ -1,5 +1,7 @@
 #[path = "server_lifecycle/mcp_parity.rs"]
 mod mcp_parity;
+#[path = "server_lifecycle/protocol_upgrade.rs"]
+mod protocol_upgrade;
 
 use std::{
     error::Error,
@@ -1845,4 +1847,26 @@ fn token_file_protects_daemon_requests_and_is_forwarded_to_child() -> Result<(),
     );
     guard.active = false;
     Ok(())
+}
+
+fn read_http_response(reader: &mut impl Read) -> std::io::Result<String> {
+    let mut response = String::new();
+    if let Err(error) = reader.read_to_string(&mut response) {
+        // Early HTTP rejection can reset a connection with an unread request body.
+        // Accept the response only when its declared body has already arrived in full.
+        let complete = response
+            .split_once("\r\n\r\n")
+            .is_some_and(|(headers, body)| {
+                headers
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                    .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                    == Some(body.len())
+            });
+        if error.kind() != std::io::ErrorKind::ConnectionReset || !complete {
+            return Err(error);
+        }
+    }
+    Ok(response)
 }
