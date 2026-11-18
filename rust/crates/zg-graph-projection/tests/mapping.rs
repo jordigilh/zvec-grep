@@ -151,7 +151,7 @@ fn definite_possible_split_survives_the_mapping() {
     ))
     .expect("maps");
     assert!(resolved.resolved);
-    assert!(resolved.ambiguous_candidates.is_empty());
+    assert_eq!(resolved.ambiguous_candidates, Vec::<String>::new());
     let mut pending = map_edge_row(&row("pending", "calls", None, None)).expect("maps");
     pending.ambiguous_candidates = parse_candidates(&format!("[\"{}\"]", "c".repeat(32)));
     assert!(!pending.resolved && pending.target.is_none());
