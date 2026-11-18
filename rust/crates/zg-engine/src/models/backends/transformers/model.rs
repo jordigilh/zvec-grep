@@ -1035,6 +1035,8 @@ fn prepare_tokenizers(
     mut tokenizer: Tokenizer,
     entry: TransformersConfig,
 ) -> Result<PreparedTokenizers, ModelError> {
+    // WordPiece cloning copies its vocabulary. Configure both immutable variants
+    // once per loaded model so requests can share them without cloning or locks.
     tokenizer.with_padding(None);
     tokenizer
         .with_truncation(Some(TruncationParams {

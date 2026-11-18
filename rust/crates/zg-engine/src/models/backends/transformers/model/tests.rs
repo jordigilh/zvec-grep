@@ -139,6 +139,125 @@ fn tokenization_entry() -> TransformersConfig {
 }
 
 #[test]
+fn shared_tokenizers_preserve_truncation_boundaries_and_batch_padding() {
+    let entry = tokenization_entry();
+    let tokenizers =
+        prepare_tokenizers(tokenizer_fixture("[UNK]"), entry).expect("configured tokenizers");
+    let prepared = prepare_batch(
+        &tokenizers,
+        &[
+            String::new(),
+            "hello".to_owned(),
+            "hello world".to_owned(),
+            "hello world hello".to_owned(),
+            "unknown".to_owned(),
+        ],
+        entry,
+    )
+    .expect("mixed length inputs");
+    assert_eq!(prepared.batch_size, 5);
+    assert_eq!(prepared.sequence_length, 4);
+    assert_eq!(
+        prepared.input_ids,
+        [2, 3, 0, 0, 2, 4, 3, 0, 2, 4, 5, 3, 2, 4, 5, 3, 2, 1, 3, 0]
+    );
+    assert_eq!(
+        prepared.attention_mask,
+        [1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+    );
+    assert_eq!(prepared.token_type_ids, vec![0; 20]);
+    assert_eq!(prepared.position_ids, [0, 1, 2, 3].repeat(5));
+    assert_eq!(prepared.padding_input_id, 0);
+    assert_eq!(prepared.truncated, [3]);
+
+    let next = prepare_batch(&tokenizers, &["hello".to_owned()], entry)
+        .expect("reuse with a shorter batch");
+    assert_eq!(next.input_ids, [2, 4, 3]);
+    assert_eq!(next.attention_mask, [1, 1, 1]);
+    assert_eq!(next.truncated, Vec::<usize>::new());
+}
+
+#[test]
+fn concurrent_requests_share_tokenizers_without_changing_configuration() {
+    let entry = tokenization_entry();
+    let tokenizers =
+        prepare_tokenizers(tokenizer_fixture("[UNK]"), entry).expect("configured tokenizers");
+    let barrier = std::sync::Barrier::new(4);
+    std::thread::scope(|scope| {
+        let handles = (0..4)
+            .map(|index| {
+                let tokenizers = &tokenizers;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let long = index % 2 == 0;
+                    let text = if long { "hello world hello" } else { "world" };
+                    barrier.wait();
+                    for _ in 0..8 {
+                        let result = prepare_batch(tokenizers, &[text.to_owned()], entry)
+                            .expect("concurrent tokenization");
+                        if long {
+                            assert_eq!(result.input_ids, [2, 4, 5, 3]);
+                            assert_eq!(result.truncated, [0]);
+                        } else {
+                            assert_eq!(result.input_ids, [2, 5, 3]);
+                            assert_eq!(result.truncated, Vec::<usize>::new());
+                        }
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().expect("tokenization worker");
+        }
+    });
+    assert!(tokenizers.probe.get_padding().is_none());
+    assert_eq!(
+        tokenizers
+            .probe
+            .get_truncation()
+            .expect("probe limit")
+            .max_length,
+        5
+    );
+    assert_eq!(
+        tokenizers
+            .inputs
+            .get_truncation()
+            .expect("input limit")
+            .max_length,
+        4
+    );
+    assert!(matches!(
+        tokenizers
+            .inputs
+            .get_padding()
+            .expect("input padding")
+            .strategy,
+        PaddingStrategy::BatchLongest
+    ));
+}
+
+#[test]
+fn tokenization_failure_does_not_poison_shared_tokenizers() {
+    let entry = tokenization_entry();
+    let tokenizers =
+        prepare_tokenizers(tokenizer_fixture("[MISSING]"), entry).expect("configured tokenizers");
+    let error = prepare_batch(&tokenizers, &["unknown".to_owned()], entry)
+        .err()
+        .expect("unknown token missing from vocabulary");
+    assert_eq!(error.code(), crate::EngineError::INTERNAL);
+    assert!(
+        error
+            .to_string()
+            .contains("Transformers tokenization failed")
+    );
+    let recovered = prepare_batch(&tokenizers, &["hello".to_owned()], entry)
+        .expect("known tokens remain usable after failure");
+    assert_eq!(recovered.input_ids, [2, 4, 3]);
+    assert_eq!(recovered.truncated, Vec::<usize>::new());
+}
+
+#[test]
 fn mean_pooling_and_normalization_match_transformers_pipeline() {
     let values = [
         1.0, 0.0, 0.0, // first token
@@ -347,6 +466,33 @@ async fn cached_minilm_runs_real_onnx_inference() {
         }
     }
     assert!(result.truncated.is_empty());
+
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    let error = model
+        .embed(
+            &[vec![Content::Text("cancel after loading".to_owned())]],
+            EmbeddingOptions {
+                signal: Some(cancelled),
+                ..EmbeddingOptions::default()
+            },
+        )
+        .await
+        .expect_err("cancelled inference on a loaded model");
+    assert_eq!(error.code(), crate::EngineError::CANCELLED);
+    let recovered = model
+        .embed(
+            &[
+                vec![Content::Text("find authentication middleware".to_owned())],
+                vec![Content::Text("parse a configuration file".to_owned())],
+            ],
+            EmbeddingOptions::default(),
+        )
+        .await
+        .expect("shared tokenizers remain usable after cancellation");
+    for (&actual, &expected) in recovered.vectors[0].iter().zip(&result.vectors[0]) {
+        assert!((actual - expected).abs() < 1e-5);
+    }
 
     let barrier = Arc::new(std::sync::Barrier::new(2));
     let first_loaded = Arc::clone(&loaded);
