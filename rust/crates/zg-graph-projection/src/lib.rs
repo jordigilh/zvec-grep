@@ -164,7 +164,10 @@ pub fn locate_upstream_store(workspace_root: &Path) -> Option<PathBuf> {
 
 /// Projects the upstream index store at `store` (the `<workspace>/.zvec-grep/
 /// index` directory) into a codegraph-v2 artifact and writes it to `output`
-/// (or `<store>/../codegraph-v2.json.zst` when `output` is `None`).
+/// (or the store's parent directory — `<workspace>/.zvec-grep/
+/// codegraph-v2.json.zst` — when `output` is `None`), matching the default
+/// artifact path `refresh_codegraph` publishes for native sidecars
+/// (`root/.zvec-grep/codegraph-v2.json.zst`).
 ///
 /// # Errors
 /// Returns an error when the store is missing, unreadable, or holds rows the
@@ -187,7 +190,12 @@ fn normalize_store_output(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
-            std::path::Component::ParentDir => {}
+            // Lexical `..` resolution must pop the preceding component:
+            // `<store>/../codegraph-v2.json.zst` lands beside the store
+            // (`<workspace>/.zvec-grep/`), not inside the store itself.
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
             other => normalized.push(other),
         }
     }

@@ -18,6 +18,8 @@ cd <workspace> && zg --index --graph
 
 # 2. Project it into a codegraph-v2 sidecar (our reader)
 zg-graph-project <workspace-root> [--output PATH]
+#    default output: <workspace>/.zvec-grep/codegraph-v2.json.zst
+#    (the same location zg-codegraph publishes native sidecars to)
 
 # 3. Query through OUR surface
 zg --graph-query <workspace>/.zvec-grep/codegraph-v2.json.zst blast-radius <symbol>
@@ -62,25 +64,34 @@ Two frozen Go fixtures, upstream's indexer building the store, projection, then
 our `CallGraphIndex` surface, adjudicated against compiler truth
 (`go-graph-truth-v1`, RTA; identity = fixture-relative file + manifest symbol):
 
-| Fixture | upstream reference (issue #43) | projection through our surface |
+| Fixture | upstream reference (issue #43, via their query surface) | projection through our surface |
 |---|---|---|
 | `go-workflow-discovery-v1` (tuning, 18 truth edges) | 100% precision / 100% recall | **18/18 confirmed, 100% precision / 100% recall**, 0 direction flips |
-| `go-inventory-audit-v1` (holdout, 17 truth edges) | 100% precision / 88.2% recall | **16/16 confirmed, 100% precision / 94.1% recall**, 0 direction flips |
+| `go-inventory-audit-v1` (holdout, 17 truth edges) | 100% precision / 88.2% recall (15/17) | **16/16 confirmed, 100% precision / 94.1% recall**, 0 direction flips |
 
-The single holdout miss is `CheckAccess -> AssetState.Contains` — upstream's
-own honest miss (receiver typed by a context-helper return; stored `pending`
-with no guessed target). The projection preserves their 100% precision and
-their recall exactly; nothing is lost in translation.
+The two holdout numbers measure different things. The #43 reference (15/17)
+was measured through upstream's query surface: their graph DB stores endpoints
+as opaque entity IDs, so edges were reconstructed via `zg --callers`/
+`--callees` and only resolved edges are exportable that way — one truth edge
+was lost to the export path, not to the graph. The projection reads the
+SQLite directly and recovers the graph's actual recall: 16/17. The single
+holdout miss is `CheckAccess -> AssetState.Contains` — upstream's own honest
+miss (receiver typed by a context-helper return; stored `pending` with no
+guessed target). The projection preserves their 100% precision and the
+graph's recall exactly.
 
 ### Complementarity union (holdout)
 
 Our native resolver and upstream's disagree on *different* edges:
 
-- ours misses `CheckAccess -> AssetState.Contains` (context-helper return type)
-- theirs misses `HandleSelectAsset -> CheckAccess`
+- ours (native) misses `HandleSelectAsset -> CheckAccess` (context-helper
+  return type)
+- theirs (as projected) misses `CheckAccess -> AssetState.Contains`
+  (inter-procedural receiver)
 
-Union of the two resolved edge sets: **17/17 truth edges, 100% precision**
-(report-level union; see the PR body for the artifact-level computation).
+Each resolver finds the edge the other misses, so the union of the two
+resolved edge sets covers **17/17 truth edges, 100% precision** (report-level
+union; see the PR body for the artifact-level computation).
 
 ## Not covered (follow-up work)
 

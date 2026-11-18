@@ -192,6 +192,32 @@ fn projects_synthetic_store_and_answers_queries() {
 }
 
 #[test]
+fn default_output_lands_beside_store_not_inside_it() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let store = workspace.path().join(".zvec-grep").join("index");
+    fs::create_dir_all(&store).expect("store dir");
+    write_files(&store);
+    write_entities(&store);
+    write_graph(&store);
+
+    let (path, _, _) = project_upstream_graph(&store, None).expect("default-output projection");
+    // The documented default matches zg-codegraph's native sidecar location:
+    // `<workspace>/.zvec-grep/codegraph-v2.json.zst`, NOT inside the store
+    // (`<workspace>/.zvec-grep/index/...`) where `zg --graph-query` would not
+    // find it.
+    let expected = workspace
+        .path()
+        .join(".zvec-grep")
+        .join("codegraph-v2.json.zst");
+    assert_eq!(path, expected);
+    assert!(path.is_file());
+    assert!(
+        !store.join("codegraph-v2.json.zst").is_file(),
+        "artifact must not be written inside the store directory"
+    );
+}
+
+#[test]
 fn projection_is_deterministic_across_runs() {
     let first = tempfile::tempdir().expect("workspace");
     let second = tempfile::tempdir().expect("workspace");
