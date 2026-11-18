@@ -32,7 +32,8 @@ use crate::domain::model::{
 };
 use crate::models::{
     artifacts::{
-        ArtifactSource, ModelDownloadProgressReporter, ResolveArtifacts, resolve_model_artifacts,
+        ArtifactHttpClient, ArtifactSource, ModelDownloadProgressReporter, ResolveArtifacts,
+        resolve_model_artifacts,
     },
     catalog::TransformersConfig,
     runtime::ModelComputeRuntime,
@@ -48,13 +49,18 @@ pub(crate) struct TransformersEmbeddingModel {
     model_cache_dir: PathBuf,
     device: Option<Device>,
     compute_runtime: ModelComputeRuntime,
-    client: reqwest::Client,
+    client: ArtifactHttpClient,
     state: Mutex<Option<Arc<LoadedTransformersModel>>>,
 }
 
 struct LoadedTransformersModel {
-    tokenizer: Tokenizer,
+    tokenizers: PreparedTokenizers,
     sessions: SessionPool,
+}
+
+struct PreparedTokenizers {
+    probe: Tokenizer,
+    inputs: Tokenizer,
 }
 
 struct SessionPool {
@@ -144,7 +150,7 @@ impl TransformersEmbeddingModel {
             model_cache_dir,
             device: options.device,
             compute_runtime,
-            client: reqwest::Client::new(),
+            client: ArtifactHttpClient::new(),
             state: Mutex::new(None),
         }
     }
@@ -168,7 +174,7 @@ impl TransformersEmbeddingModel {
         on_progress: Option<Arc<dyn Fn(ModelProgress) + Send + Sync>>,
         signal: Option<&CancellationToken>,
     ) -> Result<LoadedTransformersModel, ModelError> {
-        let model_artifact = onnx_artifact(self.entry.dtype)?;
+        let model_artifact = onnx_artifact(self.entry)?;
         let reporter = ModelDownloadProgressReporter::new(
             self.entry.reference,
             on_progress,
@@ -183,22 +189,21 @@ impl TransformersEmbeddingModel {
             .model_cache_dir
             .join(self.entry.download.hugging_face.repo)
             .join(self.entry.download.hugging_face.revision);
-        let model_scope = self
-            .model_cache_dir
-            .join("modelscope")
-            // Keep main's cache namespace so Node and Rust reuse the same
-            // verified fallback snapshot; the Rust backend itself is ORT.
-            .join("transformers-js")
-            .join(self.entry.download.model_scope.repo.replace('/', "--"))
-            .join(self.entry.download.model_scope.revision);
+        let sources = std::iter::once(ArtifactSource::hugging_face(
+            self.entry.download.hugging_face,
+            hugging_face,
+        ))
+        .chain(
+            self.entry
+                .download
+                .fallback_source(&self.model_cache_dir, "transformers-js"),
+        )
+        .collect();
         let resolved = resolve_model_artifacts(
             &self.client,
             ResolveArtifacts {
                 model: self.entry.reference,
-                sources: [
-                    ArtifactSource::hugging_face(self.entry.download.hugging_face, hugging_face),
-                    ArtifactSource::model_scope(self.entry.download.model_scope, model_scope),
-                ],
+                sources,
                 artifacts: self.entry.download.artifacts,
                 reporter: &reporter,
                 signal,
@@ -230,6 +235,7 @@ impl TransformersEmbeddingModel {
             )
             .with_cause(error)
         })?;
+        let tokenizers = prepare_tokenizers(tokenizer, self.entry)?;
         let device = self.device;
         let reporter_for_session = reporter.clone();
         let sessions = self
@@ -238,16 +244,9 @@ impl TransformersEmbeddingModel {
             .await??;
         reporter.finish();
         Ok(LoadedTransformersModel {
-            tokenizer,
+            tokenizers,
             sessions,
         })
-    }
-
-    #[cfg(test)]
-    fn model_directory(&self) -> PathBuf {
-        self.model_cache_dir
-            .join(self.entry.download.hugging_face.repo)
-            .join(self.entry.download.hugging_face.revision)
     }
 }
 
@@ -309,7 +308,6 @@ impl EmbeddingModel for TransformersEmbeddingModel {
                 })
             })
             .collect::<Result<Vec<_>, ModelError>>()?;
-        let tokenizer = loaded.tokenizer.clone();
         let entry = self.entry;
         let signal = options.signal;
         let on_progress = options.on_progress;
@@ -319,7 +317,6 @@ impl EmbeddingModel for TransformersEmbeddingModel {
             .run(move || {
                 embed_batch(
                     &loaded,
-                    tokenizer,
                     &texts,
                     entry,
                     execution_concurrency,
@@ -779,7 +776,6 @@ fn configure_directml(
 
 fn embed_batch(
     loaded: &LoadedTransformersModel,
-    tokenizer: Tokenizer,
     texts: &[String],
     entry: TransformersConfig,
     execution_concurrency: usize,
@@ -787,7 +783,7 @@ fn embed_batch(
     on_progress: Option<&Arc<dyn Fn(ModelProgress) + Send + Sync>>,
 ) -> Result<EmbeddingResult, ModelError> {
     check_cancelled(signal)?;
-    let prepared = prepare_batch(tokenizer, texts, entry)?;
+    let prepared = prepare_batch(&loaded.tokenizers, texts, entry)?;
     check_cancelled(signal)?;
     let provider = loaded.sessions.provider();
     let first = if provider == TransformersExecutionProvider::CoreMl {
@@ -1035,11 +1031,10 @@ fn run_session(
     })
 }
 
-fn prepare_batch(
+fn prepare_tokenizers(
     mut tokenizer: Tokenizer,
-    texts: &[String],
     entry: TransformersConfig,
-) -> Result<PreparedBatch, ModelError> {
+) -> Result<PreparedTokenizers, ModelError> {
     tokenizer.with_padding(None);
     tokenizer
         .with_truncation(Some(TruncationParams {
@@ -1048,8 +1043,33 @@ fn prepare_batch(
             ..TruncationParams::default()
         }))
         .map_err(|error| tokenization_error(entry, error))?;
-    let probe = tokenizer
-        .encode_batch(texts.to_vec(), true)
+    let probe = tokenizer.clone();
+    tokenizer
+        .with_truncation(Some(TruncationParams {
+            max_length: entry.max_input_tokens,
+            direction: TruncationDirection::Right,
+            ..TruncationParams::default()
+        }))
+        .map_err(|error| tokenization_error(entry, error))?;
+    tokenizer.with_padding(Some(PaddingParams {
+        strategy: PaddingStrategy::BatchLongest,
+        direction: PaddingDirection::Right,
+        ..PaddingParams::default()
+    }));
+    Ok(PreparedTokenizers {
+        probe,
+        inputs: tokenizer,
+    })
+}
+
+fn prepare_batch(
+    tokenizers: &PreparedTokenizers,
+    texts: &[String],
+    entry: TransformersConfig,
+) -> Result<PreparedBatch, ModelError> {
+    let probe = tokenizers
+        .probe
+        .encode_batch(texts.to_vec(), entry.add_special_tokens)
         .map_err(|error| tokenization_error(entry, error))?;
     let truncated = probe
         .iter()
@@ -1065,43 +1085,41 @@ fn prepare_batch(
         })
         .collect::<Vec<_>>();
 
-    tokenizer
-        .with_truncation(Some(TruncationParams {
-            max_length: entry.max_input_tokens,
-            direction: TruncationDirection::Right,
-            ..TruncationParams::default()
-        }))
+    let padding_input_id = i64::from(PaddingParams::default().pad_id);
+    let encodings = tokenizers
+        .inputs
+        .encode_batch(texts.to_vec(), entry.add_special_tokens)
         .map_err(|error| tokenization_error(entry, error))?;
-    let padding = PaddingParams {
-        strategy: PaddingStrategy::BatchLongest,
-        direction: PaddingDirection::Right,
-        ..PaddingParams::default()
-    };
-    let padding_input_id = i64::from(padding.pad_id);
-    tokenizer.with_padding(Some(padding));
-    let encodings = tokenizer
-        .encode_batch(texts.to_vec(), true)
-        .map_err(|error| tokenization_error(entry, error))?;
-    let sequence_length = encodings
+    let encoded_length = encodings
         .first()
         .map(tokenizers::Encoding::len)
         .unwrap_or_default();
-    if sequence_length == 0
+    if encodings.is_empty()
         || encodings
             .iter()
-            .any(|encoding| encoding.len() != sequence_length)
+            .any(|encoding| encoding.len() != encoded_length)
     {
         return Err(tokenization_error(
             entry,
             "tokenizer returned an unexpected batch shape",
         ));
     }
+    // Static tokenizers can produce an all-empty batch. ONNX still needs one
+    // padding position with a zero attention mask, matching the upstream loader.
+    let sequence_length = encoded_length.max(1);
     let batch_size = encodings.len();
     let mut input_ids = Vec::with_capacity(batch_size * sequence_length);
     let mut attention_mask = Vec::with_capacity(batch_size * sequence_length);
     let mut token_type_ids = Vec::with_capacity(batch_size * sequence_length);
     let mut position_ids = Vec::with_capacity(batch_size * sequence_length);
     for encoding in &encodings {
+        if encoding.is_empty() {
+            input_ids.push(padding_input_id);
+            attention_mask.push(0);
+            token_type_ids.push(0);
+            position_ids.push(0);
+            continue;
+        }
         input_ids.extend(encoding.get_ids().iter().map(|&value| i64::from(value)));
         attention_mask.extend(
             encoding
@@ -1269,14 +1287,17 @@ fn lock_std_mutex<T>(mutex: &StdMutex<T>) -> StdMutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn onnx_artifact(dtype: &str) -> Result<&'static str, ModelError> {
-    match dtype {
-        "fp32" => Ok("onnx/model.onnx"),
-        "q8" => Ok("onnx/model_quantized.onnx"),
-        "q4" => Ok("onnx/model_q4.onnx"),
-        value => Err(ModelError::internal(format!(
-            "Unsupported Transformers dtype: {value}"
-        ))),
+fn onnx_artifact(entry: TransformersConfig) -> Result<&'static str, ModelError> {
+    let mut models = entry.download.artifacts.iter().filter(|artifact| {
+        Path::new(artifact.path)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("onnx"))
+    });
+    match (models.next(), models.next()) {
+        (Some(artifact), None) => Ok(artifact.path),
+        _ => Err(ModelError::storage_failure(
+            "Expected exactly one ONNX model artifact",
+        )),
     }
 }
 
