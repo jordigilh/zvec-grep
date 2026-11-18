@@ -531,12 +531,19 @@ async fn public_engine_persists_searches_updates_and_drops_real_storage() -> Tes
 
     let engine = ZvecGrep::new();
     let initial = engine.index(index_options(root)).await?;
-    assert_eq!(initial.files_added, 2, "{initial:?}");
-    assert!(
+    // bc175f0: readable files outside the format catalog (like the
+    // extensionless `tmp` memorandum) are now indexed instead of skipped.
+    assert_eq!(initial.files_added, 3, "{initial:?}");
+    assert_eq!(
         initial
             .skipped
             .iter()
-            .any(|file| file.path == root.join("tmp"))
+            .map(|file| file.path.file_name().and_then(|name| name.to_str()))
+            .collect::<std::collections::BTreeSet<_>>(),
+        ["opaque", "state.sqlite"]
+            .into_iter()
+            .map(Some)
+            .collect::<std::collections::BTreeSet<_>>()
     );
     assert_eq!(initial.files_failed, 0);
     let info = engine.info(info_options(root)).await?;
@@ -551,7 +558,7 @@ async fn public_engine_persists_searches_updates_and_drops_real_storage() -> Tes
         .expect("FTS info");
     assert_eq!(fts.tokenizer, "jieba");
     assert_eq!(fts.filters, ["lowercase"]);
-    assert_eq!(info.status.as_ref().expect("status").files_indexed, 2);
+    assert_eq!(info.status.as_ref().expect("status").files_indexed, 3);
     assert_eq!(
         fts_paths(&engine, root, "orchard").await?,
         [PathBuf::from("auth.rs")]
@@ -578,7 +585,7 @@ async fn public_engine_persists_searches_updates_and_drops_real_storage() -> Tes
     );
     let calls = server.requests.load(Ordering::Acquire);
     let unchanged = engine.index(index_options(root)).await?;
-    assert_eq!(unchanged.files_unchanged, 2);
+    assert_eq!(unchanged.files_unchanged, 3);
     assert_eq!(server.requests.load(Ordering::Acquire), calls);
     engine.close();
     assert_eq!(
@@ -652,7 +659,7 @@ async fn public_engine_persists_searches_updates_and_drops_real_storage() -> Tes
             ..index_options(root)
         })
         .await?;
-    assert_eq!(rebuilt.files_added, 2);
+    assert_eq!(rebuilt.files_added, 3);
     let after_rebuild = engine.info(info_options(root)).await?;
     assert_eq!(
         after_rebuild

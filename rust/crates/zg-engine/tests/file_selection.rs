@@ -470,25 +470,32 @@ async fn filename_formats_and_categories_filter_queries_without_limiting_indexin
         "orchard is now a plain text document with no shebang",
     )?;
     let updated = engine.index(index_options(root)).await?;
+    // bc175f0: plain readable text without a shebang stays indexed.
     assert_eq!(
         (
             updated.files_modified,
             updated.files_deleted,
             updated.files_failed
         ),
-        (0, 1, 0)
+        (1, 0, 0)
     );
     let files = native_file_records(&info.index_path)?;
     assert!(
         files
             .iter()
-            .all(|file| file["relative_path"]["value"] != "script")
+            .any(|file| file["relative_path"]["value"] == "script")
     );
     assert_index_and_queries(
         &engine,
         root,
         &QueryFilter::default(),
-        &paths(&["page.html", "note.md", "settings.json", "source.rs"]),
+        &paths(&[
+            "script",
+            "page.html",
+            "note.md",
+            "settings.json",
+            "source.rs",
+        ]),
     )
     .await?;
     for mode in [ContextRouteMode::Fts, ContextRouteMode::Vector] {
@@ -546,7 +553,9 @@ async fn catalog_name_predicates_filter_both_native_search_routes() -> TestResul
     write_sources(root, &sources)?;
     let engine = ZvecGrep::new();
     let indexed = engine.index(index_options(root)).await?;
-    assert_eq!((indexed.files_added, indexed.files_failed), (5, 0));
+    // bc175f0: unknown-extension and extensionless readable files are
+    // indexed as text, so all seven sources are stored.
+    assert_eq!((indexed.files_added, indexed.files_failed), (7, 0));
     for (name, _) in sources {
         fs::remove_file(root.join(name))?;
     }
