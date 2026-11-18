@@ -59,17 +59,30 @@ jobs:
         id: filter
         run: |
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.event.pull_request.head.sha }}"
           else
-            range="${{ github.event.before }}..${{ github.sha }}"
+            base="${{ github.event.before }}"
+            head="${{ github.event.sha }}"
           fi
-          # An empty range (new branch, force push) runs both lanes.
-          if ! git rev-parse --quiet --verify "$range" >/dev/null 2>&1; then
+          # An unavailable endpoint (new branch, force push, manual
+          # dispatch) runs both lanes.
+          if ! git rev-parse --quiet --verify "$base^{commit}" >/dev/null 2>&1 \
+             || ! git rev-parse --quiet --verify "$head^{commit}" >/dev/null 2>&1; then
             echo "retrieval=true" >> "$GITHUB_OUTPUT"
             echo "graph=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          changed=$(git diff --name-only "$range")
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            # Diff against the merge base (three-dot semantics) so
+            # base-only changes do not select lanes.
+            base=$(git merge-base "$base" "$head") || {
+              echo "retrieval=true" >> "$GITHUB_OUTPUT"
+              echo "graph=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            }
+          fi
+          changed=$(git diff --name-only "$base..$head")
           retrieval=false
           graph=false
           while IFS= read -r path; do

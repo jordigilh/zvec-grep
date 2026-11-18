@@ -86,9 +86,9 @@ def main() -> None:
     if output.exists():
         raise SystemExit(f"output directory already exists: {output}")
 
-    manifest = json.loads((fixture / "manifest.json").read_text())
-    truth = json.loads((fixture / "truth.json").read_text())
-    qrels = json.loads((fixture / "qrels.json").read_text())
+    manifest = json.loads((fixture / "manifest.json").read_text(encoding="utf-8"))
+    truth = json.loads((fixture / "truth.json").read_text(encoding="utf-8"))
+    qrels = json.loads((fixture / "qrels.json").read_text(encoding="utf-8"))
     queries = truth["queries"]
     units = _unit_spans(fixture, manifest)
 
@@ -122,9 +122,9 @@ def main() -> None:
         "binary_sha256": binary_sha256,
         "root": str(root),
         "queries": rows,
-    }, indent=2) + "\n")
-    (output / "normalized-runs.json").write_text(json.dumps(runs, indent=2) + "\n")
-    (output / "metrics-k10.json").write_text(json.dumps(metrics, indent=2) + "\n")
+    }, indent=2) + "\n", encoding="utf-8")
+    (output / "normalized-runs.json").write_text(json.dumps(runs, indent=2) + "\n", encoding="utf-8")
+    (output / "metrics-k10.json").write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
     overall = metrics["runs"][0]["overall"]
     print(json.dumps({
         "fixture_id": manifest["fixture_id"],

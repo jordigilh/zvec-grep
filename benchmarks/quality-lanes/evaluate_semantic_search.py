@@ -183,8 +183,8 @@ def main() -> int:
     parser.add_argument("--k", type=int, default=10, dest="cutoff")
     args = parser.parse_args()
     try:
-        qrels = json.loads(args.qrels.read_text())
-        run_data = json.loads(args.runs.read_text())
+        qrels = json.loads(args.qrels.read_text(encoding="utf-8"))
+        run_data = json.loads(args.runs.read_text(encoding="utf-8"))
         report = evaluate(qrels, run_data, args.cutoff)
     except (OSError, json.JSONDecodeError, EvaluationError) as exc:
         print(f"evaluation error: {exc}", file=sys.stderr)

@@ -819,11 +819,11 @@
     }
   },
   "files": {
-    "README.md": "475ab88659c3a43200585cfde7e7bd8e5d4158200c3b4af80bfcc81ef3ea78ce",
-    "adjudicate_graph.py": "e2e491bac1a8d7c66998e59d6396590dbe392583cff8c9a761b36d3fcf4b526d",
-    "check_baselines.py": "aeccf61853a47ab13c59a04c108865161be3a08d604ef5245909d03e8c426990",
+    "README.md": "cb4b791440bac173b007a9165a90fbbddb78d81db30bb5f28b72251c576aa968",
+    "adjudicate_graph.py": "58acef2b8308ef70af4bfede8d14b3080f82373eb1ad9e13e7608365c99739ba",
+    "check_baselines.py": "9834fc492a3ffa347312e46f7ebf22a2341bf6fd02fa94c885c249e7a8c237fb",
     "check_fixture_hashes.py": "ad28dbaf87e4b7cb953e722722759cbb12b0d96b8d08e880e8562a7579f8275f",
-    "evaluate_semantic_search.py": "8d7c5b995745c8ef2be1c396e79f3857f78dc9084083bd665b1753064f105ab6",
+    "evaluate_semantic_search.py": "9d0f82713b17fec0a450c117485a667a052b6a70d28dd35d5302943292a49ff7",
     "fixtures/go-inventory-audit-v1/README.md": "77de69208391eba9793f1333ba813ba39c731531b17c53dc918f60a5cd6891c3",
     "fixtures/go-inventory-audit-v1/REPORT.md": "a04f4c89ece9f8a6cbfb2f0daf54e65d642b8e20d2810666b867b3ed69e500c4",
     "fixtures/go-inventory-audit-v1/go.mod": "4cc9d899f7496555bf49035dd478003c7236dd9051edfb234eb25a09cefb0cc5",
@@ -857,8 +857,9 @@
     "fixtures/go-workflow-discovery-v1/manifest.json": "945fa2aa1a61ce665dc3750cb36dfed63aa9e687c3bb4848ad09df47cea3b467",
     "fixtures/go-workflow-discovery-v1/qrels.json": "0d89687ffd9aac8e6688e9c0931aeb27cca55b99d04f6379ecc5b9bba541c606",
     "fixtures/go-workflow-discovery-v1/truth.json": "8dfca0aabb7da243b8c6ce2eda954fcfccb8a9883cf0952d197b05de93376794",
-    "replay_normalization.py": "725ecf902e667ef68ea723e3e57198dc3500130b7b2fcb074052c931532e4177",
-    "run_qeval.py": "6ab91e4583202926a63f1e132d5946a4aeb3a9293c32110897063073452758d9",
+    "replay_normalization.py": "c8cf61bab1426c28b9a036fd21dd5ca8b9d87b5bb80ac383573713ee1c4e753a",
+    "run_qeval.py": "92458da627ee85471512f8ecb765c1a85cec3021b80b35b04f421478a08ed28b",
+    "test_replay_normalization.py": "8dfb11aa8f24a9286d64d2d2eb64d10aa5a0ecc63a3d5e54c0e6fa6cef847cef",
     "tools/go-graph-truth/go.mod": "7f239967ac7899e29dc8a55b175938c8d383533f7b0d6e26e20e7d58687da170",
     "tools/go-graph-truth/go.sum": "7b37b969e6c069e2f58457fd2a810090582c045224f35294723de6ea5407282f",
     "tools/go-graph-truth/main.go": "234606dd063c73c9a7c688b2c1905067daa3d654660251f205794d41836dd8d2"

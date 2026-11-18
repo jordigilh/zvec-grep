@@ -37,7 +37,10 @@ _ZVEC_HEADER = re.compile(
 
 def _balanced_end(lines: list[str], start: int) -> int:
     text = "\n".join(lines[start - 1 :])
-    opening = text.find("{")
+    # A braceless declaration (const/var/type without its own opening
+    # brace) ends on its own line; searching further would swallow the
+    # next declaration's body.
+    opening = lines[start - 1].find("{")
     if opening < 0:
         return start
 
@@ -90,7 +93,7 @@ def _unit_spans(fixture: pathlib.Path, manifest: dict[str, Any]) -> list[UnitSpa
     for unit in manifest["units"]:
         path = unit["path"]
         symbol = unit["symbol"]
-        lines = (fixture / path).read_text().splitlines()
+        lines = (fixture / path).read_text(encoding="utf-8").splitlines()
         if "start_line" in unit or "end_line" in unit:
             start = unit.get("start_line")
             end = unit.get("end_line")
@@ -207,9 +210,13 @@ def copy_fixture_sources(fixture: pathlib.Path, manifest: dict[str, Any], root: 
     """Materialize the fixture's source files at ``root`` (fresh copy)."""
     import shutil
 
+    marker = root / ".quality-lane-root"
     if root.exists():
+        if any(root.iterdir()) and not marker.exists():
+            raise ReplayError(f"refusing to delete non-lane directory: {root}")
         shutil.rmtree(root)
     root.mkdir(parents=True)
+    marker.touch()
     for relative in fixture_source_files(fixture, manifest):
         destination = root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)

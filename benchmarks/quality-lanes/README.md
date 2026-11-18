@@ -85,28 +85,39 @@ same commit as the causing change.
 
 ## Running locally
 
+Use **CPython 3.12**, the version CI uses. Earlier versions can sum
+floating-point scores differently (the `sum()` of floats changed in 3.12)
+and fail the exact baseline check. Run every command from the repository
+root:
+
 ```bash
-cargo build --release -p zg          # from rust/
+cargo build --manifest-path rust/Cargo.toml --release --locked -p zg
 LANES=benchmarks/quality-lanes
 ZG=rust/target/release/zg
 
 # fixture integrity
 python3 $LANES/check_fixture_hashes.py
 
+# fresh temp parent per invocation, so reruns cannot reuse stale metrics
+TMP=$(mktemp -d)
+
 # retrieval lane (needs the local potion model cache)
 python3 $LANES/run_qeval.py --fixture $LANES/fixtures/go-workflow-discovery-v1 \
-    --binary $ZG --work-root /tmp/ql-tuning --output /tmp/ql-tuning-out
-python3 $LANES/check_baselines.py --baselines $LANES/baselines.json \
-    --lane retrieval --fixture go-workflow-discovery-v1 --results /tmp/ql-tuning-out/metrics-k10.json
+    --binary $ZG --work-root "$TMP/tuning-work" --output "$TMP/tuning-out" \
+  && python3 $LANES/check_baselines.py --baselines $LANES/baselines.json \
+    --lane retrieval --fixture go-workflow-discovery-v1 \
+    --results "$TMP/tuning-out/metrics-k10.json"
 
-# graph lane (no model needed)
+# graph lane (no model needed; requires the Python `zstandard` package
+# or the `zstd` executable to decompress the codegraph artifact)
 python3 $LANES/adjudicate_graph.py --fixture $LANES/fixtures/go-workflow-discovery-v1 \
-    --binary $ZG --work-root /tmp/ql-graph --output /tmp/ql-graph-out.json
-python3 $LANES/check_baselines.py --baselines $LANES/baselines.json \
-    --lane graph --fixture go-workflow-discovery-v1 --results /tmp/ql-graph-out.json
+    --binary $ZG --work-root "$TMP/graph-work" --output "$TMP/graph-out.json" \
+  && python3 $LANES/check_baselines.py --baselines $LANES/baselines.json \
+    --lane graph --fixture go-workflow-discovery-v1 --results "$TMP/graph-out.json"
 ```
 
-Repeat with `go-inventory-audit-v1` for the holdout. `run_qeval.py` reads the
+Run each checker only after its producer succeeds (`&&` above). Repeat
+with `go-inventory-audit-v1` for the holdout, using a fresh `TMP` parent. `run_qeval.py` reads the
 model cache from `--model-cache` or `ZVEC_GREP_MODEL_CACHE` (default
 `~/.engram/zvec-grep/model`); CI caches the `local/potion-code-16m-v2`
 download like the existing local-model smoke jobs.

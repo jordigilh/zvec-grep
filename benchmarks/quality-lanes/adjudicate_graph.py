@@ -41,7 +41,9 @@ def load_codegraph(root: Path) -> dict:
     try:
         import zstandard  # type: ignore
 
-        return json.loads(zstandard.ZstdDecompressor().decompress(artifact.read_bytes()))
+        with artifact.open("rb") as handle:
+            with zstandard.ZstdDecompressor().stream_reader(handle) as reader:
+                return json.loads(reader.read())
     except ImportError:
         completed = subprocess.run(
             ["zstd", "-dc", str(artifact)], capture_output=True, check=False
@@ -185,8 +187,9 @@ def adjudicate(edges: list[dict], truth: dict, manifest: dict) -> dict:
     flips = sum(1 for r in adjudication if r.get("direction") == "flipped")
     fm = Counter(r.get("failure_mode") for r in adjudication if r["verdict"] == "REFUTED")
 
-    present = [p for p in comp_pairs if p in tool_pairs]
-    missed = [p for p in comp_pairs if p not in tool_pairs and (p[1], p[0]) not in tool_pairs]
+    present = [p for p in sorted(comp_pairs) if p in tool_pairs]
+    missed = [p for p in sorted(comp_pairs)
+              if p not in tool_pairs and (p[1], p[0]) not in tool_pairs]
 
     res_split = Counter(("resolved" if r["resolved"] else "pending") for r in adjudication)
 
@@ -234,8 +237,8 @@ def main() -> None:
     binary = args.binary.resolve()
     root = args.work_root.resolve()
 
-    manifest = json.loads((fixture / "manifest.json").read_text())
-    truth = json.loads((fixture / "graph-truth.json").read_text())
+    manifest = json.loads((fixture / "manifest.json").read_text(encoding="utf-8"))
+    truth = json.loads((fixture / "graph-truth.json").read_text(encoding="utf-8"))
 
     copy_fixture_sources(fixture, manifest, root)
 
@@ -255,7 +258,7 @@ def main() -> None:
 
     output = args.output
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(result, indent=2) + "\n")
+    output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({k: v for k, v in result.items()
                       if k not in ("edges", "confirmed_pairs",
                                    "refuted_pairs", "pending_externals")}))

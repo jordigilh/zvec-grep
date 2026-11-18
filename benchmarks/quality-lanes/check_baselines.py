@@ -48,6 +48,10 @@ def diff(path: str, expected, actual, problems: list[str]) -> None:
         problems.append(f"{path}: expected {expected!r}, got {actual!r}")
 
 
+def missed_pair_key(pair: dict) -> tuple:
+    return (pair["caller"], pair["callee"], pair["caller_file"], pair["callee_file"])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baselines", type=Path, required=True)
@@ -75,7 +79,21 @@ def main() -> int:
     else:
         problems = []
         for key in GRAPH_KEYS:
-            diff(key, fixture["graph"][key], results.get(key), problems)
+            if key == "compiler_pairs_missed":
+                # The adjudicator builds the missed list from a set, so its
+                # order is not stable across runs; compare the pairs
+                # canonically sorted, keeping exact record equality.
+                expected = fixture["graph"][key]
+                actual = results.get(key)
+                if (
+                    not isinstance(expected, list)
+                    or not isinstance(actual, list)
+                    or sorted(expected, key=missed_pair_key)
+                    != sorted(actual, key=missed_pair_key)
+                ):
+                    diff(key, expected, actual, problems)
+            else:
+                diff(key, fixture["graph"][key], results.get(key), problems)
 
     if problems:
         print(f"QUALITY REGRESSION on {args.fixture} ({args.lane} lane):", file=sys.stderr)
