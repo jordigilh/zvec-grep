@@ -10,6 +10,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # onnxruntime-node CUDA download 404s upstream; skip for all npm invocations incl. nested
+  npm_config_onnxruntime_node_install_cuda: skip
+
 jobs:
   package-candidate:
     name: Build release candidate
