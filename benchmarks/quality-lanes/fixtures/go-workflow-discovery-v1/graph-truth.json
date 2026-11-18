@@ -1,0 +1,725 @@
+{
+ "schema": "go-graph-truth-v1",
+ "description": "Compiler-validated call graph for frozen fixture go-workflow-discovery-v1. Built with go/packages (NeedTypes, NeedSyntax, NeedTypesInfo, NeedDeps) + golang.org/x/tools/go/ssa + callgraph/rta (rapid type analysis).",
+ "root_policy": "fixture has no main package and no _test.go files; RTA rooted at every function and method (exported and unexported) declared in the module's own packages (go 1.26.0 toolchain, x/tools v0.52.0; RTA resolution includes dynamic dispatch, all fixture call sites here resolve statically)",
+ "identity": "caller/callee identity = (fixture-relative file path, manifest symbol); methods use Receiver.Method; package-qualified SSA names are also included per node",
+ "edge_count": 18,
+ "unique_call_pairs": 18,
+ "roots": 27,
+ "edges": [
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/discovery.(WorkflowCatalog).ListActions",
+    "symbol": "WorkflowCatalog.ListActions",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/discovery",
+    "recv_type": "WorkflowCatalog",
+    "exported": true,
+    "span": {
+     "file": "internal/discovery/catalog.go",
+     "start_line": 26,
+     "end_line": 28,
+     "start_byte": 555,
+     "end_byte": 725
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/discovery.(WorkflowCatalog).ListWorkflows",
+    "symbol": "WorkflowCatalog.ListWorkflows",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/discovery",
+    "recv_type": "WorkflowCatalog",
+    "exported": true,
+    "span": {
+     "file": "internal/discovery/catalog.go",
+     "start_line": 15,
+     "end_line": 23,
+     "start_byte": 206,
+     "end_byte": 472
+    }
+   },
+   "call_site": {
+    "file": "internal/discovery/catalog.go",
+    "start_line": 27,
+    "end_line": 27,
+    "start_byte": 699,
+    "end_byte": 699
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/discovery.(WorkflowCatalog).ListActions",
+    "symbol": "WorkflowCatalog.ListActions",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/discovery",
+    "recv_type": "WorkflowCatalog",
+    "exported": true,
+    "span": {
+     "file": "internal/discovery/catalog.go",
+     "start_line": 26,
+     "end_line": 28,
+     "start_byte": 555,
+     "end_byte": 725
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/discovery.ApplyLabelFilters",
+    "symbol": "ApplyLabelFilters",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/discovery",
+    "exported": true,
+    "span": {
+     "file": "internal/discovery/filters.go",
+     "start_line": 23,
+     "end_line": 39,
+     "start_byte": 398,
+     "end_byte": 963
+    }
+   },
+   "call_site": {
+    "file": "internal/discovery/catalog.go",
+    "start_line": 27,
+    "end_line": 27,
+    "start_byte": 678,
+    "end_byte": 678
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.(Validator).IsAllowed",
+    "symbol": "Validator.IsAllowed",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "recv_type": "Validator",
+    "exported": true,
+    "span": {
+     "file": "internal/selection/validator.go",
+     "start_line": 37,
+     "end_line": 42,
+     "start_byte": 814,
+     "end_byte": 986
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/discovery.(WorkflowState).Contains",
+    "symbol": "WorkflowState.Contains",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/discovery",
+    "recv_type": "WorkflowState",
+    "exported": true,
+    "span": {
+     "file": "internal/discovery/state.go",
+     "start_line": 36,
+     "end_line": 44,
+     "start_byte": 695,
+     "end_byte": 863
+    }
+   },
+   "call_site": {
+    "file": "internal/selection/validator.go",
+    "start_line": 41,
+    "end_line": 41,
+    "start_byte": 972,
+    "end_byte": 972
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.(Validator).Validate",
+    "symbol": "Validator.Validate",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "recv_type": "Validator",
+    "exported": true,
+    "span": {
+     "file": "internal/selection/validator.go",
+     "start_line": 44,
+     "end_line": 49,
+     "start_byte": 988,
+     "end_byte": 1183
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.(Validator).IsAllowed",
+    "symbol": "Validator.IsAllowed",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "recv_type": "Validator",
+    "exported": true,
+    "span": {
+     "file": "internal/selection/validator.go",
+     "start_line": 37,
+     "end_line": 42,
+     "start_byte": 814,
+     "end_byte": 986
+    }
+   },
+   "call_site": {
+    "file": "internal/selection/validator.go",
+    "start_line": 45,
+    "end_line": 45,
+    "start_byte": 1059,
+    "end_byte": 1059
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.SelectWithRetry",
+    "symbol": "SelectWithRetry",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "exported": true,
+    "span": {
+     "file": "internal/selection/retry.go",
+     "start_line": 17,
+     "end_line": 22,
+     "start_byte": 344,
+     "end_byte": 574
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.SelfCorrectSelection",
+    "symbol": "SelfCorrectSelection",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "exported": true,
+    "span": {
+     "file": "internal/selection/retry.go",
+     "start_line": 9,
+     "end_line": 15,
+     "start_byte": 106,
+     "end_byte": 342
+    }
+   },
+   "call_site": {
+    "file": "internal/selection/retry.go",
+    "start_line": 18,
+    "end_line": 18,
+    "start_byte": 465,
+    "end_byte": 465
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.SelectWithRetry",
+    "symbol": "SelectWithRetry",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "exported": true,
+    "span": {
+     "file": "internal/selection/retry.go",
+     "start_line": 17,
+     "end_line": 22,
+     "start_byte": 344,
+     "end_byte": 574
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.retrySelection",
+    "symbol": "retrySelection",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "exported": false,
+    "span": {
+     "file": "internal/selection/retry.go",
+     "start_line": 24,
+     "end_line": 26,
+     "start_byte": 576,
+     "end_byte": 722
+    }
+   },
+   "call_site": {
+    "file": "internal/selection/retry.go",
+    "start_line": 19,
+    "end_line": 19,
+    "start_byte": 530,
+    "end_byte": 530
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.SelfCorrectSelection",
+    "symbol": "SelfCorrectSelection",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "exported": true,
+    "span": {
+     "file": "internal/selection/retry.go",
+     "start_line": 9,
+     "end_line": 15,
+     "start_byte": 106,
+     "end_byte": 342
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/discovery.WorkflowStateFromContext",
+    "symbol": "WorkflowStateFromContext",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/discovery",
+    "exported": true,
+    "span": {
+     "file": "internal/discovery/state.go",
+     "start_line": 52,
+     "end_line": 55,
+     "start_byte": 1042,
+     "end_byte": 1214
+    }
+   },
+   "call_site": {
+    "file": "internal/selection/retry.go",
+    "start_line": 10,
+    "end_line": 10,
+    "start_byte": 249,
+    "end_byte": 249
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.SelfCorrectSelection",
+    "symbol": "SelfCorrectSelection",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "exported": true,
+    "span": {
+     "file": "internal/selection/retry.go",
+     "start_line": 9,
+     "end_line": 15,
+     "start_byte": 106,
+     "end_byte": 342
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.(Validator).SetWorkflowState",
+    "symbol": "Validator.SetWorkflowState",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "recv_type": "Validator",
+    "exported": true,
+    "span": {
+     "file": "internal/selection/validator.go",
+     "start_line": 31,
+     "end_line": 33,
+     "start_byte": 615,
+     "end_byte": 704
+    }
+   },
+   "call_site": {
+    "file": "internal/selection/retry.go",
+    "start_line": 12,
+    "end_line": 12,
+    "start_byte": 292,
+    "end_byte": 292
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.SelfCorrectSelection",
+    "symbol": "SelfCorrectSelection",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "exported": true,
+    "span": {
+     "file": "internal/selection/retry.go",
+     "start_line": 9,
+     "end_line": 15,
+     "start_byte": 106,
+     "end_byte": 342
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.(Validator).Validate",
+    "symbol": "Validator.Validate",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "recv_type": "Validator",
+    "exported": true,
+    "span": {
+     "file": "internal/selection/validator.go",
+     "start_line": 44,
+     "end_line": 49,
+     "start_byte": 988,
+     "end_byte": 1183
+    }
+   },
+   "call_site": {
+    "file": "internal/selection/retry.go",
+    "start_line": 14,
+    "end_line": 14,
+    "start_byte": 329,
+    "end_byte": 329
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.retrySelection",
+    "symbol": "retrySelection",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "exported": false,
+    "span": {
+     "file": "internal/selection/retry.go",
+     "start_line": 24,
+     "end_line": 26,
+     "start_byte": 576,
+     "end_byte": 722
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/selection.SelfCorrectSelection",
+    "symbol": "SelfCorrectSelection",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/selection",
+    "exported": true,
+    "span": {
+     "file": "internal/selection/retry.go",
+     "start_line": 9,
+     "end_line": 15,
+     "start_byte": 106,
+     "end_byte": 342
+    }
+   },
+   "call_site": {
+    "file": "internal/selection/retry.go",
+    "start_line": 25,
+    "end_line": 25,
+    "start_byte": 693,
+    "end_byte": 693
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/tools.HandleSelectWorkflow",
+    "symbol": "HandleSelectWorkflow",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 34,
+     "end_line": 43,
+     "start_byte": 667,
+     "end_byte": 1119
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/discovery.(WorkflowCatalog).GetWorkflow",
+    "symbol": "WorkflowCatalog.GetWorkflow",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/discovery",
+    "recv_type": "WorkflowCatalog",
+    "exported": true,
+    "span": {
+     "file": "internal/discovery/catalog.go",
+     "start_line": 30,
+     "end_line": 34,
+     "start_byte": 727,
+     "end_byte": 896
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/select_workflow.go",
+    "start_line": 38,
+    "end_line": 38,
+    "start_byte": 959,
+    "end_byte": 959
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/tools.HandleSelectWorkflow",
+    "symbol": "HandleSelectWorkflow",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 34,
+     "end_line": 43,
+     "start_byte": 667,
+     "end_byte": 1119
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/tools.applySelectedWorkflow",
+    "symbol": "applySelectedWorkflow",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/tools",
+    "exported": false,
+    "span": {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 50,
+     "end_line": 52,
+     "start_byte": 1202,
+     "end_byte": 1401
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/select_workflow.go",
+    "start_line": 42,
+    "end_line": 42,
+    "start_byte": 1094,
+    "end_byte": 1094
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/tools.HandleSelectWorkflow",
+    "symbol": "HandleSelectWorkflow",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 34,
+     "end_line": 43,
+     "start_byte": 667,
+     "end_byte": 1119
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/tools.authorizeSelectionDriver",
+    "symbol": "authorizeSelectionDriver",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/tools",
+    "exported": false,
+    "span": {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 27,
+     "end_line": 32,
+     "start_byte": 447,
+     "end_byte": 665
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/select_workflow.go",
+    "start_line": 35,
+    "end_line": 35,
+    "start_byte": 854,
+    "end_byte": 854
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/tools.ListWorkflows",
+    "symbol": "ListWorkflows",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/list_workflows.go",
+     "start_line": 9,
+     "end_line": 17,
+     "start_byte": 102,
+     "end_byte": 484
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/discovery.(WorkflowCatalog).ListWorkflows",
+    "symbol": "WorkflowCatalog.ListWorkflows",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/discovery",
+    "recv_type": "WorkflowCatalog",
+    "exported": true,
+    "span": {
+     "file": "internal/discovery/catalog.go",
+     "start_line": 15,
+     "end_line": 23,
+     "start_byte": 206,
+     "end_byte": 472
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/list_workflows.go",
+    "start_line": 10,
+    "end_line": 10,
+    "start_byte": 304,
+    "end_byte": 304
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/tools.ListWorkflows",
+    "symbol": "ListWorkflows",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/list_workflows.go",
+     "start_line": 9,
+     "end_line": 17,
+     "start_byte": 102,
+     "end_byte": 484
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/tools.RecordDiscovered",
+    "symbol": "RecordDiscovered",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/list_workflows.go",
+     "start_line": 19,
+     "end_line": 23,
+     "start_byte": 486,
+     "end_byte": 615
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/list_workflows.go",
+    "start_line": 15,
+    "end_line": 15,
+    "start_byte": 452,
+    "end_byte": 452
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/tools.RecordDiscovered",
+    "symbol": "RecordDiscovered",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/list_workflows.go",
+     "start_line": 19,
+     "end_line": 23,
+     "start_byte": 486,
+     "end_byte": 615
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/discovery.(WorkflowState).Add",
+    "symbol": "WorkflowState.Add",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/discovery",
+    "recv_type": "WorkflowState",
+    "exported": true,
+    "span": {
+     "file": "internal/discovery/state.go",
+     "start_line": 20,
+     "end_line": 34,
+     "start_byte": 437,
+     "end_byte": 693
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/list_workflows.go",
+    "start_line": 21,
+    "end_line": 21,
+    "start_byte": 594,
+    "end_byte": 594
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/tools.applySelectedWorkflow",
+    "symbol": "applySelectedWorkflow",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/tools",
+    "exported": false,
+    "span": {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 50,
+     "end_line": 52,
+     "start_byte": 1202,
+     "end_byte": 1401
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/tools.lookupDiscoveredParameters",
+    "symbol": "lookupDiscoveredParameters",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/tools",
+    "exported": false,
+    "span": {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 54,
+     "end_line": 59,
+     "start_byte": 1403,
+     "end_byte": 1644
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/select_workflow.go",
+    "start_line": 51,
+    "end_line": 51,
+    "start_byte": 1377,
+    "end_byte": 1377
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-workflow-discovery/internal/tools.authorizeSelectionDriver",
+    "symbol": "authorizeSelectionDriver",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/tools",
+    "exported": false,
+    "span": {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 27,
+     "end_line": 32,
+     "start_byte": 447,
+     "end_byte": 665
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-workflow-discovery/internal/tools.isWorkflowInDiscoveryResult",
+    "symbol": "isWorkflowInDiscoveryResult",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-workflow-discovery/internal/tools",
+    "exported": false,
+    "span": {
+     "file": "internal/tools/select_workflow.go",
+     "start_line": 15,
+     "end_line": 25,
+     "start_byte": 185,
+     "end_byte": 445
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/select_workflow.go",
+    "start_line": 28,
+    "end_line": 28,
+    "start_byte": 560,
+    "end_byte": 560
+   },
+   "static_call": true,
+   "description": "static function call"
+  }
+ ]
+}
