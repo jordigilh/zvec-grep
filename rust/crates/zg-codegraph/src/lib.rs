@@ -4313,6 +4313,21 @@ pub fn validate_codegraph_publication(root: &Path) -> CodeGraphResult<CodeGraphA
     Ok(artifact)
 }
 
+/// Writes an externally produced codegraph artifact (for example a projection
+/// of a foreign graph store, built by `zg-graph-projection`) to an explicit
+/// output path. Unlike [`write_codegraph`], no publication manifest is built
+/// and no source snapshot is validated: the caller vouches for the artifact.
+///
+/// # Errors
+///
+/// Returns an error if serialization or writing fails.
+pub fn write_codegraph_artifact(
+    output: &Path,
+    artifact: CodeGraphArtifact,
+) -> CodeGraphResult<(PathBuf, CodeGraphArtifact)> {
+    write_artifact(output, Some(output), artifact)
+}
+
 /// Writes a Go-only graph for existing callers that need the original scope.
 ///
 /// # Errors
