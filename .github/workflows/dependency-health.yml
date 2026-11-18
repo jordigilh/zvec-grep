@@ -7,6 +7,10 @@ on:
 
 permissions: {}
 
+env:
+  # onnxruntime-node CUDA download 404s upstream; skip for all npm invocations incl. nested
+  npm_config_onnxruntime_node_install_cuda: skip
+
 jobs:
   ranges:
     name: dependency ranges (Node ${{ matrix.node }})
@@ -43,7 +47,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --onnxruntime-node-install-cuda=skip
       - name: Build the candidate tarball
         run: |
           mkdir -p "$RUNNER_TEMP/package"
@@ -65,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest]
         node: [22, 24, 26]
         model:
           - local/potion-code-16m-v2

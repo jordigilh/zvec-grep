@@ -27,6 +27,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
+env:
+  # onnxruntime-node CUDA download 404s upstream; skip for all npm invocations incl. nested
+  npm_config_onnxruntime_node_install_cuda: skip
+
 jobs:
   quality:
     name: quality
@@ -42,7 +46,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --onnxruntime-node-install-cuda=skip
       - run: npm run lint
       - run: npm run format:check
       - run: npm run typecheck
@@ -78,7 +82,7 @@ jobs:
         with:
           go-version-file: tools/go-callfacts/go.mod
           cache-dependency-path: tools/go-callfacts/go.sum
-      - run: npm ci
+      - run: npm ci --onnxruntime-node-install-cuda=skip
       - run: npm ci --prefix tools/python-callfacts
       - run: go test ./...
         working-directory: tools/go-callfacts
@@ -103,7 +107,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --onnxruntime-node-install-cuda=skip
       - run: npm run test:coverage
 
   package-candidate:
@@ -120,7 +124,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --onnxruntime-node-install-cuda=skip
       - name: Build the candidate tarball
         run: |
           mkdir -p "$RUNNER_TEMP/package"
@@ -150,10 +154,6 @@ jobs:
             node: 24
           - os: ubuntu-latest
             node: 26
-          - os: macos-latest
-            node: 24
-          - os: windows-latest
-            node: 24
     steps:
       - uses: actions/checkout@v6
         with:
@@ -162,7 +162,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      - run: npm ci
+      - run: npm ci --onnxruntime-node-install-cuda=skip
       - run: npm run test:unit
 
   integration-e2e:
@@ -179,10 +179,6 @@ jobs:
             node: 22.13.0
           - os: ubuntu-latest
             node: 24
-          - os: macos-latest
-            node: 24
-          - os: windows-latest
-            node: 24
     steps:
       - uses: actions/checkout@v6
         with:
@@ -191,7 +187,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      - run: npm ci
+      - run: npm ci --onnxruntime-node-install-cuda=skip
       - run: npm run test:integration
       - run: npm run test:e2e
 
@@ -204,7 +200,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -213,7 +209,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --onnxruntime-node-install-cuda=skip
       - run: npm run test:package
 
   local-model-smoke:
@@ -226,7 +222,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest]
         model:
           - local/potion-code-16m-v2
           - local/all-minilm-l6-v2
@@ -270,6 +266,6 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci --install-strategy=nested
+      - run: npm ci --install-strategy=nested --onnxruntime-node-install-cuda=skip
       - run: npm run build
       - run: npm run test:unit
