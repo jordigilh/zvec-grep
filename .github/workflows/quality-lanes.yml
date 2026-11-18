@@ -1,0 +1,193 @@
+name: Quality lanes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "rust/crates/zg-engine/**"
+      - "rust/crates/zg-codegraph/**"
+      - "rust/crates/zg-graph-projection/**"
+      - "rust/Cargo.lock"
+      - "rust/rust-toolchain.toml"
+      - "src/engine/**"
+      - "benchmarks/quality-lanes/**"
+      - ".github/workflows/quality-lanes.yml"
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "rust/crates/zg-engine/**"
+      - "rust/crates/zg-codegraph/**"
+      - "rust/crates/zg-graph-projection/**"
+      - "rust/Cargo.lock"
+      - "rust/rust-toolchain.toml"
+      - "src/engine/**"
+      - "benchmarks/quality-lanes/**"
+      - ".github/workflows/quality-lanes.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  changes:
+    name: lane path filter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      retrieval: ${{ steps.filter.outputs.retrieval }}
+      graph: ${{ steps.filter.outputs.graph }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Decide which lanes the changed paths require
+        id: filter
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          else
+            range="${{ github.event.before }}..${{ github.sha }}"
+          fi
+          # An empty range (new branch, force push) runs both lanes.
+          if ! git rev-parse --quiet --verify "$range" >/dev/null 2>&1; then
+            echo "retrieval=true" >> "$GITHUB_OUTPUT"
+            echo "graph=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only "$range")
+          retrieval=false
+          graph=false
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            case "$path" in
+              rust/crates/zg-engine/*|src/engine/*|benchmarks/quality-lanes/*|.github/workflows/quality-lanes.yml|rust/Cargo.lock|rust/rust-toolchain.toml)
+                retrieval=true ;;
+            esac
+            case "$path" in
+              rust/crates/zg-codegraph/*|rust/crates/zg-graph-projection/*|benchmarks/quality-lanes/*|.github/workflows/quality-lanes.yml|rust/Cargo.lock|rust/rust-toolchain.toml)
+                graph=true ;;
+            esac
+          done <<< "$changed"
+          echo "retrieval=$retrieval" >> "$GITHUB_OUTPUT"
+          echo "graph=$graph" >> "$GITHUB_OUTPUT"
+
+  retrieval-quality:
+    name: retrieval quality (qeval, exact baselines)
+    needs: changes
+    if: needs.changes.outputs.retrieval == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        working-directory: rust
+        run: rustup show active-toolchain
+      - name: Restore Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/target/
+          key: ${{ runner.os }}-${{ runner.arch }}-quality-lanes-rust-v1-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-quality-lanes-rust-v1-
+      - name: Build the zg CLI
+        working-directory: rust
+        run: cargo build --release --locked -p zg
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Cache the potion code model
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/model-cache
+          key: quality-lanes-potion-code-16m-v2-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/engine/models/catalog.ts') }}
+      - name: Verify fixture hashes against baselines.json
+        run: python3 benchmarks/quality-lanes/check_fixture_hashes.py
+      - name: Run the retrieval lane over both fixtures
+        run: |
+          set -euo pipefail
+          lanes=benchmarks/quality-lanes
+          zg=rust/target/release/zg
+          for fixture in go-workflow-discovery-v1 go-inventory-audit-v1; do
+            python3 "$lanes/run_qeval.py" \
+              --fixture "$lanes/fixtures/$fixture" \
+              --binary "$zg" \
+              --work-root "$RUNNER_TEMP/work-$fixture" \
+              --output "$RUNNER_TEMP/results-$fixture" \
+              --model-cache "$RUNNER_TEMP/model-cache"
+            python3 "$lanes/check_baselines.py" \
+              --baselines "$lanes/baselines.json" \
+              --lane retrieval \
+              --fixture "$fixture" \
+              --results "$RUNNER_TEMP/results-$fixture/metrics-k10.json"
+          done
+
+  graph-quality:
+    name: graph quality (codegraph vs compiler truth)
+    needs: changes
+    if: needs.changes.outputs.graph == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        working-directory: rust
+        run: rustup show active-toolchain
+      - name: Restore Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/target/
+          key: ${{ runner.os }}-${{ runner.arch }}-quality-lanes-rust-v1-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-quality-lanes-rust-v1-
+      - name: Build the zg CLI
+        working-directory: rust
+        run: cargo build --release --locked -p zg
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify fixture hashes against baselines.json
+        run: python3 benchmarks/quality-lanes/check_fixture_hashes.py
+      - name: Run the graph lane over both fixtures
+        run: |
+          set -euo pipefail
+          lanes=benchmarks/quality-lanes
+          zg=rust/target/release/zg
+          for fixture in go-workflow-discovery-v1 go-inventory-audit-v1; do
+            python3 "$lanes/adjudicate_graph.py" \
+              --fixture "$lanes/fixtures/$fixture" \
+              --binary "$zg" \
+              --work-root "$RUNNER_TEMP/work-$fixture" \
+              --output "$RUNNER_TEMP/adjudication-$fixture.json"
+            python3 "$lanes/check_baselines.py" \
+              --baselines "$lanes/baselines.json" \
+              --lane graph \
+              --fixture "$fixture" \
+              --results "$RUNNER_TEMP/adjudication-$fixture.json"
+          done

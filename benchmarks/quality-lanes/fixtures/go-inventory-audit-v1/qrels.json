@@ -1,0 +1,1881 @@
+{
+  "schema_version": 1,
+  "suite_id": "synthetic-go-inventory-audit",
+  "fixture_id": "go-inventory-audit-v1",
+  "judgment_status": "adjudicated",
+  "candidate_pool_complete": true,
+  "source_truth": true,
+  "source": {
+    "repository": "synthetic/go-inventory-audit",
+    "revision": "fixture-v1",
+    "root": ".",
+    "include": [
+      "**/*.go"
+    ],
+    "exclude": [
+      "**/*_test.go"
+    ],
+    "snapshot_sha256": "87bd1431d3ee7a64dd8ed5476587d7ddc1606af65c02be7c2196b0a5ed0b3c98",
+    "files": 10,
+    "bytes": 10515
+  },
+  "unit_count": 45,
+  "queries": [
+    {
+      "id": "record-scanned-membership",
+      "query": "Where are asset IDs returned by list_assets recorded for later enforcement?",
+      "category": "exact implementation / data flow",
+      "judgments": [
+        {
+          "unit_id": "internal/inventory/state.go::AssetState",
+          "grade": 2,
+          "rationale": "Defines the shared state that holds scanned asset IDs."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::NewAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Add",
+          "grade": 3,
+          "rationale": "Stores returned IDs in the state set."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Contains",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::WithAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetStateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::NewAssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.ListAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.GetAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::FiltersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ApplyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::NewPolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.Grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.IsGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::NewEnforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.CheckAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.RequirePermission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied.Error",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::NewAuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::CheckAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::SummarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::FindingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::ListAssets",
+          "grade": 2,
+          "rationale": "Obtains the scan result and calls the recording path."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::RecordScanned",
+          "grade": 3,
+          "rationale": "Records each returned asset ID in the shared scan state."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::ScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::isAssetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::authorizeAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::HandleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/api/types.go::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "deny-unpermitted-asset",
+      "query": "How is a registry-valid asset denied when the required permission was never granted by policy?",
+      "category": "policy check / semantic behavior",
+      "judgments": [
+        {
+          "unit_id": "internal/inventory/state.go::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::NewAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Add",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Contains",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::WithAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetStateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::NewAssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.ListAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.GetAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::FiltersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ApplyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::NewPolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.Grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.IsGranted",
+          "grade": 2,
+          "rationale": "Provides the granted-permission membership predicate."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::NewEnforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.CheckAccess",
+          "grade": 3,
+          "rationale": "Combines the policy-set membership predicate for the required permission."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.RequirePermission",
+          "grade": 3,
+          "rationale": "Turns the failed policy membership check into a fail-closed AccessDenied error."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied",
+          "grade": 2,
+          "rationale": "Represents the fail-closed enforcement error returned to the caller."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied.Error",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::NewAuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::CheckAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::SummarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::FindingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::ListAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::RecordScanned",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::ScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::isAssetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::authorizeAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::HandleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/api/types.go::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "forward-tags-to-scan",
+      "query": "How are scan signal tags converted into filters before the registry lists assets?",
+      "category": "data flow / semantic behavior",
+      "judgments": [
+        {
+          "unit_id": "internal/inventory/state.go::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::NewAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Add",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Contains",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::WithAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetStateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::NewAssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.ListAssets",
+          "grade": 3,
+          "rationale": "Uses audit filters when listing registry assets."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.GetAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::AuditFilters",
+          "grade": 1,
+          "rationale": "Defines the filter shape but not the runtime conversion path."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::FiltersFromSignal",
+          "grade": 3,
+          "rationale": "Converts scan signal tags into the audit filter structure."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ApplyTagFilters",
+          "grade": 2,
+          "rationale": "Applies tag constraints to candidate assets."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::NewPolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.Grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.IsGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::NewEnforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.CheckAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.RequirePermission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied.Error",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::NewAuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::CheckAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::SummarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::FindingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::ListAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::RecordScanned",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::ScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::isAssetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::authorizeAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::HandleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/api/types.go::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "preserve-membership-on-recheck",
+      "query": "How does scanned-asset membership survive repeated audit rechecks?",
+      "category": "multi-hop state / recheck flow",
+      "judgments": [
+        {
+          "unit_id": "internal/inventory/state.go::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::NewAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Add",
+          "grade": 2,
+          "rationale": "Allows later scan calls to extend the same set."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Contains",
+          "grade": 2,
+          "rationale": "Answers the membership question the recheck relies on."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::WithAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetStateFromContext",
+          "grade": 2,
+          "rationale": "Retrieves the shared state from the selection context on every recheck."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::NewAssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.ListAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.GetAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::FiltersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ApplyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::NewPolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.Grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.IsGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::NewEnforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.CheckAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.RequirePermission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied.Error",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::NewAuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::CheckAccess",
+          "grade": 3,
+          "rationale": "Reuses the shared scan state while rechecking ledger coverage."
+        },
+        {
+          "unit_id": "internal/audit/review.go::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::SummarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::FindingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::ListAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::RecordScanned",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::ScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::isAssetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::authorizeAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::HandleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/api/types.go::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "interactive-selection-guard",
+      "query": "Where does interactive selection reject an asset absent from the current scan result?",
+      "category": "exact implementation / interactive guard",
+      "judgments": [
+        {
+          "unit_id": "internal/inventory/state.go::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::NewAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Add",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Contains",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::WithAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetStateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::NewAssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.ListAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.GetAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::FiltersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ApplyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::NewPolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.Grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.IsGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::NewEnforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.CheckAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.RequirePermission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied.Error",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::NewAuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::CheckAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::SummarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::FindingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::ListAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::RecordScanned",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::ScanResult",
+          "grade": 2,
+          "rationale": "Defines the recommended and alternative IDs checked by the guard."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::isAssetInScanResult",
+          "grade": 3,
+          "rationale": "Checks the recommended and alternative asset IDs."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::authorizeAccess",
+          "grade": 3,
+          "rationale": "Rejects IDs that are not in the current scan result before registry lookup."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::HandleSelectAsset",
+          "grade": 2,
+          "rationale": "Calls authorization before returning the selected asset."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/api/types.go::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "enforce-permission-before-audit",
+      "query": "Where is the audit write permission enforced before a record is appended to the ledger?",
+      "category": "exact implementation / validation",
+      "judgments": [
+        {
+          "unit_id": "internal/inventory/state.go::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::NewAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Add",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Contains",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::WithAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetStateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::NewAssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.ListAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.GetAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::FiltersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ApplyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::NewPolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.Grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.IsGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::NewEnforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.CheckAccess",
+          "grade": 2,
+          "rationale": "Answers the policy membership question used by enforcement."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.RequirePermission",
+          "grade": 3,
+          "rationale": "Performs the permission check on the ledger write path."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied",
+          "grade": 2,
+          "rationale": "Carries the fail-closed error when the write permission is missing."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied.Error",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::NewAuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Record",
+          "grade": 3,
+          "rationale": "Enforces audit:write before appending the ledger entry."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::CheckAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::SummarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::FindingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::ListAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::RecordScanned",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::ScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::isAssetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::authorizeAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::HandleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/api/types.go::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "empty-scan-fails-closed",
+      "query": "What happens when the inventory scan returns no assets and a selection is attempted?",
+      "category": "behavior / failure mode",
+      "judgments": [
+        {
+          "unit_id": "internal/inventory/state.go::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::NewAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Add",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Contains",
+          "grade": 3,
+          "rationale": "An empty scan state makes any asset ID fail the membership predicate."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::WithAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetStateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::NewAssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.ListAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.GetAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::FiltersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ApplyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::NewPolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.Grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.IsGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::NewEnforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.CheckAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.RequirePermission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied.Error",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::NewAuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::CheckAccess",
+          "grade": 3,
+          "rationale": "An empty state and an empty ledger make the audit recheck fail closed."
+        },
+        {
+          "unit_id": "internal/audit/review.go::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::SummarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::FindingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::ListAssets",
+          "grade": 2,
+          "rationale": "Defines the scan call that leaves the state empty."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::RecordScanned",
+          "grade": 2,
+          "rationale": "Shows that no IDs are added when the scan result is empty."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::ScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::isAssetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::authorizeAccess",
+          "grade": 2,
+          "rationale": "Rejects the selection because the asset is absent from the empty scan result."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::HandleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/api/types.go::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "copy-selected-asset-details",
+      "query": "How are selected asset details copied into the final investigation summary?",
+      "category": "multi-symbol data flow",
+      "judgments": [
+        {
+          "unit_id": "internal/inventory/state.go::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::NewAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Add",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetState.Contains",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::WithAssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/state.go::AssetStateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::NewAssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.ListAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/registry.go::AssetRegistry.GetAsset",
+          "grade": 2,
+          "rationale": "Supplies the registry asset details used by final assembly."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::FiltersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/inventory/filters.go::ApplyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::NewPolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.Grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/policy.go::PolicySet.IsGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::NewEnforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.CheckAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::Enforcer.RequirePermission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/permissions/enforcer.go::AccessDenied.Error",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::NewAuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/ledger.go::AuditLedger.Entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::CheckAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::SummarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/audit/review.go::FindingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::ListAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/list_assets.go::RecordScanned",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::ScanResult",
+          "grade": 1,
+          "rationale": "Defines source parameters for the final result but does not perform copying."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::isAssetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::authorizeAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::HandleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "internal/tools/select_asset.go::applySelectedAsset",
+          "grade": 3,
+          "rationale": "Copies registry-resolved asset fields into the final summary."
+        },
+        {
+          "unit_id": "internal/api/types.go::AssetSummary",
+          "grade": 2,
+          "rationale": "Defines the final result shape that receives the copied fields."
+        }
+      ]
+    }
+  ]
+}

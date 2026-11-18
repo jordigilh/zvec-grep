@@ -1,0 +1,687 @@
+{
+ "schema": "go-graph-truth-v1",
+ "description": "Compiler-validated call graph for holdout fixture go-inventory-audit-v1. Built with go/packages (NeedTypes, NeedSyntax, NeedTypesInfo, NeedDeps) + golang.org/x/tools/go/ssa + callgraph/rta (rapid type analysis). Tool reused from go-graph-truth-output/tool with only fixture-dir/module-prefix/output-path parameterized; analysis logic unchanged.",
+ "root_policy": "fixture has no main package and no _test.go files; RTA rooted at every function and method (exported and unexported) declared in the module's own packages (module example.com/synthetic-inventory-audit; go version go1.26.0 darwin/arm64)",
+ "identity": "caller/callee identity = (fixture-relative file path, manifest symbol); methods use Receiver.Method; package-qualified SSA names are also included per node",
+ "edge_count": 17,
+ "roots": 29,
+ "edges": [
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/audit.(AuditLedger).Record",
+    "symbol": "AuditLedger.Record",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/audit",
+    "recv_type": "AuditLedger",
+    "exported": true,
+    "span": {
+     "file": "internal/audit/ledger.go",
+     "start_line": 25,
+     "end_line": 31,
+     "start_byte": 549,
+     "end_byte": 743
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/permissions.(Enforcer).RequirePermission",
+    "symbol": "Enforcer.RequirePermission",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/permissions",
+    "recv_type": "Enforcer",
+    "exported": true,
+    "span": {
+     "file": "internal/permissions/enforcer.go",
+     "start_line": 19,
+     "end_line": 24,
+     "start_byte": 509,
+     "end_byte": 651
+    }
+   },
+   "call_site": {
+    "file": "internal/audit/ledger.go",
+    "start_line": 26,
+    "end_line": 26,
+    "start_byte": 645,
+    "end_byte": 645
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/audit.CheckAccess",
+    "symbol": "CheckAccess",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/audit",
+    "exported": true,
+    "span": {
+     "file": "internal/audit/review.go",
+     "start_line": 13,
+     "end_line": 22,
+     "start_byte": 355,
+     "end_byte": 616
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/audit.(AuditLedger).Entries",
+    "symbol": "AuditLedger.Entries",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/audit",
+    "recv_type": "AuditLedger",
+    "exported": true,
+    "span": {
+     "file": "internal/audit/ledger.go",
+     "start_line": 34,
+     "end_line": 42,
+     "start_byte": 807,
+     "end_byte": 1050
+    }
+   },
+   "call_site": {
+    "file": "internal/audit/review.go",
+    "start_line": 18,
+    "end_line": 18,
+    "start_byte": 566,
+    "end_byte": 566
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/audit.CheckAccess",
+    "symbol": "CheckAccess",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/audit",
+    "exported": true,
+    "span": {
+     "file": "internal/audit/review.go",
+     "start_line": 13,
+     "end_line": 22,
+     "start_byte": 355,
+     "end_byte": 616
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/inventory.(AssetState).Contains",
+    "symbol": "AssetState.Contains",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/inventory",
+    "recv_type": "AssetState",
+    "exported": true,
+    "span": {
+     "file": "internal/inventory/state.go",
+     "start_line": 36,
+     "end_line": 44,
+     "start_byte": 660,
+     "end_byte": 819
+    }
+   },
+   "call_site": {
+    "file": "internal/audit/review.go",
+    "start_line": 15,
+    "end_line": 15,
+    "start_byte": 514,
+    "end_byte": 514
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/audit.CheckAccess",
+    "symbol": "CheckAccess",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/audit",
+    "exported": true,
+    "span": {
+     "file": "internal/audit/review.go",
+     "start_line": 13,
+     "end_line": 22,
+     "start_byte": 355,
+     "end_byte": 616
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/inventory.AssetStateFromContext",
+    "symbol": "AssetStateFromContext",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/inventory",
+    "exported": true,
+    "span": {
+     "file": "internal/inventory/state.go",
+     "start_line": 52,
+     "end_line": 55,
+     "start_byte": 986,
+     "end_byte": 1146
+    }
+   },
+   "call_site": {
+    "file": "internal/audit/review.go",
+    "start_line": 14,
+    "end_line": 14,
+    "start_byte": 482,
+    "end_byte": 482
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/inventory.(AssetRegistry).ListAssets",
+    "symbol": "AssetRegistry.ListAssets",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/inventory",
+    "recv_type": "AssetRegistry",
+    "exported": true,
+    "span": {
+     "file": "internal/inventory/registry.go",
+     "start_line": 28,
+     "end_line": 36,
+     "start_byte": 613,
+     "end_byte": 890
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/inventory.ApplyTagFilters",
+    "symbol": "ApplyTagFilters",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/inventory",
+    "exported": true,
+    "span": {
+     "file": "internal/inventory/filters.go",
+     "start_line": 24,
+     "end_line": 37,
+     "start_byte": 514,
+     "end_byte": 868
+    }
+   },
+   "call_site": {
+    "file": "internal/inventory/registry.go",
+    "start_line": 31,
+    "end_line": 31,
+    "start_byte": 802,
+    "end_byte": 802
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/permissions.(Enforcer).CheckAccess",
+    "symbol": "Enforcer.CheckAccess",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/permissions",
+    "recv_type": "Enforcer",
+    "exported": true,
+    "span": {
+     "file": "internal/permissions/enforcer.go",
+     "start_line": 13,
+     "end_line": 15,
+     "start_byte": 305,
+     "end_byte": 392
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/permissions.(PolicySet).IsGranted",
+    "symbol": "PolicySet.IsGranted",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/permissions",
+    "recv_type": "PolicySet",
+    "exported": true,
+    "span": {
+     "file": "internal/permissions/policy.go",
+     "start_line": 26,
+     "end_line": 32,
+     "start_byte": 551,
+     "end_byte": 672
+    }
+   },
+   "call_site": {
+    "file": "internal/permissions/enforcer.go",
+    "start_line": 14,
+    "end_line": 14,
+    "start_byte": 384,
+    "end_byte": 384
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/permissions.(Enforcer).RequirePermission",
+    "symbol": "Enforcer.RequirePermission",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/permissions",
+    "recv_type": "Enforcer",
+    "exported": true,
+    "span": {
+     "file": "internal/permissions/enforcer.go",
+     "start_line": 19,
+     "end_line": 24,
+     "start_byte": 509,
+     "end_byte": 651
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/permissions.(Enforcer).CheckAccess",
+    "symbol": "Enforcer.CheckAccess",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/permissions",
+    "recv_type": "Enforcer",
+    "exported": true,
+    "span": {
+     "file": "internal/permissions/enforcer.go",
+     "start_line": 13,
+     "end_line": 15,
+     "start_byte": 305,
+     "end_byte": 392
+    }
+   },
+   "call_site": {
+    "file": "internal/permissions/enforcer.go",
+    "start_line": 20,
+    "end_line": 20,
+    "start_byte": 585,
+    "end_byte": 585
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.HandleSelectAsset",
+    "symbol": "HandleSelectAsset",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 46,
+     "end_line": 61,
+     "start_byte": 1275,
+     "end_byte": 2021
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/audit.(AuditLedger).Record",
+    "symbol": "AuditLedger.Record",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/audit",
+    "recv_type": "AuditLedger",
+    "exported": true,
+    "span": {
+     "file": "internal/audit/ledger.go",
+     "start_line": 25,
+     "end_line": 31,
+     "start_byte": 549,
+     "end_byte": 743
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/select_asset.go",
+    "start_line": 57,
+    "end_line": 57,
+    "start_byte": 1843,
+    "end_byte": 1843
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.HandleSelectAsset",
+    "symbol": "HandleSelectAsset",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 46,
+     "end_line": 61,
+     "start_byte": 1275,
+     "end_byte": 2021
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/audit.CheckAccess",
+    "symbol": "CheckAccess",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/audit",
+    "exported": true,
+    "span": {
+     "file": "internal/audit/review.go",
+     "start_line": 13,
+     "end_line": 22,
+     "start_byte": 355,
+     "end_byte": 616
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/select_asset.go",
+    "start_line": 50,
+    "end_line": 50,
+    "start_byte": 1603,
+    "end_byte": 1603
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.HandleSelectAsset",
+    "symbol": "HandleSelectAsset",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 46,
+     "end_line": 61,
+     "start_byte": 1275,
+     "end_byte": 2021
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/inventory.(AssetRegistry).GetAsset",
+    "symbol": "AssetRegistry.GetAsset",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/inventory",
+    "recv_type": "AssetRegistry",
+    "exported": true,
+    "span": {
+     "file": "internal/inventory/registry.go",
+     "start_line": 38,
+     "end_line": 41,
+     "start_byte": 892,
+     "end_byte": 1008
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/select_asset.go",
+    "start_line": 53,
+    "end_line": 53,
+    "start_byte": 1739,
+    "end_byte": 1739
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.HandleSelectAsset",
+    "symbol": "HandleSelectAsset",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 46,
+     "end_line": 61,
+     "start_byte": 1275,
+     "end_byte": 2021
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.applySelectedAsset",
+    "symbol": "applySelectedAsset",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": false,
+    "span": {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 63,
+     "end_line": 70,
+     "start_byte": 2023,
+     "end_byte": 2262
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/select_asset.go",
+    "start_line": 60,
+    "end_line": 60,
+    "start_byte": 1999,
+    "end_byte": 1999
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.HandleSelectAsset",
+    "symbol": "HandleSelectAsset",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 46,
+     "end_line": 61,
+     "start_byte": 1275,
+     "end_byte": 2021
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.authorizeAccess",
+    "symbol": "authorizeAccess",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": false,
+    "span": {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 37,
+     "end_line": 42,
+     "start_byte": 888,
+     "end_byte": 1140
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/select_asset.go",
+    "start_line": 47,
+    "end_line": 47,
+    "start_byte": 1503,
+    "end_byte": 1503
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.ListAssets",
+    "symbol": "ListAssets",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/list_assets.go",
+     "start_line": 12,
+     "end_line": 20,
+     "start_byte": 293,
+     "end_byte": 638
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/inventory.(AssetRegistry).ListAssets",
+    "symbol": "AssetRegistry.ListAssets",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/inventory",
+    "recv_type": "AssetRegistry",
+    "exported": true,
+    "span": {
+     "file": "internal/inventory/registry.go",
+     "start_line": 28,
+     "end_line": 36,
+     "start_byte": 613,
+     "end_byte": 890
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/list_assets.go",
+    "start_line": 13,
+    "end_line": 13,
+    "start_byte": 476,
+    "end_byte": 476
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.ListAssets",
+    "symbol": "ListAssets",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/list_assets.go",
+     "start_line": 12,
+     "end_line": 20,
+     "start_byte": 293,
+     "end_byte": 638
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.RecordScanned",
+    "symbol": "RecordScanned",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/list_assets.go",
+     "start_line": 22,
+     "end_line": 26,
+     "start_byte": 640,
+     "end_byte": 757
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/list_assets.go",
+    "start_line": 18,
+    "end_line": 18,
+    "start_byte": 609,
+    "end_byte": 609
+   },
+   "static_call": true,
+   "description": "static function call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.RecordScanned",
+    "symbol": "RecordScanned",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": true,
+    "span": {
+     "file": "internal/tools/list_assets.go",
+     "start_line": 22,
+     "end_line": 26,
+     "start_byte": 640,
+     "end_byte": 757
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/inventory.(AssetState).Add",
+    "symbol": "AssetState.Add",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/inventory",
+    "recv_type": "AssetState",
+    "exported": true,
+    "span": {
+     "file": "internal/inventory/state.go",
+     "start_line": 20,
+     "end_line": 34,
+     "start_byte": 411,
+     "end_byte": 658
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/list_assets.go",
+    "start_line": 24,
+    "end_line": 24,
+    "start_byte": 739,
+    "end_byte": 739
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.authorizeAccess",
+    "symbol": "authorizeAccess",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": false,
+    "span": {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 37,
+     "end_line": 42,
+     "start_byte": 888,
+     "end_byte": 1140
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/permissions.(Enforcer).RequirePermission",
+    "symbol": "Enforcer.RequirePermission",
+    "kind": "method",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/permissions",
+    "recv_type": "Enforcer",
+    "exported": true,
+    "span": {
+     "file": "internal/permissions/enforcer.go",
+     "start_line": 19,
+     "end_line": 24,
+     "start_byte": 509,
+     "end_byte": 651
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/select_asset.go",
+    "start_line": 41,
+    "end_line": 41,
+    "start_byte": 1122,
+    "end_byte": 1122
+   },
+   "static_call": true,
+   "description": "static method call"
+  },
+  {
+   "caller": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.authorizeAccess",
+    "symbol": "authorizeAccess",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": false,
+    "span": {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 37,
+     "end_line": 42,
+     "start_byte": 888,
+     "end_byte": 1140
+    }
+   },
+   "callee": {
+    "name": "example.com/synthetic-inventory-audit/internal/tools.isAssetInScanResult",
+    "symbol": "isAssetInScanResult",
+    "kind": "func",
+    "pkg_path": "example.com/synthetic-inventory-audit/internal/tools",
+    "exported": false,
+    "span": {
+     "file": "internal/tools/select_asset.go",
+     "start_line": 20,
+     "end_line": 33,
+     "start_byte": 464,
+     "end_byte": 741
+    }
+   },
+   "call_site": {
+    "file": "internal/tools/select_asset.go",
+    "start_line": 38,
+    "end_line": 38,
+    "start_byte": 1009,
+    "end_byte": 1009
+   },
+   "static_call": true,
+   "description": "static function call"
+  }
+ ]
+}

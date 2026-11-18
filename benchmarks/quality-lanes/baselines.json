@@ -1,0 +1,63 @@
+{
+  "schema": "quality-lanes-baselines-v1",
+  "policy": "Strict byte-identical acceptance: any deviation from these values - including improvements - fails the lane. Improvements and acknowledged regressions are re-baselined by a reviewed PR that edits this file. Every measurement to date has been byte-reproducible across machines.",
+  "fixtures": {
+    "go-workflow-discovery-v1": {
+      "role": "tuning",
+      "sha256": {
+        "manifest.json": "945fa2aa1a61ce665dc3750cb36dfed63aa9e687c3bb4848ad09df47cea3b467",
+        "qrels.json": "0d89687ffd9aac8e6688e9c0931aeb27cca55b99d04f6379ecc5b9bba541c606",
+        "truth/truth.json": "8daa194e19664d95c906858e128997d0736e7d31c7404477a00f375b7c1e91f2"
+      },
+      "retrieval": {
+        "ndcg@10": 0.5887735493745122,
+        "mrr@10": 0.7333333333333333,
+        "recall@10": 0.6770833333333334,
+        "precision@10": 0.25
+      },
+      "graph": {
+        "edge_count": 43,
+        "verdicts": {"UNRESOLVED": 25, "CONFIRMED": 18},
+        "failure_modes": {},
+        "direction_flips": 0,
+        "compiler_truth_pairs": 18,
+        "compiler_pairs_present": 18,
+        "compiler_pairs_missed": [],
+        "resolved_pending_split": {"pending": 25, "resolved": 18},
+        "note": "18/18 confirmed (precision 100% on resolved edges, recall 100%); 25 pending edges are honest externals (builtins/stdlib) outside fixture truth"
+      }
+    },
+    "go-inventory-audit-v1": {
+      "role": "holdout",
+      "sha256": {
+        "manifest.json": "9ff474190cc1756c66f2e693f0596a94a195b03cc53c554383c5489c8f195d22",
+        "qrels.json": "793cc291d86a912300ce9109e0673f28507af3637e0d6c3f03a08387bf76706c",
+        "truth/truth.json": "f32935fa50aa4ce506b09289c5c904a94e4635d285cedc02e0be27910d01903a"
+      },
+      "retrieval": {
+        "ndcg@10": 0.6308114991329224,
+        "mrr@10": 0.78125,
+        "recall@10": 0.7833333333333333,
+        "precision@10": 0.3
+      },
+      "graph": {
+        "edge_count": 49,
+        "verdicts": {"UNRESOLVED": 33, "CONFIRMED": 16},
+        "failure_modes": {},
+        "direction_flips": 0,
+        "compiler_truth_pairs": 17,
+        "compiler_pairs_present": 16,
+        "compiler_pairs_missed": [
+          {
+            "caller": "HandleSelectAsset",
+            "callee": "CheckAccess",
+            "caller_file": "internal/tools/select_asset.go",
+            "callee_file": "internal/audit/review.go"
+          }
+        ],
+        "resolved_pending_split": {"pending": 33, "resolved": 16},
+        "note": "16/16 confirmed (precision 100% on resolved edges), recall 16/17; the single miss HandleSelectAsset -> CheckAccess is documented as expected-honest-pending (cross-package same-name audit.CheckAccess vs Enforcer.CheckAccess)"
+      }
+    }
+  }
+}
