@@ -11,6 +11,13 @@ Two lanes run on every PR whose diff touches their trigger paths (see
 | `retrieval-quality` | hybrid semantic-search retrieval metrics vs adjudicated qrels | `rust/crates/zg-engine/**`, `src/engine/**`, `src/index.ts`, `src/index-progress.ts`, `rust/Cargo.lock`, `rust/rust-toolchain.toml` |
 | `graph-quality` | native codegraph call-edge quality vs compiler truth | `rust/crates/zg-codegraph/**`, `rust/crates/zg-graph-projection/**`, `rust/Cargo.lock`, `rust/rust-toolchain.toml` |
 
+Beyond PR gating, the workflow also runs on **pushes to `main`** — this
+mechanizes the standing belt-and-suspenders rule of byte-identically
+confirming the final merged state, not just the proposed diff — and on
+**`workflow_dispatch`**, a manual lever for maintainers to re-verify any
+checkout on demand. Both are deliberate deviations from the original plan's
+"PR-triggered only" scope, kept because they cannot weaken the gate.
+
 ## Fixtures
 
 | Fixture | Role | Retrieval truth | Graph truth |
@@ -28,8 +35,12 @@ different files with different hashes (e.g. holdout query suite
 `360bb826…` vs compiler truth `f32935fa…`), and only `*.go` source files
 are copied into the work roots, so neither lane can clobber the other's
 input.
-`baselines.json` pins the sha256 of each truth-bearing file;
-`check_fixture_hashes.py` fails the lane if any of them changes.
+`baselines.json` pins the sha256 of **every file in this tree** — fixture
+sources, query suites, compiler truth, all scripts, READMEs, and the
+regeneration tool — except `baselines.json` itself (it holds the pins).
+`check_fixture_hashes.py` fails the lane if any pinned file changes, and
+also if a file appears without a pin; re-pinning happens only through
+`check_fixture_hashes.py --regenerate` as part of a reviewed change.
 
 `tools/go-graph-truth` is the Go tool (go/packages + SSA + RTA) that
 regenerates the compiler truth. It is committed for regeneration only — the
@@ -59,8 +70,12 @@ contract, a flake is a finding. Any deviation fails the lane:
   symbol) endpoints, and adjudicates every edge against the committed
   compiler truth (endpoint identity = file + manifest symbol; bare names
   resolved per-file by exact match, else a unique `Receiver.name` suffix).
-  Verdict counts, direction flips, recall, and the missed-pair list must all
-  match the baseline exactly.
+  Verdict counts, direction flips, recall, the missed-pair list, and the
+  **full verdict sets** must all match the baseline exactly: the comparator
+  pins the exact confirmed-pair set, the exact refuted-pair set, and the
+  exact pending-external list (source + unresolved target name), so a change
+  in the composition of any verdict class fails even when aggregate counts
+  are unchanged.
 
 **Improvements fail the lane too.** A better number is still a behavior
 change that was not reviewed against the qrels/truth. Improvements and

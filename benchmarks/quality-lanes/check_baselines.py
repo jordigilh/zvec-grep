@@ -31,6 +31,12 @@ GRAPH_KEYS = [
     "compiler_pairs_present",
     "compiler_pairs_missed",
     "resolved_pending_split",
+    # Full verdict-set equality: the exact confirmed / refuted pair sets and
+    # the exact pending-external list, so composition drift fails even when
+    # aggregate counts are unchanged.
+    "confirmed_pairs",
+    "refuted_pairs",
+    "pending_externals",
 ]
 
 

@@ -190,6 +190,19 @@ def adjudicate(edges: list[dict], truth: dict, manifest: dict) -> dict:
 
     res_split = Counter(("resolved" if r["resolved"] else "pending") for r in adjudication)
 
+    def pair_of(rec):
+        return [rec["source"]["key"], rec["target"]["key"]]
+
+    confirmed_pairs = sorted(
+        pair_of(r) for r in adjudication if r["verdict"] == "CONFIRMED")
+    refuted_pairs = sorted(
+        pair_of(r) for r in adjudication if r["verdict"] == "REFUTED")
+    # Pending externals: target is outside fixture truth; identity is the
+    # source (file, symbol) plus the raw unresolved target name.
+    pending_externals = sorted(
+        [r["source"]["key"], r["target"].get("raw_symbol")]
+        for r in adjudication if r["verdict"] == "UNRESOLVED")
+
     return {
         "schema": "graph-lane-adjudication-v1",
         "edge_count": len(adjudication),
@@ -202,6 +215,9 @@ def adjudicate(edges: list[dict], truth: dict, manifest: dict) -> dict:
             {"caller": a[1], "callee": b[1], "caller_file": a[0], "callee_file": b[0]}
             for a, b in missed],
         "resolved_pending_split": dict(res_split),
+        "confirmed_pairs": confirmed_pairs,
+        "refuted_pairs": refuted_pairs,
+        "pending_externals": pending_externals,
         "edges": adjudication,
     }
 
@@ -240,7 +256,9 @@ def main() -> None:
     output = args.output
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2) + "\n")
-    print(json.dumps({k: v for k, v in result.items() if k != "edges"}))
+    print(json.dumps({k: v for k, v in result.items()
+                      if k not in ("edges", "confirmed_pairs",
+                                   "refuted_pairs", "pending_externals")}))
 
 
 if __name__ == "__main__":
