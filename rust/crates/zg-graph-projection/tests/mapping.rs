@@ -1,12 +1,16 @@
 //! Mapping unit tests: upstream status/kind/provenance -> our edge contract.
 
 use zg_codegraph::CodeGraphEdge;
-
-use crate::{
+use zg_graph_projection::{
     UpstreamEdgeRow, map_edge_row, parse_candidates, qualified_name, symbol_kind,
 };
 
-fn row(status: &str, kind: &str, target: Option<&str>, provenance: Option<&str>) -> UpstreamEdgeRow {
+fn row(
+    status: &str,
+    kind: &str,
+    target: Option<&str>,
+    provenance: Option<&str>,
+) -> UpstreamEdgeRow {
     UpstreamEdgeRow {
         id: 1,
         source: "a".repeat(32),
@@ -24,12 +28,18 @@ fn row(status: &str, kind: &str, target: Option<&str>, provenance: Option<&str>)
 
 #[test]
 fn resolved_edge_carries_provenance_into_resolution() {
-    let edge = map_edge_row(&row("resolved", "calls", Some(&"b".repeat(32)), Some("file_scoped")))
-        .expect("resolved call maps");
+    let edge = map_edge_row(&row(
+        "resolved",
+        "calls",
+        Some(&"b".repeat(32)),
+        Some("file_scoped"),
+    ))
+    .expect("resolved call maps");
     assert_eq!(edge.kind, "calls");
     assert!(edge.resolved);
     assert_eq!(edge.resolution.as_deref(), Some("upstream:file_scoped"));
-    assert_eq!(edge.target.as_deref(), Some(&format!("upstream:{}", "b".repeat(32))));
+    let target = format!("upstream:{}", "b".repeat(32));
+    assert_eq!(edge.target.as_deref(), Some(target.as_str()));
     assert_eq!(edge.source, format!("upstream:{}", "a".repeat(32)));
     assert_eq!(edge.target_name.as_deref(), Some("ref"));
 }
@@ -53,10 +63,23 @@ fn failed_edge_is_unresolved_and_labelled_failed() {
 
 #[test]
 fn extends_maps_to_inherits_and_declares_is_dropped() {
-    let edge = map_edge_row(&row("resolved", "extends", Some(&"b".repeat(32)), Some("import_bound")))
-        .expect("extends maps");
+    let edge = map_edge_row(&row(
+        "resolved",
+        "extends",
+        Some(&"b".repeat(32)),
+        Some("import_bound"),
+    ))
+    .expect("extends maps");
     assert_eq!(edge.kind, "inherits");
-    assert!(map_edge_row(&row("resolved", "declares", Some(&"b".repeat(32)), Some("file_local"))).is_none());
+    assert!(
+        map_edge_row(&row(
+            "resolved",
+            "declares",
+            Some(&"b".repeat(32)),
+            Some("file_local")
+        ))
+        .is_none()
+    );
 }
 
 #[test]
@@ -104,8 +127,13 @@ fn non_go_scoped_functions_use_scope_separators() {
 
 #[test]
 fn edge_ranges_carry_line_and_column_with_zero_bytes() {
-    let edge = map_edge_row(&row("resolved", "calls", Some(&"b".repeat(32)), Some("file_local")))
-        .expect("maps");
+    let edge = map_edge_row(&row(
+        "resolved",
+        "calls",
+        Some(&"b".repeat(32)),
+        Some("file_local"),
+    ))
+    .expect("maps");
     let range = edge.range.expect("line and col present");
     assert_eq!((range.start_line, range.start_column), (7, 4));
     assert_eq!((range.start_byte, range.end_byte), (0, 0));
@@ -115,8 +143,13 @@ fn edge_ranges_carry_line_and_column_with_zero_bytes() {
 fn definite_possible_split_survives_the_mapping() {
     // The contract the #43 verdict depends on: resolved edges feed the definite
     // call graph, pending edges with candidates feed the possible graph.
-    let resolved = map_edge_row(&row("resolved", "calls", Some(&"b".repeat(32)), Some("workspace_unique")))
-        .expect("maps");
+    let resolved = map_edge_row(&row(
+        "resolved",
+        "calls",
+        Some(&"b".repeat(32)),
+        Some("workspace_unique"),
+    ))
+    .expect("maps");
     assert!(resolved.resolved);
     assert!(resolved.ambiguous_candidates.is_empty());
     let mut pending = map_edge_row(&row("pending", "calls", None, None)).expect("maps");
@@ -127,8 +160,13 @@ fn definite_possible_split_survives_the_mapping() {
 
 #[test]
 fn mapped_edges_match_codegraph_edge_shape() {
-    let edge = map_edge_row(&row("resolved", "calls", Some(&"b".repeat(32)), Some("file_local")))
-        .expect("maps");
+    let edge = map_edge_row(&row(
+        "resolved",
+        "calls",
+        Some(&"b".repeat(32)),
+        Some("file_local"),
+    ))
+    .expect("maps");
     let serialized = serde_json::to_string(&edge).expect("serializes");
     let round: CodeGraphEdge = serde_json::from_str(&serialized).expect("deserializes");
     assert_eq!(round, edge);

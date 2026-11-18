@@ -16,6 +16,7 @@ description = "Projects an upstream zvec-grep in-engine graph store into a codeg
 # fixture validations in this spike's report exercise exactly this pairing.
 zvec-rust.workspace = true
 rusqlite = { version = "0.37", features = ["bundled"] }
+hex = "0.4.3"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

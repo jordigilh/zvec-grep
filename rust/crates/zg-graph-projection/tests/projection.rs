@@ -6,9 +6,7 @@
 use std::fs;
 
 use rusqlite::Connection;
-use zvec_rust::{
-    Collection, CollectionOptions, CollectionSchema, DataType, Doc, FieldSchema,
-};
+use zvec_rust::{Collection, CollectionOptions, CollectionSchema, DataType, Doc, FieldSchema};
 
 use zg_codegraph::{CallGraphIndex, read_codegraph};
 use zg_graph_projection::{project_upstream_graph, project_upstream_index};
@@ -57,12 +55,11 @@ fn create_collection(dir: &std::path::Path, name: &str) -> Collection {
         ("payload", DataType::String),
         ("metadata", DataType::String),
         ("path", DataType::String),
+        ("relative_path", DataType::String),
     ] {
         let mut spec = FieldSchema::new(field, data_type, true, 0).expect("field schema");
-        spec.set_index_params(
-            &zvec_rust::IndexParams::invert(true, false).expect("index params"),
-        )
-        .expect("index params");
+        spec.set_index_params(&zvec_rust::IndexParams::invert(true, false).expect("index params"))
+            .expect("index params");
         schema.add_field(&spec).expect("add field");
     }
     let mut options = CollectionOptions::new().expect("options");
@@ -83,15 +80,15 @@ fn write_entities(store: &std::path::Path) {
     let docs: Vec<Doc> = [
         (
             "aaaa00000000000000000000000000aa",
-            r#"{"Code":{"symbol_type":"function","symbol_name":"run","language":"go"}}"#,
+            r#"{"kind":"code","symbol_type":"function","symbol_name":"run","language":"go"}"#,
         ),
         (
             "bbbb00000000000000000000000000bb",
-            r#"{"Code":{"symbol_type":"function","symbol_name":"help","scope":"Helper","language":"go"}}"#,
+            r#"{"kind":"code","symbol_type":"function","symbol_name":"help","scope":"Helper","language":"go"}"#,
         ),
         (
             "cccc00000000000000000000000000cc",
-            r#"{"Code":{"symbol_type":"class","symbol_name":"Helper","language":"go"}}"#,
+            r#"{"kind":"code","symbol_type":"class","symbol_name":"Helper","language":"go"}"#,
         ),
     ]
     .iter()
@@ -146,14 +143,23 @@ fn projects_synthetic_store_and_answers_queries() {
     assert_eq!(report.dangling_endpoints, 0);
 
     // Definite/possible split: one resolved call, one pending reference.
-    let radius = index.blast_radius("main.go::help", None).expect("blast radius");
+    let radius = index
+        .blast_radius("main.go::help", None)
+        .expect("blast radius");
     assert_eq!(radius.total_calls, 2);
     assert_eq!(radius.unresolved_calls, 1);
     let callers: Vec<String> = radius.callers_by_depth.concat();
-    assert!(callers.contains(&"main.go::run".to_owned()), "callers: {callers:?}");
+    assert!(
+        callers.contains(&"main.go::run".to_owned()),
+        "callers: {callers:?}"
+    );
 
     // Method mapping: scoped Go function became a method with a dotted name.
-    let help = index.node("main.go::help").expect("method node found").node.clone();
+    let help = index
+        .node("main.go::help")
+        .expect("method node found")
+        .node
+        .clone();
     assert_eq!(help.kind, "method");
     assert_eq!(help.qualified_name.as_deref(), Some("Helper.help"));
     assert_eq!(help.range.as_ref().map(|range| range.start_line), Some(2));
@@ -176,7 +182,13 @@ fn projects_synthetic_store_and_answers_queries() {
     let reloaded = read_codegraph(&path).expect("reload artifact");
     assert_eq!(reloaded, artifact);
     let reindex = CallGraphIndex::new(&reloaded);
-    assert_eq!(reindex.blast_radius("main.go::help", None).expect("radius").total_calls, 2);
+    assert_eq!(
+        reindex
+            .blast_radius("main.go::help", None)
+            .expect("radius")
+            .total_calls,
+        2
+    );
 }
 
 #[test]
@@ -191,8 +203,7 @@ fn projection_is_deterministic_across_runs() {
         write_entities(&store);
         write_graph(&store);
         let output = workspace.path().join("codegraph-v2.json.zst");
-        let (_, artifact, _) =
-            project_upstream_graph(&store, Some(&output)).expect("projection");
+        let (_, artifact, _) = project_upstream_graph(&store, Some(&output)).expect("projection");
         artifacts.push(artifact);
     }
     assert_eq!(artifacts[0], artifacts[1]);

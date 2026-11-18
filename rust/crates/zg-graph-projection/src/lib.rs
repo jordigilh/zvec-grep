@@ -14,7 +14,7 @@
 //! |---|---|
 //! | zvec entity id (32-hex, content-hashed) | node id `upstream:<entity_id>` |
 //! | file scope endpoint `f{file_id}` | node id `upstream:f{file_id}` (kind `file`) |
-//! | `CodeMetadata` symbol_name / scope / signature | node name / qualified_name / signature |
+//! | `CodeMetadata` `symbol_name` / `scope` / `signature` | node `name` / `qualified_name` / `signature` |
 //! | `SymbolType::Function` + scope | node kind `method` |
 //! | `SymbolType::Function` without scope | node kind `function` |
 //! | payload `source_range` | node range |
@@ -49,7 +49,8 @@ use zvec_rust::{Collection, CollectionOptions};
 
 use zg_codegraph::{
     CODEGRAPH_RELATION_GENERATION, CODEGRAPH_SCHEMA, CODEGRAPH_VERSION, CallGraphIndex,
-    CodeGraphArtifact, CodeGraphEdge, CodeGraphFile, CodeGraphNode, CodeGraphRange, write_codegraph_artifact,
+    CodeGraphArtifact, CodeGraphEdge, CodeGraphFile, CodeGraphNode, CodeGraphRange,
+    write_codegraph_artifact,
 };
 
 /// Prefix for every node id minted by the projection. Upstream entity ids are
@@ -154,7 +155,11 @@ struct UpstreamFile {
 #[must_use]
 pub fn locate_upstream_store(workspace_root: &Path) -> Option<PathBuf> {
     let store = workspace_root.join(".zvec-grep").join("index");
-    store.join("graph").join("graph.sqlite").is_file().then_some(store)
+    store
+        .join("graph")
+        .join("graph.sqlite")
+        .is_file()
+        .then_some(store)
 }
 
 /// Projects the upstream index store at `store` (the `<workspace>/.zvec-grep/
@@ -170,9 +175,10 @@ pub fn project_upstream_graph(
 ) -> ProjectionResult<(PathBuf, CodeGraphArtifact, ProjectionReport)> {
     let (artifact, report) = build_projection(store)?;
     let default_output = store.join("..").join(zg_codegraph::CODEGRAPH_FILE);
-    let output = output
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| normalize_store_output(&default_output));
+    let output = output.map_or_else(
+        || normalize_store_output(&default_output),
+        Path::to_path_buf,
+    );
     let (path, artifact) = write_codegraph_artifact(&output, artifact)?;
     Ok((path, artifact, report))
 }
@@ -216,7 +222,6 @@ fn build_projection(store: &Path) -> ProjectionResult<(CodeGraphArtifact, Projec
     let mut node_files: BTreeMap<String, u32> = BTreeMap::new();
 
     let mut nodes: Vec<CodeGraphNode> = Vec::new();
-    let mut entity_kinds: BTreeMap<String, String> = BTreeMap::new();
     for entity in &entities {
         let Some(metadata) = entity.metadata.as_ref().and_then(code_metadata) else {
             continue;
@@ -227,34 +232,111 @@ fn build_projection(store: &Path) -> ProjectionResult<(CodeGraphArtifact, Projec
         let Some(file) = by_file_id.get(&entity.file_id) else {
             continue;
         };
-        let kind = symbol_kind(&metadata.symbol_type, metadata.scope.as_deref(), &metadata.language);
-        let qualified_name = qualified_name(
+        let kind = symbol_kind(
+            &metadata.symbol_type,
             metadata.scope.as_deref(),
-            &symbol_name,
             &metadata.language,
         );
+        let qualified_name =
+            qualified_name(metadata.scope.as_deref(), &symbol_name, &metadata.language);
         nodes.push(CodeGraphNode {
             id: format!("{UPSTREAM_NODE_PREFIX}{}", entity.entity_id),
-            kind: kind.clone(),
+            kind,
             path: Some(file.path.clone()),
             name: symbol_name,
             qualified_name,
             range: entity.source_range.clone(),
             signature: metadata.signature,
         });
-        entity_kinds.insert(entity.entity_id.clone(), kind);
         node_files.insert(entity.entity_id.clone(), entity.file_id);
-        file_nodes.entry(entity.file_id).or_insert_with(|| file_node(file));
+        file_nodes
+            .entry(entity.file_id)
+            .or_insert_with(|| file_node(file));
     }
     report.symbol_nodes = nodes.len();
 
-    let mut edges: Vec<CodeGraphEdge> = Vec::new();
-    let mut referenced_files: BTreeSet<u32> = BTreeSet::new();
     let known_entities: std::collections::BTreeSet<&str> = entities
         .iter()
         .map(|entity| entity.entity_id.as_str())
         .collect();
-    for row in &rows {
+    let (edges, referenced_files) = build_edges(&rows, &known_entities, &mut report);
+
+    for file_id in referenced_files {
+        if let Some(file) = by_file_id.get(&file_id) {
+            file_nodes.entry(file_id).or_insert_with(|| file_node(file));
+        }
+    }
+    let mut file_nodes: Vec<CodeGraphNode> = file_nodes.into_values().collect();
+    file_nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    report.file_nodes = file_nodes.len();
+    nodes.extend(file_nodes);
+    nodes.sort_by(|left, right| left.id.cmp(&right.id));
+
+    let artifact_files = artifact_files(&files, &node_files);
+    report.files = artifact_files.len();
+
+    let mut edges = edges;
+    edges.sort_by(|left, right| {
+        left.kind
+            .cmp(&right.kind)
+            .then_with(|| left.source.cmp(&right.source))
+            .then_with(|| left.target.cmp(&right.target))
+            .then_with(|| {
+                left.range
+                    .as_ref()
+                    .map_or(0, |range| range.start_line)
+                    .cmp(&right.range.as_ref().map_or(0, |range| range.start_line))
+            })
+    });
+
+    let artifact = CodeGraphArtifact {
+        schema: CODEGRAPH_SCHEMA.to_owned(),
+        version: CODEGRAPH_VERSION,
+        manifest_key: projection_manifest_key(&artifact_files, &edges),
+        relation_generation: CODEGRAPH_RELATION_GENERATION,
+        go_callfacts_context_sha256: None,
+        rust_callfacts_context_sha256: None,
+        typescript_callfacts_context_sha256: None,
+        python_callfacts_context_sha256: None,
+        files: artifact_files,
+        nodes,
+        edges,
+    };
+    Ok((artifact, report))
+}
+
+/// The artifact file list: every store file that owns at least one symbol
+/// node, carrying the store's content hash and size.
+fn artifact_files(
+    files: &[UpstreamFile],
+    node_files: &BTreeMap<String, u32>,
+) -> Vec<CodeGraphFile> {
+    let symbol_file_ids: std::collections::BTreeSet<u32> = node_files.values().copied().collect();
+    let mut artifact_files: Vec<CodeGraphFile> = files
+        .iter()
+        .filter(|file| symbol_file_ids.contains(&file.file_id))
+        .map(|file| CodeGraphFile {
+            path: file.path.clone(),
+            language: language_for_path(&file.path),
+            sha256: file.content_hash.clone().unwrap_or_default(),
+            bytes: usize::try_from(file.size_bytes.unwrap_or_default()).unwrap_or_default(),
+            package: None,
+        })
+        .collect();
+    artifact_files.sort_by(|left, right| left.path.cmp(&right.path));
+    artifact_files
+}
+
+/// Maps the edge rows, counting statuses, dropped `declares` evidence,
+/// dangling endpoints and file-scope endpoints referenced by import edges.
+fn build_edges(
+    rows: &[UpstreamEdgeRow],
+    known_entities: &std::collections::BTreeSet<&str>,
+    report: &mut ProjectionReport,
+) -> (Vec<CodeGraphEdge>, BTreeSet<u32>) {
+    let mut edges: Vec<CodeGraphEdge> = Vec::new();
+    let mut referenced_files: BTreeSet<u32> = BTreeSet::new();
+    for row in rows {
         if row.kind == "declares" {
             report.dropped_declares += 1;
             continue;
@@ -293,56 +375,7 @@ fn build_projection(store: &Path) -> ProjectionResult<(CodeGraphArtifact, Projec
         }
         edges.push(edge);
     }
-
-    for file_id in referenced_files {
-        if let Some(file) = by_file_id.get(&file_id) {
-            file_nodes.entry(file_id).or_insert_with(|| file_node(file));
-        }
-    }
-    let mut file_nodes: Vec<CodeGraphNode> = file_nodes.into_values().collect();
-    file_nodes.sort_by(|left, right| left.id.cmp(&right.id));
-    report.file_nodes = file_nodes.len();
-    nodes.extend(file_nodes);
-    nodes.sort_by(|left, right| left.id.cmp(&right.id));
-
-    let symbol_file_ids: std::collections::BTreeSet<u32> =
-        node_files.values().copied().collect();
-    let mut artifact_files: Vec<CodeGraphFile> = files
-        .iter()
-        .filter(|file| symbol_file_ids.contains(&file.file_id))
-        .map(|file| CodeGraphFile {
-            path: file.path.clone(),
-            language: language_for_path(&file.path),
-            sha256: file.content_hash.clone().unwrap_or_default(),
-            bytes: usize::try_from(file.size_bytes.unwrap_or_default()).unwrap_or_default(),
-            package: None,
-        })
-        .collect();
-    artifact_files.sort_by(|left, right| left.path.cmp(&right.path));
-    report.files = artifact_files.len();
-
-    edges.sort_by(|left, right| {
-        left.kind
-            .cmp(&right.kind)
-            .then_with(|| left.source.cmp(&right.source))
-            .then_with(|| left.target.cmp(&right.target))
-            .then_with(|| left.range.as_ref().map_or(0, |range| range.start_line).cmp(&right.range.as_ref().map_or(0, |range| range.start_line)))
-    });
-
-    let artifact = CodeGraphArtifact {
-        schema: CODEGRAPH_SCHEMA.to_owned(),
-        version: CODEGRAPH_VERSION,
-        manifest_key: projection_manifest_key(&artifact_files, &edges),
-        relation_generation: CODEGRAPH_RELATION_GENERATION,
-        go_callfacts_context_sha256: None,
-        rust_callfacts_context_sha256: None,
-        typescript_callfacts_context_sha256: None,
-        python_callfacts_context_sha256: None,
-        files: artifact_files,
-        nodes,
-        edges,
-    };
-    Ok((artifact, report))
+    (edges, referenced_files)
 }
 
 /// The symbol facts the projection reads from upstream's `CodeMetadata` JSON.
@@ -390,13 +423,18 @@ fn code_metadata(metadata: &serde_json::Value) -> Option<SymbolFacts> {
 /// nodes are callable in [`CallGraphIndex`]; upstream has no method symbol
 /// type, so a scoped function (a Go receiver method, a class member) becomes
 /// our `method` and a bare function stays `function`.
-fn symbol_kind(symbol_type: &Option<String>, scope: Option<&str>, language: &Option<String>) -> String {
+#[must_use]
+pub fn symbol_kind(
+    symbol_type: &Option<String>,
+    scope: Option<&str>,
+    language: &Option<String>,
+) -> String {
     let is_method = scope.is_some()
-        && language.as_deref().map_or(true, |language| {
+        && language
+            .as_deref()
             // Java/PHP/Python/JavaScript members also arrive as scoped
             // functions; Go methods carry the receiver type as scope.
-            !matches!(language, "markdown")
-        });
+            .is_none_or(|language| !matches!(language, "markdown"));
     match symbol_type.as_deref() {
         Some("function") if is_method => "method".to_owned(),
         Some("function") => "function".to_owned(),
@@ -405,7 +443,6 @@ fn symbol_kind(symbol_type: &Option<String>, scope: Option<&str>, language: &Opt
         Some("enum") => "enum".to_owned(),
         Some("module") => "module".to_owned(),
         Some("alias") => "alias".to_owned(),
-        Some("value") => "value".to_owned(),
         _ => "value".to_owned(),
     }
 }
@@ -413,7 +450,12 @@ fn symbol_kind(symbol_type: &Option<String>, scope: Option<&str>, language: &Opt
 /// Qualified name from upstream's scope breadcrumb. Upstream renders scopes
 /// `Type::member` for every language; Go truth identity (and our native
 /// sidecar) spells receiver methods `Receiver.Method`, so Go gets the dot.
-fn qualified_name(scope: Option<&str>, name: &str, language: &Option<String>) -> Option<String> {
+#[must_use]
+pub fn qualified_name(
+    scope: Option<&str>,
+    name: &str,
+    language: &Option<String>,
+) -> Option<String> {
     let scope = scope?;
     let separator = if language.as_deref() == Some("go") {
         "."
@@ -440,7 +482,10 @@ pub fn map_edge_row(row: &UpstreamEdgeRow) -> Option<CodeGraphEdge> {
     let (resolved, resolution) = match row.status.as_str() {
         "resolved" => (
             true,
-            format!("upstream:{}", row.provenance.as_deref().unwrap_or("resolved")),
+            format!(
+                "upstream:{}",
+                row.provenance.as_deref().unwrap_or("resolved")
+            ),
         ),
         "pending" => (false, "upstream:pending".to_owned()),
         "failed" => (false, "upstream:failed".to_owned()),
@@ -475,7 +520,8 @@ fn edge_range(line: Option<i64>, col: Option<i64>) -> Option<CodeGraphRange> {
 }
 
 /// Ambiguity candidates are stored as a JSON array of upstream endpoint ids.
-fn parse_candidates(candidates: &str) -> Vec<String> {
+#[must_use]
+pub fn parse_candidates(candidates: &str) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(candidates).unwrap_or_default()
 }
 
@@ -550,28 +596,18 @@ fn projection_manifest_key(files: &[CodeGraphFile], edges: &[CodeGraphEdge]) -> 
         hasher.update(edge.resolution.as_deref().unwrap_or_default().as_bytes());
         hasher.update([0]);
     }
-    format!("upstream-projection:{}", hex(&hasher.finalize()))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut text = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        text.push_str(&format!("{byte:02x}"));
-    }
-    text
+    format!("upstream-projection:{}", hex::encode(hasher.finalize()))
 }
 
 // --- store readers ---------------------------------------------------------
 
 fn read_edge_rows(graph_path: &Path) -> ProjectionResult<Vec<UpstreamEdgeRow>> {
-    let connection = Connection::open_with_flags(
-        graph_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .map_err(|source| ProjectionError::GraphDatabase {
-        path: graph_path.to_path_buf(),
-        source,
-    })?;
+    let connection =
+        Connection::open_with_flags(graph_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|source| ProjectionError::GraphDatabase {
+                path: graph_path.to_path_buf(),
+                source,
+            })?;
     let mut statement = connection
         .prepare(
             "SELECT id, source, target, kind, status, reference_name, receiver_name,
@@ -619,7 +655,9 @@ fn open_collection_read_only(path: &Path, what: &'static str) -> ProjectionResul
     zvec_init()?;
     let text = path
         .to_str()
-        .ok_or_else(|| ProjectionError::Zvec(format!("{what} path is not UTF-8: {}", path.display())))?
+        .ok_or_else(|| {
+            ProjectionError::Zvec(format!("{what} path is not UTF-8: {}", path.display()))
+        })?
         .to_owned();
     let mut options =
         CollectionOptions::new().map_err(|error| ProjectionError::Zvec(error.to_string()))?;
@@ -685,7 +723,9 @@ fn read_entities_collection(path: &Path) -> ProjectionResult<Vec<UpstreamEntity>
             serde_json::from_str::<serde_json::Value>(&json)
                 .map(Some)
                 .map_err(|error| {
-                    ProjectionError::Zvec(format!("entity {entity_id} has invalid metadata: {error}"))
+                    ProjectionError::Zvec(format!(
+                        "entity {entity_id} has invalid metadata: {error}"
+                    ))
                 })?
         } else {
             None
@@ -789,7 +829,11 @@ fn read_files_collection(path: &Path) -> ProjectionResult<Vec<UpstreamFile>> {
             content_hash,
         });
     }
-    files.sort_by(|left, right| left.path.cmp(&right.path).then(left.file_id.cmp(&right.file_id)));
+    files.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.file_id.cmp(&right.file_id))
+    });
     Ok(files)
 }
 

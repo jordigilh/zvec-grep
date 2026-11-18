@@ -4313,6 +4313,7 @@ name = "zg-graph-projection"
 version = "0.0.1"
 dependencies = [
  "clap",
+ "hex",
  "rusqlite",
  "serde",
  "serde_json",
