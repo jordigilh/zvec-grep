@@ -1,0 +1,38 @@
+[package]
+name = "zg-graph-projection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Projects an upstream zvec-grep in-engine graph store into a codegraph-v2 sidecar artifact."
+
+[dependencies]
+# The projection reads collections written by upstream's indexer (origin/main
+# @7504720, zvec-rust 0.8.1). Cargo's `links` rule allows only one zvec-rust
+# native copy per build graph, so the reader uses the workspace's 0.7.2 line
+# and relies on the collection format being stable across that line; the
+# fixture validations in this spike's report exercise exactly this pairing.
+zvec-rust.workspace = true
+rusqlite = { version = "0.37", features = ["bundled"] }
+hex = "0.4.3"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+zg-codegraph = { path = "../zg-codegraph" }
+
+[[bin]]
+name = "zg-graph-project"
+path = "src/main.rs"
+
+[build-dependencies]
+zvec-rust-build.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
