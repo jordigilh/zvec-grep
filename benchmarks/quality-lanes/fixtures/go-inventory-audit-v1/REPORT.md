@@ -1,4 +1,13 @@
-# Go Holdout Fixture: `go-inventory-audit-v1` — DRAFT (not locked)
+# Go Holdout Fixture: `go-inventory-audit-v1` — LOCKED (user lock, 2026-11-16)
+
+Vendored copy for the zvec-grep quality lanes; the original report's title
+read "DRAFT (not locked)" and was stale — the fixture was user-locked on
+2026-11-16 after adversarial review (fixes applied and re-verified). The
+body below is unchanged from the original build report; see the lane README
+(`benchmarks/quality-lanes/README.md`) for the baseline reconciliation note
+(the REPORT baseline below predates the promotion/fusion retune and used a
+different harness; the Step 0 numbers in `baselines.json` are the lane
+reference).
 
 Built 2026-11-16 to validate generalization of the combined rerank arm
 (`0.80*hybrid + 0.10*name_overlap + 0.05*token_sketch + 0.05*graph_signal`,

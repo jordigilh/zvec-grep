@@ -219,7 +219,7 @@ def main() -> None:
     root = args.work_root.resolve()
 
     manifest = json.loads((fixture / "manifest.json").read_text())
-    truth = json.loads((fixture / "truth" / "truth.json").read_text())
+    truth = json.loads((fixture / "graph-truth.json").read_text())
 
     copy_fixture_sources(fixture, manifest, root)
 

@@ -10,6 +10,8 @@ on:
       - "rust/Cargo.lock"
       - "rust/rust-toolchain.toml"
       - "src/engine/**"
+      - "src/index.ts"
+      - "src/index-progress.ts"
       - "benchmarks/quality-lanes/**"
       - ".github/workflows/quality-lanes.yml"
   pull_request:
@@ -21,6 +23,8 @@ on:
       - "rust/Cargo.lock"
       - "rust/rust-toolchain.toml"
       - "src/engine/**"
+      - "src/index.ts"
+      - "src/index-progress.ts"
       - "benchmarks/quality-lanes/**"
       - ".github/workflows/quality-lanes.yml"
   workflow_dispatch:
@@ -71,7 +75,7 @@ jobs:
           while IFS= read -r path; do
             [ -n "$path" ] || continue
             case "$path" in
-              rust/crates/zg-engine/*|src/engine/*|benchmarks/quality-lanes/*|.github/workflows/quality-lanes.yml|rust/Cargo.lock|rust/rust-toolchain.toml)
+              rust/crates/zg-engine/*|src/engine/*|src/index.ts|src/index-progress.ts|benchmarks/quality-lanes/*|.github/workflows/quality-lanes.yml|rust/Cargo.lock|rust/rust-toolchain.toml)
                 retrieval=true ;;
             esac
             case "$path" in
@@ -121,23 +125,29 @@ jobs:
           key: quality-lanes-potion-code-16m-v2-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/engine/models/catalog.ts') }}
       - name: Verify fixture hashes against baselines.json
         run: python3 benchmarks/quality-lanes/check_fixture_hashes.py
-      - name: Run the retrieval lane over both fixtures
+      - name: Run the retrieval lane over both fixtures (2 reps each)
         run: |
           set -euo pipefail
           lanes=benchmarks/quality-lanes
           zg=rust/target/release/zg
           for fixture in go-workflow-discovery-v1 go-inventory-audit-v1; do
-            python3 "$lanes/run_qeval.py" \
-              --fixture "$lanes/fixtures/$fixture" \
-              --binary "$zg" \
-              --work-root "$RUNNER_TEMP/work-$fixture" \
-              --output "$RUNNER_TEMP/results-$fixture" \
-              --model-cache "$RUNNER_TEMP/model-cache"
-            python3 "$lanes/check_baselines.py" \
-              --baselines "$lanes/baselines.json" \
-              --lane retrieval \
-              --fixture "$fixture" \
-              --results "$RUNNER_TEMP/results-$fixture/metrics-k10.json"
+            for rep in 1 2; do
+              python3 "$lanes/run_qeval.py" \
+                --fixture "$lanes/fixtures/$fixture" \
+                --binary "$zg" \
+                --work-root "$RUNNER_TEMP/work-$fixture-rep$rep" \
+                --output "$RUNNER_TEMP/results-$fixture-rep$rep" \
+                --model-cache "$RUNNER_TEMP/model-cache"
+              python3 "$lanes/check_baselines.py" \
+                --baselines "$lanes/baselines.json" \
+                --lane retrieval \
+                --fixture "$fixture" \
+                --results "$RUNNER_TEMP/results-$fixture-rep$rep/metrics-k10.json"
+            done
+            # The two reps must also be byte-identical to each other.
+            cmp "$RUNNER_TEMP/results-$fixture-rep1/normalized-runs.json" \
+               "$RUNNER_TEMP/results-$fixture-rep2/normalized-runs.json"
+            echo "OK: $fixture retrieval reps are byte-identical"
           done
 
   graph-quality:
