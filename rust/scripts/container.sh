@@ -8,7 +8,9 @@ image="${ZVEC_GREP_IMAGE:-zvec-grep-fork:codegraph-sidecar}"
 usage() {
     printf '%s\n' \
         "Usage:" \
-        "  $0 build" \
+        "  $0 build [TAG]" \
+        "      Builds the image. TAG optionally names the resulting image tag" \
+        "      (default: \${ZVEC_GREP_IMAGE:-zvec-grep-fork:codegraph-sidecar})." \
         "  $0 graph SOURCE_ROOT [ARTIFACT_DIR]" \
         "      [--base BASE_ARTIFACT [--changed RELATIVE_GO_PATH]... [--deleted RELATIVE_GO_PATH]...]" \
         "  $0 run SOURCE_ROOT <zg arguments...>"
@@ -17,6 +19,9 @@ usage() {
 command="${1:-}"
 case "${command}" in
     build)
+        if [[ -n "${2:-}" ]]; then
+            image="${2}"
+        fi
         docker build --file "${rust_dir}/Dockerfile" --tag "${image}" "${rust_dir}"
         ;;
     graph)
