@@ -166,7 +166,9 @@ fn check_error(code: zvec_error_code_t) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use zvec_rust::{Collection, CollectionSchema, DataType, Doc, IndexParams, MetricType};
+    use zvec_rust::{
+        Collection, CollectionSchema, DataType, Doc, ErrorCode, IndexParams, MetricType,
+    };
 
     use super::{add_embedding, decode_embedding, embedding_query, f16};
 
@@ -240,5 +242,55 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(keys.first().map(String::as_str), Some("near"));
         assert!(keys.contains(&"mid".to_owned()));
+    }
+
+    #[test]
+    fn decoding_an_absent_or_null_field_returns_none() {
+        let mut doc = Doc::new().expect("document");
+        assert!(
+            decode_embedding(&doc, "embedding")
+                .expect("absent field")
+                .is_none(),
+            "a document without the field has no vector"
+        );
+        doc.set_field_null("embedding").expect("null field");
+        assert!(
+            decode_embedding(&doc, "embedding")
+                .expect("null field")
+                .is_none(),
+            "an explicit null is not a stored vector"
+        );
+    }
+
+    #[test]
+    fn invalid_names_and_queries_are_rejected_as_invalid_argument() {
+        let mut doc = Doc::new().expect("document");
+        let error = add_embedding(&mut doc, "bad\0name", &[1.0, 2.0]).expect_err("null byte");
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert!(error.message.contains("null byte"), "{error:?}");
+
+        add_embedding(&mut doc, "embedding", &[1.0, 2.0]).expect("valid field");
+
+        let error = match embedding_query("embedding", &[], 3) {
+            Ok(_) => panic!("empty query vector must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert!(error.message.contains("empty"), "{error:?}");
+
+        let error = match embedding_query("bad\0name", &[1.0], 3) {
+            Ok(_) => panic!("a null byte in the field name must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn reading_a_non_fp16_field_surfaces_the_zvec_error() {
+        let mut doc = Doc::new().expect("document");
+        doc.add_vector_f32("embedding", &[0.1, 0.2, 0.3, 0.4])
+            .expect("fp32 field");
+        let error = decode_embedding(&doc, "embedding").expect_err("fp32 payload is not binary16");
+        assert!(!error.message.is_empty(), "zvec reports a reason");
     }
 }
