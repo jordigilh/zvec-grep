@@ -285,7 +285,7 @@ mod tests {
         InfoResult {
             root: "/workspace".into(),
             indexed: true,
-            compatibility: IndexCompatibility::Compatible { version: 2 },
+            compatibility: IndexCompatibility::Compatible { version: 3 },
             index_policy: WorkspaceIndexPolicy::Enabled,
             home: "/workspace/.zvec-grep".into(),
             index_path: "/workspace/.zvec-grep/storage".into(),
@@ -346,9 +346,9 @@ mod tests {
     fn incompatibility_takes_precedence_over_policy_and_cached_stats() {
         let mut info = indexed_info();
         info.compatibility = IndexCompatibility::RebuildRequired {
-            actual_version: Some(1),
-            expected_version: 2,
-            reason: "unsupported index version 1; expected 2".into(),
+            actual_version: Some(2),
+            expected_version: 3,
+            reason: "unsupported index version 2; expected 3".into(),
         };
         assert_eq!(info.index_status(), IndexStatus::RebuildRequired);
         info.indexed = false;
@@ -362,7 +362,7 @@ mod tests {
         assert!(error.message().contains("zg --index --rebuild"));
         assert!(IndexCompatibility::Unbuilt.ensure_compatible().is_ok());
         assert!(
-            IndexCompatibility::Compatible { version: 2 }
+            IndexCompatibility::Compatible { version: 3 }
                 .ensure_compatible()
                 .is_ok()
         );
@@ -372,13 +372,13 @@ mod tests {
     fn compatibility_serialization_preserves_missing_version_and_rebuild_reason() {
         let compatibility = IndexCompatibility::RebuildRequired {
             actual_version: None,
-            expected_version: 2,
+            expected_version: 3,
             reason: "index version is missing".into(),
         };
         let value = serde_json::to_value(&compatibility).expect("compatibility");
         assert_eq!(value["status"], "rebuild_required");
         assert!(value["actual_version"].is_null());
-        assert_eq!(value["expected_version"], 2);
+        assert_eq!(value["expected_version"], 3);
         assert_eq!(
             serde_json::from_value::<IndexCompatibility>(value).expect("round trip"),
             compatibility

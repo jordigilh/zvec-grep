@@ -4,7 +4,9 @@ mod support;
 use std::{fs, net::SocketAddr, path::Path, sync::atomic::Ordering};
 
 use serde_json::{Value, json};
-use support::{EmbeddingServer, index_options, info_options, native_file_records};
+use support::{
+    EmbeddingServer, configure_remote_model, index_options, info_options, native_file_records,
+};
 use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 use zg_engine::{
@@ -28,6 +30,9 @@ use zg_engine::{
 use zg_host_native::TaskControl;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+/// Current storage format: FP16 embeddings since version 3.
+const EXPECTED_INDEX_VERSION: u32 = 3;
 
 fn explicit_options(root: &Path, address: SocketAddr) -> IndexOptions {
     IndexOptions {
@@ -81,7 +86,7 @@ async fn assert_incompatible_operations(
             panic!("expected rebuild-required compatibility");
         };
         assert_eq!(actual, actual_version);
-        assert_eq!(expected_version, 2);
+        assert_eq!(expected_version, EXPECTED_INDEX_VERSION);
         assert!(!reason.is_empty());
         assert_manifest_unchanged(root, manifest)?;
     }
@@ -125,12 +130,14 @@ async fn assert_current_index(engine: &ZvecGrep, root: &Path) -> TestResult<Valu
     assert!(info.indexed);
     assert_eq!(
         info.compatibility,
-        IndexCompatibility::Compatible { version: 2 }
+        IndexCompatibility::Compatible {
+            version: EXPECTED_INDEX_VERSION
+        }
     );
     assert_eq!(info.index_status(), IndexStatus::Ready);
     let manifest: Value =
         serde_json::from_slice(&fs::read(root.join(".zvec-grep/manifest.json"))?)?;
-    assert_eq!(manifest["indexVersion"], 2);
+    assert_eq!(manifest["indexVersion"], EXPECTED_INDEX_VERSION);
     assert!(manifest.get("manifestVersion").is_none());
     assert!(manifest["storageGeneration"].as_str().is_some());
     Ok(manifest)
@@ -149,8 +156,10 @@ async fn incompatible_versions_require_explicit_rebuild_across_public_operations
     for version in [
         Some(json!(0)),
         Some(json!(1)),
-        Some(json!(3)),
-        Some(json!(5)),
+        // Version 2 is the released FP32 embedding format: the case this fork
+        // must convert into a clean rebuild prompt rather than a storage failure.
+        Some(json!(2)),
+        Some(json!(EXPECTED_INDEX_VERSION + 1)),
         None,
         Some(Value::Null),
     ] {
@@ -310,6 +319,114 @@ async fn rebuilding_node_index_preserves_old_data_until_successful_publication()
     }
     assert_eq!(fs::read(home.join("authorization.json"))?, b"[]\n");
     assert!(!home.join("build.json").exists());
+    engine.drop_index(info_options(root)).await?;
+    engine.close();
+    Ok(())
+}
+
+fn vector_context_options(root: &Path, query: &str) -> ContextOptions {
+    ContextOptions {
+        root: Some(root.to_path_buf()),
+        routes: vec![ContextRoute {
+            mode: ContextRouteMode::Vector,
+            query: query.into(),
+        }],
+        auto_update: false,
+        allow_remote: true,
+        ..ContextOptions::default()
+    }
+}
+
+/// Version 2 is the pre-FP16 format: its collections store FP32 vectors.
+/// `zg-zvec-fp16`'s `fp32_storage_rejects_fp16_queries` proves that reading
+/// such a collection through the FP16 schema fails inside zvec. This test
+/// covers the manifest gate that answers first, so the user sees a rebuild
+/// prompt instead of that storage error.
+///
+/// Rewriting only `indexVersion` is enough: the gate rejects the manifest
+/// before any collection is opened, so the payload encoding never matters.
+#[tokio::test]
+async fn legacy_v2_index_prompts_for_rebuild_before_storage_is_opened() -> TestResult {
+    let temporary = tempdir()?;
+    let root = temporary.path();
+    let server = EmbeddingServer::start()?;
+    // Seed the embedding credentials in the manifest: the vector route reads
+    // them from the workspace, not from IndexOptions.
+    configure_remote_model(root, server.address)?;
+    let options = index_options(root);
+    fs::write(root.join("note.txt"), "Orchard documentation.\n")?;
+    let engine = ZvecGrep::new();
+    engine.index(options.clone()).await?;
+
+    // Rewrite only the format version. The collections stay byte-identical;
+    // what a pre-FP16 index adds is FP32 payloads, which the gate never reads.
+    let manifest_path = root.join(".zvec-grep/manifest.json");
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path)?)?;
+    manifest["indexVersion"] = json!(2);
+    let legacy = serde_json::to_vec(&manifest)?;
+    fs::write(&manifest_path, &legacy)?;
+    let generation = manifest["storageGeneration"]
+        .as_str()
+        .expect("current generation")
+        .to_owned();
+
+    let info = engine.info(info_options(root)).await?;
+    assert_eq!(info.index_status(), IndexStatus::RebuildRequired);
+    assert!(info.status.is_none(), "legacy storage is not scanned");
+    let IndexCompatibility::RebuildRequired {
+        actual_version,
+        expected_version,
+        reason,
+    } = info.compatibility
+    else {
+        panic!("expected rebuild-required compatibility");
+    };
+    assert_eq!(actual_version, Some(2));
+    assert_eq!(expected_version, EXPECTED_INDEX_VERSION);
+    assert_eq!(reason, "unsupported index version 2; expected 3");
+
+    // The vector route is the one that opens the embedding collection, so it is
+    // the operation that would surface a dimension mismatch without the gate.
+    let error = engine
+        .context(vector_context_options(root, "orchard documentation"))
+        .await
+        .expect_err("a legacy index must not be queried in place");
+    assert_rebuild_error(&error);
+    assert!(
+        error.message().contains("unsupported index version 2"),
+        "{error}"
+    );
+    assert!(
+        !error.message().contains("dimension mismatch"),
+        "the version gate must answer before zvec sees the old collection: {error}"
+    );
+    assert_manifest_unchanged(root, &legacy)?;
+
+    let rebuilt = engine
+        .index(IndexOptions {
+            rebuild: true,
+            ..options.clone()
+        })
+        .await?;
+    assert_eq!((rebuilt.files_added, rebuilt.files_failed), (1, 0));
+    assert_current_index(&engine, root).await?;
+    assert!(
+        !root
+            .join(".zvec-grep/generations")
+            .join(&generation)
+            .exists(),
+        "the one-time rebuild replaces the legacy generation"
+    );
+
+    let result = engine
+        .context(vector_context_options(root, "orchard documentation"))
+        .await?;
+    assert_eq!(
+        result.items.len(),
+        1,
+        "the rebuilt FP16 index answers the same vector query"
+    );
+
     engine.drop_index(info_options(root)).await?;
     engine.close();
     Ok(())
