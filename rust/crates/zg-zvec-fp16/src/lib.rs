@@ -86,10 +86,10 @@ pub fn embedding_query(field: &str, vector: &[f32], topk: i32) -> Result<SearchQ
 /// Returns an error when `name` contains a null byte, the stored byte length
 /// is not a multiple of two, or zvec cannot read the field.
 pub fn decode_embedding(doc: &Doc, name: &str) -> Result<Option<Vec<f32>>> {
+    let c_name = to_cstring(name)?;
     if !doc.has_field(name) || doc.is_field_null(name) {
         return Ok(None);
     }
-    let c_name = to_cstring(name)?;
     let mut value_ptr: *const c_void = std::ptr::null();
     let mut value_size = 0usize;
     check_error(unsafe {
@@ -173,7 +173,9 @@ mod tests {
     use super::{add_embedding, decode_embedding, embedding_query, f16};
 
     fn initialize() {
-        zvec_rust::initialize(None).expect("initialize zvec");
+        // zvec initializes once per process; tests share that native state.
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| zvec_rust::initialize(None).expect("initialize zvec"));
     }
 
     #[test]
@@ -270,19 +272,55 @@ mod tests {
         assert!(error.message.contains("null byte"), "{error:?}");
 
         add_embedding(&mut doc, "embedding", &[1.0, 2.0]).expect("valid field");
+        let Err(error) = decode_embedding(&doc, "bad\0name") else {
+            panic!("a null byte in the field name must be rejected");
+        };
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
 
-        let error = match embedding_query("embedding", &[], 3) {
-            Ok(_) => panic!("empty query vector must be rejected"),
-            Err(error) => error,
+        let Err(error) = embedding_query("embedding", &[], 3) else {
+            panic!("empty query vector must be rejected");
         };
         assert_eq!(error.code, ErrorCode::InvalidArgument);
         assert!(error.message.contains("empty"), "{error:?}");
 
-        let error = match embedding_query("bad\0name", &[1.0], 3) {
-            Ok(_) => panic!("a null byte in the field name must be rejected"),
-            Err(error) => error,
+        let Err(error) = embedding_query("bad\0name", &[1.0], 3) else {
+            panic!("a null byte in the field name must be rejected");
         };
         assert_eq!(error.code, ErrorCode::InvalidArgument);
+    }
+
+    /// The hazard the engine's version gate exists for: an FP32 collection
+    /// cannot answer an FP16 query, and the failure comes from storage itself.
+    #[test]
+    fn fp32_storage_rejects_fp16_queries() {
+        initialize();
+        let directory = tempfile::tempdir().expect("collection directory");
+        let path = directory.path().join("legacy");
+        let schema = CollectionSchema::builder("legacy")
+            .add_vector_field(
+                "embedding",
+                DataType::VectorFp32,
+                4,
+                IndexParams::flat(MetricType::Cosine).expect("flat index"),
+            )
+            .build()
+            .expect("schema");
+        let collection =
+            Collection::create_and_open(path.to_str().expect("utf-8 path"), &schema, None)
+                .expect("create collection");
+
+        let vector = [0.1_f32, -0.2, 1.25, 0.0];
+        let mut doc = Doc::new().expect("document");
+        doc.set_pk("legacy");
+        doc.add_vector_f32("embedding", &vector)
+            .expect("fp32 embedding");
+        collection.insert(&[&doc]).expect("insert");
+
+        let query = embedding_query("embedding", &vector, 3).expect("fp16 query");
+        let Err(error) = collection.query(&query) else {
+            panic!("binary16 bytes must not match an fp32 field");
+        };
+        assert!(!error.message.is_empty(), "zvec reports a reason");
     }
 
     #[test]

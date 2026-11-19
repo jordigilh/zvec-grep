@@ -337,12 +337,16 @@ fn vector_context_options(root: &Path, query: &str) -> ContextOptions {
     }
 }
 
-/// An index built by the previous release stores FP32 vectors and reports
-/// `indexVersion` 2. Reading those collections through the FP16 schema fails
-/// inside zvec with a hard `dimension mismatch` storage error, so the manifest
-/// version gate must turn that into an explicit rebuild prompt instead.
+/// Version 2 is the pre-FP16 format: its collections store FP32 vectors.
+/// `zg-zvec-fp16`'s `fp32_storage_rejects_fp16_queries` proves that reading
+/// such a collection through the FP16 schema fails inside zvec. This test
+/// covers the manifest gate that answers first, so the user sees a rebuild
+/// prompt instead of that storage error.
+///
+/// Rewriting only `indexVersion` is enough: the gate rejects the manifest
+/// before any collection is opened, so the payload encoding never matters.
 #[tokio::test]
-async fn legacy_fp32_index_prompts_for_rebuild_instead_of_storage_failure() -> TestResult {
+async fn legacy_v2_index_prompts_for_rebuild_before_storage_is_opened() -> TestResult {
     let temporary = tempdir()?;
     let root = temporary.path();
     let server = EmbeddingServer::start()?;
@@ -354,8 +358,8 @@ async fn legacy_fp32_index_prompts_for_rebuild_instead_of_storage_failure() -> T
     let engine = ZvecGrep::new();
     engine.index(options.clone()).await?;
 
-    // Rewrite only the format version: the collections stay byte-identical, so
-    // this is exactly what a pre-FP16 index looks like to the new binary.
+    // Rewrite only the format version. The collections stay byte-identical;
+    // what a pre-FP16 index adds is FP32 payloads, which the gate never reads.
     let manifest_path = root.join(".zvec-grep/manifest.json");
     let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path)?)?;
     manifest["indexVersion"] = json!(2);
