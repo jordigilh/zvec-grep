@@ -203,6 +203,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/model-cache
           key: quality-lanes-potion-code-16m-v2-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/engine/models/catalog.ts') }}
+      - name: Run the lane's Python unit tests
+        run: python3 -m unittest discover -s benchmarks/quality-lanes -p 'test_*.py'
       - name: Verify vendored lane assets
         run: python3 benchmarks/quality-lanes/check_fixture_hashes.py
       - name: Verify multi-language fixture snapshots
@@ -231,7 +233,7 @@ jobs:
               --fixture "$fixture" \
               --results "$RUNNER_TEMP/results-ml-$fixture/metrics.json"
           done
-      - name: Publish the report-only summary
+      - name: Publish the retrieval summary
         if: always()
         run: |
           set -euo pipefail
