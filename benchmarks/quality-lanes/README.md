@@ -25,29 +25,35 @@ checkout on demand. Both are deliberate deviations from the original plan's
 |---|---|---|---|
 | `fixtures/go-workflow-discovery-v1` | tuning | qrels.json (adjudicated) | `graph-truth.json` — 18 RTA edges |
 | `fixtures/go-inventory-audit-v1` | holdout | qrels.json (adjudicated) | `graph-truth.json` — 17 RTA edges |
-| `fixtures/python-workflow-discovery-v1` | multi-language (report-only) | qrels.json (adjudicated) | — |
-| `fixtures/rust-workflow-discovery-v1` | multi-language (report-only) | qrels.json (adjudicated) | — |
-| `fixtures/typescript-workflow-discovery-v1` | multi-language (report-only) | qrels.json (adjudicated) | — |
+| `fixtures/python-workflow-discovery-v1` | multi-language (no regression) | qrels.json (adjudicated) | — |
+| `fixtures/rust-workflow-discovery-v1` | multi-language (no regression) | qrels.json (adjudicated) | — |
+| `fixtures/typescript-workflow-discovery-v1` | multi-language (no regression) | qrels.json (adjudicated) | — |
 
-## Multi-language lane (report-only)
+## Multi-language lane (no regression)
 
 `run_qeval_multilanguage.py` is the four-language variant of `run_qeval.py`.
 It reads the non-compact `--preview full` output and maps each hit from its
 `symbol: <kind> <name> [scope: <Scope>]` line to the manifest unit ID
 (`<path>::<name>` or `<path>::<Scope>.<name>`), falling back to manifest source
 spans for hits that carry no resolvable symbol (class fields, module
-declarations). Unmatched hits are counted and reported, never silently dropped.
-One warmup index build and two frozen-index repeats per fixture; a ranking that
-differs between repeats aborts the run.
+declarations, file-level chunks). Unmatched hits are counted and reported,
+never silently dropped. One warmup index build and two frozen-index repeats per
+fixture; a ranking that differs between repeats aborts the run.
 
-`baselines-multilanguage.json` holds the current per-language floor. Its
-provenance records `fork/main` `ec3ef16` measured on macOS/arm64. That is a
-**provisional** provenance: the CI runner is `ubuntu-24.04`, and cross-machine
-byte-identity is not yet demonstrated for these three new lanes. The lane
-therefore prints metrics and uploads artifacts but does not compare against the
-baseline. Pinning follows the normal re-baselining lever: review one
-ubuntu-24.04 run, record its binary SHA and metrics in
-`baselines-multilanguage.json`, then add the comparison step in a reviewed PR.
+`baselines-multilanguage.json` pins one floor per language and metric.
+`check_baselines_multilanguage.py` enforces **equal or better** for every
+metric: a regression fails, an improvement passes and is printed (re-pin it in
+a reviewed change so the floor cannot silently rot). There is no cross-language
+average and no quality tolerance; only float representation noise (1e-12) is
+allowed. The pinned values were measured on macOS/arm64 and the same numbers
+were reproduced byte-for-byte on the `ubuntu-24.04` CI runner before the label
+corrections below, so the floor is not host-specific.
+
+The Rust and TypeScript truth/qrels were corrected in Engram commit
+`5bc83bd` (direct membership-rejection path graded consistently with
+`interactive-selection-guard`; unsupported parameter-validation positives
+demoted; marker-synthesis rationales aligned with the source) and re-vendored
+here. Source files and snapshot digests are unchanged.
 
 Each gated Go fixture directory holds the frozen Go source, `manifest.json`
 (stable unit IDs), `qrels.json` (adjudicated retrieval judgments),

@@ -163,12 +163,11 @@ jobs:
             echo "OK: $fixture retrieval reps are byte-identical"
           done
 
-  # Report-only until the ubuntu-24.04 numbers are reviewed and pinned. This
-  # lane prints per-fixture metrics and fails only on execution errors, a
-  # non-deterministic repeat, or a fixture/hash mismatch. Pin the results in
-  # baselines-multilanguage.json and add a comparison step in a reviewed PR.
+  # Equal-or-better per language and per metric. Each fixture run is compared
+  # against its pinned floor in baselines-multilanguage.json; improvements pass
+  # and are printed (re-pin them in a reviewed change), a regression fails.
   retrieval-quality-multilanguage:
-    name: retrieval quality (4 languages, report-only)
+    name: retrieval quality (4 languages, no regression)
     needs: changes
     if: needs.changes.outputs.retrieval == 'true'
     runs-on: ubuntu-24.04
@@ -227,13 +226,17 @@ jobs:
               --output "$RUNNER_TEMP/results-ml-$fixture" \
               --model-cache "$RUNNER_TEMP/model-cache" \
               --repeats 2 | tee -a "$summary"
+            python3 "$lanes/check_baselines_multilanguage.py" \
+              --baselines "$lanes/baselines-multilanguage.json" \
+              --fixture "$fixture" \
+              --results "$RUNNER_TEMP/results-ml-$fixture/metrics.json"
           done
       - name: Publish the report-only summary
         if: always()
         run: |
           set -euo pipefail
           {
-            echo "### Multi-language retrieval (report-only)"
+            echo "### Multi-language retrieval (no regression)"
             echo
             python3 benchmarks/quality-lanes/summarize_multilanguage.py \
               "$RUNNER_TEMP/multilanguage-summary.jsonl"
