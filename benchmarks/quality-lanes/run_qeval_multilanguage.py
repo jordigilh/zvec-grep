@@ -16,8 +16,14 @@ id directly:
 Every mapped id is validated against the manifest's unit set.  A hit whose
 symbol does not resolve (class fields, module declarations, ...) is retried
 against manifest source spans when the manifest provides them, and otherwise
-counted as an unmatched hit and dropped from the ranking.  Both cases are
-reported in ``metrics.json`` so nothing is silently lost.
+counted as an unmatched hit and dropped from the ranking.  A hit that emits no
+symbol line at all is retried the same way, and a header whose range is not a
+numeric source span is recorded as unmatched instead of being ignored.  Every
+case is reported in ``metrics.json`` so nothing is silently lost.
+
+The CLI's explicit empty-result labels (``No matches.`` and ``No searchable
+files.``) are a successful empty ranking for that query, not an execution
+error.
 
 The index is built once by a warmup query with ``--refresh wait`` and every
 measured query then runs with ``--refresh off`` so all repeats of all queries
@@ -52,6 +58,13 @@ _HEADER = re.compile(
     r"^#(?P<rank>\d+)(?: \[[^\]]+\])?(?: matchedBy=\S+)? "
     r"(?P<path>.+?):(?P<start>\d+)(?:-(?P<end>\d+))?$"
 )
+# A hit header whose range is not a numeric source span (``file``, ``page:N``,
+# ``bytes:a-b``) cannot be mapped from the header alone.  It is still a real
+# hit, so it must be recorded as unmatched instead of silently dropped.
+_HEADER_LIKE = re.compile(r"^#(?P<rank>\d+)\b.*:\S+$")
+# The CLI's explicit empty-result labels.  Both are a successful empty
+# ranking, not an execution error.
+_EMPTY_RESULT_LABELS = frozenset({"No matches.", "No searchable files."})
 # Older binaries: "symbol: function Add scope: WorkflowState".
 _SYMBOL_LEGACY = re.compile(
     r"^symbol:\s+(?P<kind>\S+)\s+(?P<name>\S+)"
@@ -92,9 +105,9 @@ def parse_preview(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     """Map preview-full stdout to ranked manifest unit ids.
 
-    Returns (ranked_results, unmatched_hits).  ``ranked_results`` is deduped in
-    first-seen order and keeps the originating backend rank, matching the
-    compact-output normalization used by ``run_qeval.py``.
+    Returns (ranked_results, unmatched_hits, summary).  ``ranked_results`` is
+    deduped in first-seen order and keeps the originating backend rank,
+    matching the compact-output normalization used by ``run_qeval.py``.
     """
     known = {unit["unit_id"] for unit in units}
     ranked: list[dict[str, Any]] = []
@@ -103,19 +116,47 @@ def parse_preview(
     seen: set[str] = set()
     unmatched: list[dict[str, Any]] = []
 
+    def record(unit_ids: list[str], method: str, rank: int) -> None:
+        nonlocal matched_by_symbol, matched_by_span
+        for unit_id in unit_ids:
+            if unit_id in seen:
+                continue
+            seen.add(unit_id)
+            ranked.append({
+                "unit_id": unit_id,
+                "backend_rank": rank,
+                "resolved_by": method,
+            })
+            if method == "symbol":
+                matched_by_symbol += 1
+            else:
+                matched_by_span += 1
+
+    def settle_span_only(hit: dict[str, Any]) -> None:
+        """Resolve a hit that produced no symbol line via its manifest span."""
+        resolved = _span_units(units, hit["path"], hit["start"], hit["end"])
+        if resolved:
+            record(resolved, "span", hit["rank"])
+            return
+        unmatched.append({
+            "rank": hit["rank"],
+            "path": hit["path"],
+            "start": hit["start"],
+            "end": hit["end"],
+            "symbol_line": "",
+            "attempted_unit_id": None,
+            "reason": "hit emitted no symbol line and no manifest span matched",
+        })
+
     current: dict[str, Any] | None = None
     header_seen_for_current = False
     for line in stdout.splitlines():
         header = _HEADER.match(line)
         if header:
-            if current is not None and header_seen_for_current:
-                unmatched.append({
-                    "rank": current["rank"],
-                    "path": current["path"],
-                    "symbol_line": "",
-                    "attempted_unit_id": None,
-                    "reason": "hit emitted no symbol line",
-                })
+            # A header without a following symbol line is a file-level chunk:
+            # resolve it from its span before moving on.
+            if header_seen_for_current and current is not None:
+                settle_span_only(current)
             current = {
                 "rank": int(header["rank"]),
                 "path": header["path"],
@@ -123,6 +164,24 @@ def parse_preview(
                 "end": int(header["end"] or header["start"]),
             }
             header_seen_for_current = True
+            continue
+
+        header_like = _HEADER_LIKE.match(line)
+        if header_like:
+            # A header whose range is not numeric (``file``, ``page:N``, ...)
+            # cannot be mapped from the header; keep the drop visible and do
+            # not let a later symbol line attach to the previous hit.
+            if header_seen_for_current and current is not None:
+                settle_span_only(current)
+            header_seen_for_current = False
+            current = None
+            unmatched.append({
+                "rank": int(header_like["rank"]),
+                "path": None,
+                "symbol_line": line.strip(),
+                "attempted_unit_id": None,
+                "reason": "header range is not a source span",
+            })
             continue
 
         symbol = _parse_symbol(line)
@@ -153,34 +212,20 @@ def parse_preview(
             header_seen_for_current = False
             continue
 
-        for unit_id in resolved:
-            if unit_id in seen:
-                continue
-            seen.add(unit_id)
-            ranked.append({
-                "unit_id": unit_id,
-                "backend_rank": current["rank"],
-                "resolved_by": method,
-            })
-            if method == "symbol":
-                matched_by_symbol += 1
-            else:
-                matched_by_span += 1
-
-        # A header without a following symbol line is a file-level chunk; it is
-        # caught below once the next header (or EOF) proves it had no symbol.
+        record(resolved, method, current["rank"])
         header_seen_for_current = False
 
-    if header_seen_for_current:
-        unmatched.append({
-            "rank": current["rank"] if current else None,
-            "path": current["path"] if current else None,
-            "symbol_line": "",
-            "attempted_unit_id": None,
-            "reason": "hit emitted no symbol line",
-        })
+    if header_seen_for_current and current is not None:
+        settle_span_only(current)
 
     if not ranked:
+        stripped = stdout.strip()
+        if stripped in _EMPTY_RESULT_LABELS:
+            return [], unmatched, {
+                "resolved_by_symbol": matched_by_symbol,
+                "resolved_by_span": matched_by_span,
+                "unmatched": len(unmatched),
+            }
         raise ReplayError("zvec response contained no resolvable ranked source spans")
 
     summary = {
@@ -358,9 +403,12 @@ def main() -> None:
 
     with binary.open("rb") as binary_file:
         binary_sha256 = hashlib.file_digest(binary_file, "sha256").hexdigest()
-    binary_repo = binary.parent.parent.parent
-    commit = _git(binary_repo, "rev-parse", "HEAD")
-    branch = _git(binary_repo, "rev-parse", "--abbrev-ref", "HEAD")
+    # The binary does not embed its build commit, so record the checkout that
+    # ran the lane.  ``binary_sha256`` identifies the binary; calling this
+    # "commit" would misattribute a prebuilt binary to the current HEAD.
+    checkout = Path(__file__).resolve().parent
+    checkout_commit = _git(checkout, "rev-parse", "HEAD")
+    checkout_branch = _git(checkout, "rev-parse", "--abbrev-ref", "HEAD")
 
     payload = {
         "schema": "quality-lane-multilanguage-metrics-v1",
@@ -369,8 +417,8 @@ def main() -> None:
         "provenance": {
             "binary": str(binary),
             "binary_sha256": binary_sha256,
-            "commit": commit,
-            "branch": branch,
+            "checkout_commit": checkout_commit,
+            "checkout_branch": checkout_branch,
             "model": DEFAULT_MODEL,
             "device": "cpu",
             "result_limit": RESULT_LIMIT,
@@ -419,7 +467,7 @@ def main() -> None:
     print(json.dumps({
         "fixture_id": manifest["fixture_id"],
         "binary_sha256": binary_sha256,
-        "commit": commit,
+        "checkout_commit": checkout_commit,
         "ndcg@10": overall["ndcg@10"],
         "mrr@10": overall["mrr@10"],
         "recall@10": overall["recall@10"],

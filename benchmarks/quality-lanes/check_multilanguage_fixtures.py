@@ -73,8 +73,8 @@ def main() -> int:
             unknown = judged - unit_ids
             if unknown:
                 problems.append(
-                    f"{fixture_id}/{query['id']}: unjudged unit ids "
-                    f"{', '.join(sorted(unknown)[:3])}"
+                    f"{fixture_id}/{query['id']}: judged unit ids missing "
+                    f"from the manifest: {', '.join(sorted(unknown)[:3])}"
                 )
 
     if problems:
