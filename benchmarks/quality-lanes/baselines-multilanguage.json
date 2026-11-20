@@ -58,6 +58,16 @@
         "precision@10": 0.2625
       },
       "fixture_snapshot_sha256": "152a5562e1fbc0a44f8e7143fa29b9559c6a1ad4a5b85c309a092bb9814b1057"
+    },
+    "java-workflow-discovery-v1": {
+      "role": "tuning",
+      "retrieval": {
+        "ndcg@10": 0.32504626571216116,
+        "mrr@10": 0.4791666666666667,
+        "recall@10": 0.47023809523809523,
+        "precision@10": 0.175
+      },
+      "fixture_snapshot_sha256": "77ac5f8c10eeebeb3097158a166eeb729ddee0d6e5d8e880b59c151363f52c38"
     }
   }
 }
