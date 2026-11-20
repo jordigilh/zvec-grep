@@ -1,0 +1,62 @@
+{
+  "schema": "quality-lanes-baselines-multilanguage-v1",
+  "policy": "see quality-lanes README strict byte-identical acceptance",
+  "provenance": {
+    "binary_sha256": "dab0a12b639a4487fcee41f4a082ca03259ce7055ecfa9a0c956df62e7e59956",
+    "commit": "ec3ef1696ade1121af80c5f9440dfc94674937c9",
+    "branch": "fork/main",
+    "model": "local/potion-code-16m-v2",
+    "device": "cpu"
+  },
+  "provenance_checks": {
+    "stale_branch": {
+      "note": "Prior capture from the checked-out fix/container-sh-tag branch, 7 commits behind fork/main before the FP16 v3 index-format series. Kept as cross-check evidence; all four lanes (overall metrics and per-query unit_id rankings) were byte-identical to the fork/main capture.",
+      "binary_sha256": "686d9f70eaf8fa2e631a83c74c38b7124bb6ac792b8680e6b9f9de335a7d53e3",
+      "commit": "2b07e37686055df75d2bf254513ab553af9d137f",
+      "branch": "fix/container-sh-tag",
+      "comparison": "identical"
+    }
+  },
+  "fixtures": {
+    "go-workflow-discovery-v1": {
+      "role": "tuning",
+      "retrieval": {
+        "ndcg@10": 0.5887735493745122,
+        "mrr@10": 0.7333333333333333,
+        "recall@10": 0.6770833333333334,
+        "precision@10": 0.25
+      },
+      "fixture_snapshot_sha256": "94183663d9e5f81b753dde7c460428c2414c46867b936b5cc42f9827dab0827f"
+    },
+    "python-workflow-discovery-v1": {
+      "role": "tuning",
+      "retrieval": {
+        "ndcg@10": 0.6242871487799554,
+        "mrr@10": 0.6470238095238096,
+        "recall@10": 0.78125,
+        "precision@10": 0.2875
+      },
+      "fixture_snapshot_sha256": "0b77b06131e0a0e8ffbafa258c54e8900b7c32c2ea6f156ea75e8c6a181e076b"
+    },
+    "rust-workflow-discovery-v1": {
+      "role": "tuning",
+      "retrieval": {
+        "ndcg@10": 0.5028676060405679,
+        "mrr@10": 0.53125,
+        "recall@10": 0.6416666666666666,
+        "precision@10": 0.2375
+      },
+      "fixture_snapshot_sha256": "eb8b41c271aa13160a1ba7ce63af7c8ea35461f3f1bfa8248a3845d19d44c98a"
+    },
+    "typescript-workflow-discovery-v1": {
+      "role": "tuning",
+      "retrieval": {
+        "ndcg@10": 0.4612017128650626,
+        "mrr@10": 0.6011904761904762,
+        "recall@10": 0.6,
+        "precision@10": 0.225
+      },
+      "fixture_snapshot_sha256": "152a5562e1fbc0a44f8e7143fa29b9559c6a1ad4a5b85c309a092bb9814b1057"
+    }
+  }
+}

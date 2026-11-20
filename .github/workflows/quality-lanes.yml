@@ -163,6 +163,89 @@ jobs:
             echo "OK: $fixture retrieval reps are byte-identical"
           done
 
+  # Report-only until the ubuntu-24.04 numbers are reviewed and pinned. This
+  # lane prints per-fixture metrics and fails only on execution errors, a
+  # non-deterministic repeat, or a fixture/hash mismatch. Pin the results in
+  # baselines-multilanguage.json and add a comparison step in a reviewed PR.
+  retrieval-quality-multilanguage:
+    name: retrieval quality (4 languages, report-only)
+    needs: changes
+    if: needs.changes.outputs.retrieval == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        working-directory: rust
+        run: rustup show active-toolchain
+      - name: Restore Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/target/
+          key: ${{ runner.os }}-${{ runner.arch }}-quality-lanes-rust-v1-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-quality-lanes-rust-v1-
+      - name: Build the zg CLI
+        working-directory: rust
+        run: cargo build --release --locked -p zg
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Cache the potion code model
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/model-cache
+          key: quality-lanes-potion-code-16m-v2-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/engine/models/catalog.ts') }}
+      - name: Verify vendored lane assets
+        run: python3 benchmarks/quality-lanes/check_fixture_hashes.py
+      - name: Verify multi-language fixture snapshots
+        run: python3 benchmarks/quality-lanes/check_multilanguage_fixtures.py
+      - name: Run the four-language lane (2 repeats, frozen index)
+        run: |
+          set -euo pipefail
+          lanes=benchmarks/quality-lanes
+          zg=rust/target/release/zg
+          summary="$RUNNER_TEMP/multilanguage-summary.jsonl"
+          : > "$summary"
+          for fixture in \
+            go-workflow-discovery-v1 \
+            python-workflow-discovery-v1 \
+            rust-workflow-discovery-v1 \
+            typescript-workflow-discovery-v1; do
+            python3 "$lanes/run_qeval_multilanguage.py" \
+              --fixture "$lanes/fixtures/$fixture" \
+              --binary "$zg" \
+              --work-root "$RUNNER_TEMP/work-ml-$fixture" \
+              --output "$RUNNER_TEMP/results-ml-$fixture" \
+              --model-cache "$RUNNER_TEMP/model-cache" \
+              --repeats 2 | tee -a "$summary"
+          done
+      - name: Publish the report-only summary
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "### Multi-language retrieval (report-only)"
+            echo
+            python3 benchmarks/quality-lanes/summarize_multilanguage.py \
+              "$RUNNER_TEMP/multilanguage-summary.jsonl"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload multi-language metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-lanes-multilanguage
+          path: ${{ runner.temp }}/results-ml-*/metrics.json
+          if-no-files-found: warn
+
   graph-quality:
     name: graph quality (codegraph vs compiler truth)
     needs: changes

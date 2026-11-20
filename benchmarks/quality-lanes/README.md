@@ -3,12 +3,13 @@
 Retrieval-quality and graph-quality regression gates for the fork. Implements
 [jordigilh/zvec-grep#49](https://github.com/jordigilh/zvec-grep/issues/49).
 
-Two lanes run on every PR whose diff touches their trigger paths (see
+Three lanes run on every PR whose diff touches their trigger paths (see
 [`.github/workflows/quality-lanes.yml`](../../.github/workflows/quality-lanes.yml)):
 
 | Lane | Gates | Trigger paths (in addition to `benchmarks/quality-lanes/**`) |
 |---|---|---|
-| `retrieval-quality` | hybrid semantic-search retrieval metrics vs adjudicated qrels | `rust/crates/zg-engine/**`, `src/engine/**`, `src/index.ts`, `src/index-progress.ts`, `rust/Cargo.lock`, `rust/rust-toolchain.toml` |
+| `retrieval-quality` | hybrid semantic-search retrieval metrics vs adjudicated qrels (Go, exact) | `rust/crates/zg-engine/**`, `src/engine/**`, `src/index.ts`, `src/index-progress.ts`, `rust/Cargo.lock`, `rust/rust-toolchain.toml` |
+| `retrieval-quality-multilanguage` | same metrics for Go, Python, Rust and TypeScript — **report-only** until pinned on the CI runner | same as `retrieval-quality` |
 | `graph-quality` | native codegraph call-edge quality vs compiler truth | `rust/crates/zg-codegraph/**`, `rust/crates/zg-graph-projection/**`, `rust/Cargo.lock`, `rust/rust-toolchain.toml` |
 
 Beyond PR gating, the workflow also runs on **pushes to `main`** — this
@@ -24,17 +25,41 @@ checkout on demand. Both are deliberate deviations from the original plan's
 |---|---|---|---|
 | `fixtures/go-workflow-discovery-v1` | tuning | qrels.json (adjudicated) | `graph-truth.json` — 18 RTA edges |
 | `fixtures/go-inventory-audit-v1` | holdout | qrels.json (adjudicated) | `graph-truth.json` — 17 RTA edges |
+| `fixtures/python-workflow-discovery-v1` | multi-language (report-only) | qrels.json (adjudicated) | — |
+| `fixtures/rust-workflow-discovery-v1` | multi-language (report-only) | qrels.json (adjudicated) | — |
+| `fixtures/typescript-workflow-discovery-v1` | multi-language (report-only) | qrels.json (adjudicated) | — |
 
-Each fixture directory holds the frozen Go source, `manifest.json` (stable
-unit IDs), `qrels.json` (adjudicated retrieval judgments),
+## Multi-language lane (report-only)
+
+`run_qeval_multilanguage.py` is the four-language variant of `run_qeval.py`.
+It reads the non-compact `--preview full` output and maps each hit from its
+`symbol: <kind> <name> [scope: <Scope>]` line to the manifest unit ID
+(`<path>::<name>` or `<path>::<Scope>.<name>`), falling back to manifest source
+spans for hits that carry no resolvable symbol (class fields, module
+declarations). Unmatched hits are counted and reported, never silently dropped.
+One warmup index build and two frozen-index repeats per fixture; a ranking that
+differs between repeats aborts the run.
+
+`baselines-multilanguage.json` holds the current per-language floor. Its
+provenance records `fork/main` `ec3ef16` measured on macOS/arm64. That is a
+**provisional** provenance: the CI runner is `ubuntu-24.04`, and cross-machine
+byte-identity is not yet demonstrated for these three new lanes. The lane
+therefore prints metrics and uploads artifacts but does not compare against the
+baseline. Pinning follows the normal re-baselining lever: review one
+ubuntu-24.04 run, record its binary SHA and metrics in
+`baselines-multilanguage.json`, then add the comparison step in a reviewed PR.
+
+Each gated Go fixture directory holds the frozen Go source, `manifest.json`
+(stable unit IDs), `qrels.json` (adjudicated retrieval judgments),
 `truth.json` (the retrieval query suite read by `run_qeval.py`), and
 `graph-truth.json` (the compiler truth read by `adjudicate_graph.py` —
 schema `go-graph-truth-v1`, produced by `tools/go-graph-truth`). The two
 truth files are deliberately distinct, non-colliding names: they are
 different files with different hashes (e.g. holdout query suite
-`360bb826…` vs compiler truth `f32935fa…`), and only `*.go` source files
-are copied into the work roots, so neither lane can clobber the other's
-input.
+`360bb826…` vs compiler truth `f32935fa…`), and the Go lanes copy only
+`*.go` source files into their work roots, so neither lane can clobber the
+other's input. The multi-language runner copies the sources selected by each
+fixture's own `manifest.source` include/exclude list.
 `baselines.json` pins the sha256 of **every file in this tree** — fixture
 sources, query suites, compiler truth, all scripts, READMEs, and the
 regeneration tool — except `baselines.json` itself (it holds the pins).
