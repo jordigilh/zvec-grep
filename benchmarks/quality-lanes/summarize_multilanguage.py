@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Render the multi-language lane's JSONL output as a markdown table.
 
-The lane is report-only: it prints one JSON object per fixture and this script
-turns those lines into a table for ``$GITHUB_STEP_SUMMARY``.  It never compares
-against a baseline, so a metric change is visible but not fatal.
+The lane gates on equal-or-better per language and metric; this script only
+turns its per-fixture JSON lines into a table for ``$GITHUB_STEP_SUMMARY``.
+It never compares against a baseline itself.
 """
 from __future__ import annotations
 

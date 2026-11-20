@@ -9,7 +9,7 @@ Three lanes run on every PR whose diff touches their trigger paths (see
 | Lane | Gates | Trigger paths (in addition to `benchmarks/quality-lanes/**`) |
 |---|---|---|
 | `retrieval-quality` | hybrid semantic-search retrieval metrics vs adjudicated qrels (Go, exact) | `rust/crates/zg-engine/**`, `src/engine/**`, `src/index.ts`, `src/index-progress.ts`, `rust/Cargo.lock`, `rust/rust-toolchain.toml` |
-| `retrieval-quality-multilanguage` | same metrics for Go, Python, Rust and TypeScript — **report-only** until pinned on the CI runner | same as `retrieval-quality` |
+| `retrieval-quality-multilanguage` | same metrics for Go, Python, Rust and TypeScript, equal-or-better per language and metric vs `baselines-multilanguage.json` | same as `retrieval-quality` |
 | `graph-quality` | native codegraph call-edge quality vs compiler truth | `rust/crates/zg-codegraph/**`, `rust/crates/zg-graph-projection/**`, `rust/Cargo.lock`, `rust/rust-toolchain.toml` |
 
 Beyond PR gating, the workflow also runs on **pushes to `main`** — this

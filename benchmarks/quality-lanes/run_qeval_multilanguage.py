@@ -18,8 +18,10 @@ symbol does not resolve (class fields, module declarations, ...) is retried
 against manifest source spans when the manifest provides them, and otherwise
 counted as an unmatched hit and dropped from the ranking.  A hit that emits no
 symbol line at all is retried the same way, and a header whose range is not a
-numeric source span is recorded as unmatched instead of being ignored.  Every
-case is reported in ``metrics.json`` so nothing is silently lost.
+numeric source span is recorded as unmatched instead of being ignored.  A
+query whose hits all fail to map is therefore an empty ranking with a non-zero
+unmatched count, not an abort.  Every case is reported in ``metrics.json`` so
+nothing is silently lost.
 
 The CLI's explicit empty-result labels (``No matches.`` and ``No searchable
 files.``) are a successful empty ranking for that query, not an execution
@@ -27,8 +29,8 @@ error.
 
 The index is built once by a warmup query with ``--refresh wait`` and every
 measured query then runs with ``--refresh off`` so all repeats of all queries
-see one frozen index.  Repeats must produce byte-identical normalized unit_id
-lists; a mismatch aborts the run.
+see one frozen index.  Repeats must produce identical normalized unit_id
+lists and identical unmatched-hit reports; a mismatch aborts the run.
 
 Usage:
   python3 run_qeval_multilanguage.py --fixture <fixture-dir> --binary <zg> \
@@ -218,7 +220,7 @@ def parse_preview(
     if header_seen_for_current and current is not None:
         settle_span_only(current)
 
-    if not ranked:
+    if not ranked and not unmatched:
         stripped = stdout.strip()
         if stripped in _EMPTY_RESULT_LABELS:
             return [], unmatched, {
@@ -373,18 +375,32 @@ def main() -> None:
         repeat_unmatched.append(unmatched)
         repeat_summaries.append(totals)
 
-    # Determinism gate: the normalized unit_id lists must be identical across
-    # repeats.  Abort loudly with the first divergent query otherwise.
+    # Determinism gate: the normalized ranking *and* the unmatched-hit report
+    # must be identical across repeats.  Comparing only resolved unit ids
+    # would let a repeat resolve a different hit as unmatched while producing
+    # the same ranking, silently changing the mapping report.  Abort loudly
+    # with the first divergent query otherwise.
     reference = [[r["unit_id"] for r in q["results"]] for q in repeats[0]]
+    reference_unmatched = [q["unmatched_hits"] for q in repeats[0]]
     deterministic = True
     for repeat_index, repeat in enumerate(repeats[1:], start=2):
         candidate = [[r["unit_id"] for r in q["results"]] for q in repeat]
-        if candidate != reference:
+        candidate_unmatched = [q["unmatched_hits"] for q in repeat]
+        if candidate != reference or candidate_unmatched != reference_unmatched:
             deterministic = False
             for query_index, (left, right) in enumerate(zip(reference, candidate)):
                 if left != right:
                     raise SystemExit(
                         "non-deterministic ranking across repeats: "
+                        f"repeat 1 {queries[query_index]['id']} -> {left}; "
+                        f"repeat {repeat_index} -> {right}"
+                    )
+            for query_index, (left, right) in enumerate(
+                zip(reference_unmatched, candidate_unmatched)
+            ):
+                if left != right:
+                    raise SystemExit(
+                        "non-deterministic unmatched hits across repeats: "
                         f"repeat 1 {queries[query_index]['id']} -> {left}; "
                         f"repeat {repeat_index} -> {right}"
                     )

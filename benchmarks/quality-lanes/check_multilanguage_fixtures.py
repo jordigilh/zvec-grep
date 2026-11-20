@@ -51,7 +51,11 @@ def main() -> int:
 
         pinned = entry.get("fixture_snapshot_sha256")
         actual = qrels.get("source", {}).get("snapshot_sha256")
-        if pinned != actual:
+        if not pinned:
+            problems.append(
+                f"{fixture_id}: baselines entry has no fixture_snapshot_sha256"
+            )
+        elif pinned != actual:
             problems.append(
                 f"{fixture_id}: snapshot {actual} does not match pinned {pinned}"
             )
@@ -67,6 +71,17 @@ def main() -> int:
         qrels_ids = [query["id"] for query in qrels["queries"]]
         if truth_ids != qrels_ids:
             problems.append(f"{fixture_id}: truth and qrels query order differ")
+
+        # The runner searches ``truth`` but scores against ``qrels``.  If the
+        # two query texts drift apart while the ids stay aligned, the lane
+        # silently searches something the adjudication never judged.
+        truth_by_id = {query["id"]: query for query in truth["queries"]}
+        for query in qrels["queries"]:
+            truth_query = truth_by_id.get(query["id"])
+            if truth_query is not None and truth_query.get("query") != query.get("query"):
+                problems.append(
+                    f"{fixture_id}/{query['id']}: truth and qrels query text differ"
+                )
 
         for query in qrels["queries"]:
             judged = {judgment["unit_id"] for judgment in query["judgments"]}
