@@ -339,7 +339,7 @@
     "check_baselines.py": "9834fc492a3ffa347312e46f7ebf22a2341bf6fd02fa94c885c249e7a8c237fb",
     "check_baselines_multilanguage.py": "faa50336fb46331f200485e6e886388ba9ffdb79dc1b01707d55292e6799d325",
     "check_fixture_hashes.py": "ad28dbaf87e4b7cb953e722722759cbb12b0d96b8d08e880e8562a7579f8275f",
-    "check_multilanguage_fixtures.py": "74e1eeba7c9b56126139eb0a4007a2bf328a8947e16e1efff14141182c3f8869",
+    "check_multilanguage_fixtures.py": "8925c8a0524a24fdc41c7eb2a0263632b9a9425d2abe9c57e16a73117bf6eac1",
     "evaluate_semantic_search.py": "9d0f82713b17fec0a450c117485a667a052b6a70d28dd35d5302943292a49ff7",
     "fixtures/go-inventory-audit-v1/README.md": "77de69208391eba9793f1333ba813ba39c731531b17c53dc918f60a5cd6891c3",
     "fixtures/go-inventory-audit-v1/REPORT.md": "a04f4c89ece9f8a6cbfb2f0daf54e65d642b8e20d2810666b867b3ed69e500c4",

@@ -76,6 +76,20 @@ def main() -> int:
                     f"{fixture_id}/{query['id']}: judged unit ids missing "
                     f"from the manifest: {', '.join(sorted(unknown)[:3])}"
                 )
+            # candidate_pool_complete=true is only meaningful when every
+            # manifest unit has a judgment. A dropped judgment shrinks the
+            # scorer's recall denominator (evaluate_semantic_search.py uses
+            # judged grades only), which can inflate recall silently.
+            missing = unit_ids - judged
+            if missing:
+                problems.append(
+                    f"{fixture_id}/{query['id']}: manifest units have no qrels "
+                    f"judgment: {', '.join(sorted(missing)[:3])}"
+                )
+            if len(query["judgments"]) != len(judged):
+                problems.append(
+                    f"{fixture_id}/{query['id']}: duplicate qrels judgments"
+                )
 
     if problems:
         print("MULTI-LANGUAGE FIXTURE CHECK FAILED:", file=sys.stderr)
