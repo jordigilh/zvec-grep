@@ -28,6 +28,7 @@ checkout on demand. Both are deliberate deviations from the original plan's
 | `fixtures/python-workflow-discovery-v1` | multi-language (no regression) | qrels.json (adjudicated) | — |
 | `fixtures/rust-workflow-discovery-v1` | multi-language (no regression) | qrels.json (adjudicated) | — |
 | `fixtures/typescript-workflow-discovery-v1` | multi-language (no regression) | qrels.json (adjudicated) | — |
+| `fixtures/java-workflow-discovery-v1` | multi-language (no regression) | qrels.json (adjudicated) | — |
 
 ## Multi-language lane (no regression)
 
@@ -54,6 +55,15 @@ The Rust and TypeScript truth/qrels were corrected in Engram commit
 `interactive-selection-guard`; unsupported parameter-validation positives
 demoted; marker-synthesis rationales aligned with the source) and re-vendored
 here. Source files and snapshot digests are unchanged.
+
+The Java lane was adjudicated in Engram `43af82c` after a blind audit (labels
+withheld; 88.4% threshold agreement), with six boundary corrections applied.
+Its measured floor is materially lower than the other four lanes (nDCG@10
+0.325 vs 0.46-0.62). That is the current Java retrieval result, not a fixture
+defect: class-level Javadoc makes container units strong lexical matches, and
+the floor is intentionally kept rather than tuning labels to raise it. Treat
+the Java floor as its own regression baseline and never as a cross-language
+comparison.
 
 Each gated Go fixture directory holds the frozen Go source, `manifest.json`
 (stable unit IDs), `qrels.json` (adjudicated retrieval judgments),
