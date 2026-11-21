@@ -32,10 +32,10 @@
     "python-workflow-discovery-v1": {
       "role": "tuning",
       "retrieval": {
-        "ndcg@10": 0.6242871487799554,
-        "mrr@10": 0.6470238095238096,
-        "recall@10": 0.78125,
-        "precision@10": 0.2875
+        "ndcg@10": 0.6386878747231478,
+        "mrr@10": 0.6375,
+        "recall@10": 0.7757440476190476,
+        "precision@10": 0.325
       },
       "fixture_snapshot_sha256": "0b77b06131e0a0e8ffbafa258c54e8900b7c32c2ea6f156ea75e8c6a181e076b"
     },
