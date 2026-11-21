@@ -51,12 +51,13 @@ were reproduced byte-for-byte on the `ubuntu-24.04` CI runner before the label
 corrections below, so the floor is not host-specific.
 
 The Rust and TypeScript truth/qrels were corrected in Engram commit
-`5bc83bd` (direct membership-rejection path graded consistently with
+`9032f43` (direct membership-rejection path graded consistently with
 `interactive-selection-guard`; unsupported parameter-validation positives
 demoted; marker-synthesis rationales aligned with the source) and re-vendored
 here. Source files and snapshot digests are unchanged.
 
-The Java lane was adjudicated in Engram `43af82c` after a blind audit (labels
+The Python lane carried the same defects and was corrected in `7752ae9`.
+The Java lane was adjudicated in Engram `ca6231c` after a blind audit (labels
 withheld; 88.4% threshold agreement), with six boundary corrections applied.
 Its measured floor is materially lower than the other four lanes (nDCG@10
 0.325 vs 0.46-0.62). That is the current Java retrieval result, not a fixture
