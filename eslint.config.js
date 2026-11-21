@@ -6,6 +6,7 @@ export default tseslint.config(
   {
     ignores: [
       "rust/**",
+      "benchmarks/quality-lanes/fixtures/**",
       "coverage/**",
       "dist/**",
       "node_modules/**",

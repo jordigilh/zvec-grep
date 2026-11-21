@@ -6,3 +6,4 @@ package-lock.json
 *.tgz
 *.md
 rust/
+benchmarks/quality-lanes/fixtures/
