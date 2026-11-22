@@ -100,7 +100,7 @@ jobs:
           echo "graph=$graph" >> "$GITHUB_OUTPUT"
 
   retrieval-quality:
-    name: retrieval quality (qeval, exact baselines)
+    name: retrieval quality (qeval, pinned baselines)
     needs: changes
     if: needs.changes.outputs.retrieval == 'true'
     runs-on: ubuntu-24.04

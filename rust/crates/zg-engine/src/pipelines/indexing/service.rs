@@ -661,13 +661,12 @@ fn acquire_model(
             "embedding revision overrides are not supported by the catalog-backed runtime",
         ));
     }
-    let reference =
-        embedding_reference(
-            existing,
-            options.embedding.as_ref(),
-            language_default,
-            options.implicit,
-        )?;
+    let reference = embedding_reference(
+        existing,
+        options.embedding.as_ref(),
+        language_default,
+        options.implicit,
+    )?;
     let config = crate::config::read()?;
     let local = reference.starts_with("local/");
     if (!local && options.device.is_some()) || (local && options.endpoint.is_some()) {
@@ -761,6 +760,15 @@ pub(crate) fn embedding_reference(
     implicit: bool,
 ) -> Result<String, EngineError> {
     let config = crate::config::read()?;
+    // An implicit build may use a configured local model, but never a remote
+    // one, and a stored model still outranks both. Resolving it as a fallback
+    // rather than as an explicit request keeps a refresh of an existing index
+    // on its stored model.
+    let implicit_local = if implicit {
+        crate::config::implicit_embedding_override()?
+    } else {
+        None
+    };
     resolve_embedding_reference(ResolveEmbeddingReferenceOptions {
         explicit: requested.map(|embedding| embedding.reference.clone()),
         existing: existing
@@ -772,7 +780,11 @@ pub(crate) fn embedding_reference(
         // An empty map suppresses ZVEC_GREP_EMBEDDING for implicit builds,
         // which must never select a remote model on their own.
         environment: implicit.then(std::collections::HashMap::new),
-        fallback: Some(language_default.unwrap_or(DEFAULT_LOCAL_EMBEDDING).to_owned()),
+        fallback: Some(
+            implicit_local
+                .or_else(|| language_default.map(str::to_owned))
+                .unwrap_or_else(|| DEFAULT_LOCAL_EMBEDDING.to_owned()),
+        ),
         ..ResolveEmbeddingReferenceOptions::default()
     })
     .map_err(ModelError::into_engine_error)?
@@ -1522,10 +1534,7 @@ mod tests {
         let directory = tempdir().expect("profile root");
         let selection =
             crate::file_selection::GlobMatcher::new(directory.path(), &[]).expect("matcher");
-        let tied = [
-            (PathBuf::from("a.rs"), 500),
-            (PathBuf::from("b.java"), 500),
-        ];
+        let tied = [(PathBuf::from("a.rs"), 500), (PathBuf::from("b.java"), 500)];
         assert_eq!(super::profile_model(tied, &selection), None);
         let unmapped = [(PathBuf::from("notes.txt"), 10_000)];
         assert_eq!(super::profile_model(unmapped, &selection), None);

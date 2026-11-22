@@ -86,7 +86,9 @@ fn is_identifier_shaped(token: &str) -> bool {
     if token.contains('_') || token.contains("::") {
         return true;
     }
-    has_internal_separator(token, '/') || has_internal_separator(token, '.') || has_case_boundary(token)
+    has_internal_separator(token, '/')
+        || has_internal_separator(token, '.')
+        || has_case_boundary(token)
 }
 
 /// Reports a letter outside ASCII, which marks a script without word spacing.
@@ -127,15 +129,91 @@ fn is_stopword(token: &str) -> bool {
         .to_lowercase();
     matches!(
         word.as_str(),
-        "a" | "an" | "the" | "this" | "that" | "these" | "those" | "is" | "are" | "was" | "were"
-            | "be" | "been" | "being" | "am" | "do" | "does" | "did" | "of" | "in" | "on" | "at"
-            | "to" | "for" | "from" | "by" | "with" | "without" | "into" | "onto" | "about" | "as"
-            | "and" | "or" | "but" | "not" | "no" | "where" | "when" | "how" | "why" | "what"
-            | "which" | "who" | "whom" | "whose" | "their" | "them" | "they" | "our" | "your"
-            | "my" | "his" | "her" | "its" | "it" | "we" | "you" | "i" | "he" | "she" | "own"
-            | "can" | "cannot" | "could" | "should" | "would" | "will" | "shall" | "may" | "might"
-            | "must" | "all" | "any" | "some" | "if" | "then" | "else" | "than" | "so" | "such"
-            | "up" | "out" | "over" | "under" | "there"
+        "a" | "an"
+            | "the"
+            | "this"
+            | "that"
+            | "these"
+            | "those"
+            | "is"
+            | "are"
+            | "was"
+            | "were"
+            | "be"
+            | "been"
+            | "being"
+            | "am"
+            | "do"
+            | "does"
+            | "did"
+            | "of"
+            | "in"
+            | "on"
+            | "at"
+            | "to"
+            | "for"
+            | "from"
+            | "by"
+            | "with"
+            | "without"
+            | "into"
+            | "onto"
+            | "about"
+            | "as"
+            | "and"
+            | "or"
+            | "but"
+            | "not"
+            | "no"
+            | "where"
+            | "when"
+            | "how"
+            | "why"
+            | "what"
+            | "which"
+            | "who"
+            | "whom"
+            | "whose"
+            | "their"
+            | "them"
+            | "they"
+            | "our"
+            | "your"
+            | "my"
+            | "his"
+            | "her"
+            | "its"
+            | "it"
+            | "we"
+            | "you"
+            | "i"
+            | "he"
+            | "she"
+            | "own"
+            | "can"
+            | "cannot"
+            | "could"
+            | "should"
+            | "would"
+            | "will"
+            | "shall"
+            | "may"
+            | "might"
+            | "must"
+            | "all"
+            | "any"
+            | "some"
+            | "if"
+            | "then"
+            | "else"
+            | "than"
+            | "so"
+            | "such"
+            | "up"
+            | "out"
+            | "over"
+            | "under"
+            | "there"
     )
 }
 
@@ -145,8 +223,16 @@ mod tests {
 
     #[test]
     fn classifies_identifier_queries() {
-        for query in ["validateParameters", "Workflows.recordDiscoveredWorkflows", "list_workflows"] {
-            assert_eq!(QueryShape::classify(query), QueryShape::Identifier, "{query}");
+        for query in [
+            "validateParameters",
+            "Workflows.recordDiscoveredWorkflows",
+            "list_workflows",
+        ] {
+            assert_eq!(
+                QueryShape::classify(query),
+                QueryShape::Identifier,
+                "{query}"
+            );
         }
     }
 
@@ -167,7 +253,10 @@ mod tests {
 
     #[test]
     fn classifies_short_and_mixed_queries() {
-        assert_eq!(QueryShape::classify("empty discovery state"), QueryShape::Mixed);
+        assert_eq!(
+            QueryShape::classify("empty discovery state"),
+            QueryShape::Mixed
+        );
         assert_eq!(
             QueryShape::classify("where is validateParameters called"),
             QueryShape::Mixed

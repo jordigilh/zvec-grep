@@ -9,9 +9,10 @@ The contract is *equal or better* per language and per metric:
   change so the floor does not silently go stale;
 - a regression fails the lane.
 
-Only representation noise plus cross-platform inference drift (``2e-3`` in
-nDCG, observed at 9.5e-4 between macOS and Ubuntu for an identical ranked set)
-is tolerated; there is no quality allowance beyond that. Cross-language averages are never computed.
+Only representation noise is tolerated, plus cross-platform inference drift in
+nDCG (``2e-3``, observed at 9.5e-4 between macOS and Ubuntu for an identical
+ranked set). Recall and precision are compared exactly: their quanta are small
+enough that any tolerance would hide a missed judgement. Cross-language averages are never computed.
 """
 from __future__ import annotations
 
@@ -22,7 +23,8 @@ from pathlib import Path
 
 METRICS = ("ndcg@10", "mrr@10", "recall@10", "precision@10")
 # Cross-platform inference drift, not a quality allowance.
-REPRESENTATION_EPSILON = 2e-3
+NDCG_EPSILON = 2e-3
+REPRESENTATION_EPSILON = 1e-12
 
 
 def main() -> int:
@@ -72,11 +74,12 @@ def main() -> int:
         if not isinstance(got, (int, float)) or not isinstance(floor, (int, float)):
             print(f"{args.fixture}: missing {metric}", file=sys.stderr)
             return 2
-        if got + REPRESENTATION_EPSILON < floor:
+        epsilon = NDCG_EPSILON if metric == "ndcg@10" else REPRESENTATION_EPSILON
+        if got + epsilon < floor:
             regressions.append(
                 f"{metric}: {got:.6f} < floor {floor:.6f} ({got - floor:+.6f})"
             )
-        elif got > floor + REPRESENTATION_EPSILON:
+        elif got > floor + epsilon:
             improvements.append(
                 f"{metric}: {got:.6f} > floor {floor:.6f} ({got - floor:+.6f})"
             )

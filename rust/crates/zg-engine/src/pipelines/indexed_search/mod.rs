@@ -4,8 +4,8 @@ pub(crate) mod context;
 mod format_filter;
 mod path_filter;
 mod pipeline;
-mod shape;
 pub(crate) mod service;
+mod shape;
 pub(crate) mod storage;
 
 pub(crate) mod writer;

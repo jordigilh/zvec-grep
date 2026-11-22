@@ -86,7 +86,10 @@ mod tests {
 
     #[test]
     fn maps_source_extensions() {
-        assert_eq!(language_for_path(Path::new("a/b.go")), Some(CodeLanguage::Go));
+        assert_eq!(
+            language_for_path(Path::new("a/b.go")),
+            Some(CodeLanguage::Go)
+        );
         assert_eq!(
             language_for_path(Path::new("b/c.PY")),
             Some(CodeLanguage::Python)

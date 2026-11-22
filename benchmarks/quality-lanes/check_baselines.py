@@ -9,8 +9,9 @@ Retrieval measurements come from platform-specific inference. Tokenisation and
 attention kernels differ enough that an identical ranked set can still differ in
 nDCG by roughly 1e-3 across macOS and Ubuntu (observed 9.5e-4 on
 go-workflow-discovery-v1 in CI run 45060504745, while MRR, recall and precision
-were identical). Retrieval therefore compares within RETRIEVAL_TOLERANCE, far
-below any real quality change, and still fails on any meaningful deviation.
+were identical). Only nDCG is therefore compared with a tolerance, far below
+any real quality change; MRR, recall and precision are exact because their quanta
+are small enough that a tolerance would hide a single missed judgement.
 
 Usage:
   python3 check_baselines.py --baselines baselines.json --lane retrieval \
@@ -27,8 +28,11 @@ import sys
 from pathlib import Path
 
 RETRIEVAL_KEYS = ["ndcg@10", "mrr@10", "recall@10", "precision@10"]
-# Cross-platform inference drift, not a quality allowance. See module docstring.
-RETRIEVAL_TOLERANCE = 2e-3
+# Cross-platform inference drift, not a quality allowance. Only nDCG drifted
+# between macOS and Ubuntu for an identical ranked set; MRR, recall and
+# precision were identical, and their quanta are small enough that a tolerance
+# would hide a single missed judgement. See module docstring.
+NDCG_TOLERANCE = 2e-3
 GRAPH_KEYS = [
     "edge_count",
     "verdicts",
@@ -92,12 +96,13 @@ def main() -> int:
         overall = results["runs"][0]["overall"]
         problems = []
         for key in RETRIEVAL_KEYS:
+            tolerance = NDCG_TOLERANCE if key == "ndcg@10" else 0.0
             diff(
                 f"overall.{key}",
                 fixture["retrieval"][key],
                 overall[key],
                 problems,
-                RETRIEVAL_TOLERANCE,
+                tolerance,
             )
     else:
         problems = []
@@ -122,17 +127,25 @@ def main() -> int:
         print(f"QUALITY REGRESSION on {args.fixture} ({args.lane} lane):", file=sys.stderr)
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
-        print(
-            "Any deviation — including improvements — fails this lane. "
-            "Re-baseline via a reviewed PR that updates baselines.json.",
-            file=sys.stderr,
-        )
+        if args.lane == "retrieval":
+            print(
+                "Retrieval metrics must match the pin (nDCG within 2e-3 for "
+                "cross-platform drift, the rest exactly). Re-baseline via a "
+                "reviewed PR that updates baselines.json.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "Any graph deviation — including improvements — fails this lane. "
+                "Re-baseline via a reviewed PR that updates baselines.json.",
+                file=sys.stderr,
+            )
         return 1
 
     if args.lane == "retrieval":
         print(
             f"OK: {args.fixture} retrieval lane matches baselines.json "
-            f"within {RETRIEVAL_TOLERANCE:g}"
+            f"(nDCG within {NDCG_TOLERANCE:g})"
         )
     else:
         print(f"OK: {args.fixture} graph lane matches baselines.json exactly")

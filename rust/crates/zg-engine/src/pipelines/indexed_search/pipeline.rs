@@ -1419,7 +1419,10 @@ mod tests {
             recall(SearchRouteMode::Vector, 11),
         ];
 
-        assert!(candidate_fusion_score(&both_routes, 10, &code_weights()) > candidate_fusion_score(&fts_only, 10, &code_weights()));
+        assert!(
+            candidate_fusion_score(&both_routes, 10, &code_weights())
+                > candidate_fusion_score(&fts_only, 10, &code_weights())
+        );
         assert!(
             candidate_fusion_score(&fts_conflicts_with_lower_vector, 10, &code_weights())
                 > candidate_fusion_score(&unrelated_selection_result, 10, &code_weights())
