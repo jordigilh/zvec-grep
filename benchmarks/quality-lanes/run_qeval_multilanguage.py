@@ -54,7 +54,7 @@ from evaluate_semantic_search import evaluate  # noqa: E402
 from replay_normalization import ReplayError, copy_fixture_sources  # noqa: E402
 
 RESULT_LIMIT = 10
-DEFAULT_MODEL = "local/potion-code-16m-v2"
+DEFAULT_MODEL = "local/all-minilm-l6-v2"
 
 _HEADER = re.compile(
     r"^#(?P<rank>\d+)(?: \[[^\]]+\])?(?: matchedBy=\S+)? "

@@ -50,7 +50,7 @@ use super::pipeline::{
     IndexEmbeddingRuntime, IndexingContext, get_workspace_index_status, index_workspace,
 };
 
-const DEFAULT_LOCAL_EMBEDDING: &str = "local/potion-code-16m-v2";
+const DEFAULT_LOCAL_EMBEDDING: &str = "local/all-minilm-l6-v2";
 
 #[derive(Clone)]
 pub(crate) struct WorkspaceIndexService {

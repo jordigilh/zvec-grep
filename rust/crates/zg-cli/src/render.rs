@@ -489,7 +489,7 @@ This version indexes text only with one embedding model per workspace.
 Explicit zg --index requires --embedding, ZVEC_GREP_EMBEDDING, or a configured
 default when creating a new index.
 Search automatically creates a missing index with a configured local model or
-local/potion-code-16m-v2, never a remote model.
+local/all-minilm-l6-v2, never a remote model.
 Model changes require --rebuild. Failed files are recorded; successful files
 remain searchable after a rebuild. Compatible indexes reuse their stored model.
 Rebuilding an incompatible index uses --embedding or the configured default;

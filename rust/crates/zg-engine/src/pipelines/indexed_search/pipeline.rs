@@ -29,13 +29,11 @@ use crate::{
 use super::{
     format_filter::{compile_format_filter, matches_file_name},
     path_filter::{all, compile_path_filter},
+    shape::QueryShape,
 };
 
 const DEFAULT_LIMIT: usize = 7;
 const RRF_K: f64 = 60.0;
-// Give lexical matches a modest tie preference for code-oriented queries.
-const FTS_RRF_WEIGHT: f64 = 1.1;
-const VECTOR_RRF_WEIGHT: f64 = 1.0;
 // Discordant routes and candidates straddling the result budget use a dominant route.
 const DISCORDANT_ROUTE_RRF_WEIGHT: f64 = 0.07;
 const ROUTE_RANK_AGREEMENT_FACTOR: f64 = 2.5;
@@ -226,7 +224,8 @@ pub(crate) async fn search_workspace_index(
     let recall_duration = recall_started.elapsed();
 
     let fusion_started = Instant::now();
-    let fused = fuse_candidates(candidates, limit);
+    let weights = fusion_weights(&routes);
+    let fused = fuse_candidates(candidates, limit, weights);
     let selected = fused.into_iter().take(limit).collect::<Vec<_>>();
     let fusion_duration = fusion_started.elapsed();
 
@@ -498,11 +497,27 @@ fn add_or_update_recall(recall: &mut Vec<SearchRecallTrace>, next: SearchRecallT
     }
 }
 
-fn fuse_candidates(candidates: HashMap<EntityId, Candidate>, limit: usize) -> Vec<Candidate> {
+/// Fusion weights for a plan. Every route of a primary group carries the same
+/// query text, so the group's shape follows its first route; a supplemental
+/// plan has a single route, where the weights do not reorder anything.
+fn fusion_weights(routes: &[ResolvedSearchRoute]) -> (f64, f64) {
+    routes
+        .first()
+        .map_or_else(
+            || QueryShape::Identifier.fusion_weights(),
+            |route| QueryShape::classify(&route.query).fusion_weights(),
+        )
+}
+
+fn fuse_candidates(
+    candidates: HashMap<EntityId, Candidate>,
+    limit: usize,
+    weights: (f64, f64),
+) -> Vec<Candidate> {
     let mut fused = candidates
         .into_values()
         .map(|mut candidate| {
-            candidate.score = candidate_fusion_score(&candidate.recall, limit);
+            candidate.score = candidate_fusion_score(&candidate.recall, limit, weights);
             candidate
         })
         .collect::<Vec<_>>();
@@ -518,7 +533,11 @@ fn fuse_candidates(candidates: HashMap<EntityId, Candidate>, limit: usize) -> Ve
     fused
 }
 
-fn candidate_fusion_score(recall: &[SearchRecallTrace], limit: usize) -> f64 {
+fn candidate_fusion_score(
+    recall: &[SearchRecallTrace],
+    limit: usize,
+    weights: (f64, f64),
+) -> f64 {
     let mut best_rank_by_route = HashMap::<SearchRouteMode, usize>::new();
     for trace in recall {
         let Some(rank) = trace.rank else {
@@ -534,8 +553,8 @@ fn candidate_fusion_score(recall: &[SearchRecallTrace], limit: usize) -> f64 {
         .iter()
         .map(|(mode, rank)| {
             let weight = match mode {
-                SearchRouteMode::Fts => FTS_RRF_WEIGHT,
-                SearchRouteMode::Vector => VECTOR_RRF_WEIGHT,
+                SearchRouteMode::Fts => weights.0,
+                SearchRouteMode::Vector => weights.1,
             };
             (*mode, *rank, weight / (RRF_K + rank_as_f64(*rank)))
         })
@@ -896,6 +915,12 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
+    /// Weights these fusion tests were written against: the identifier-query
+    /// balance, where lexical keeps its historical tie preference.
+    fn code_weights() -> (f64, f64) {
+        super::QueryShape::Identifier.fusion_weights()
+    }
+
     use async_trait::async_trait;
 
     use crate::{
@@ -913,9 +938,9 @@ mod tests {
     };
 
     use super::{
-        GlobMatcher, MatchedBy, QueryFilter, SearchEmbeddingRuntime, SearchPlan, SearchRecallTrace,
-        SearchRoute, SearchRouteMode, SearchStorage, candidate_fusion_score, compile_path_filter,
-        search_workspace_index,
+        GlobMatcher, MatchedBy, QueryFilter, QueryShape, SearchEmbeddingRuntime, SearchPlan,
+        SearchRecallTrace, SearchRoute, SearchRouteMode, SearchStorage, candidate_fusion_score,
+        compile_path_filter, search_workspace_index,
     };
 
     fn recall(path: SearchRouteMode, rank: usize) -> SearchRecallTrace {
@@ -1186,6 +1211,28 @@ mod tests {
     }
 
     #[test]
+    fn natural_language_weights_let_a_deep_vector_hit_outrank_a_lexical_only_hit() {
+        // The same evidence pair, scored under the two shapes. Lexical rank 1
+        // versus a vector hit the lexical leg never saw.
+        let lexical_only = [recall(SearchRouteMode::Fts, 1)];
+        let vector_only = [recall(SearchRouteMode::Vector, 40)];
+
+        let identifier = QueryShape::Identifier.fusion_weights();
+        assert!(
+            candidate_fusion_score(&lexical_only, 10, identifier)
+                > candidate_fusion_score(&vector_only, 10, identifier),
+            "identifier queries keep the lexical tie preference"
+        );
+
+        let natural_language = QueryShape::NaturalLanguage.fusion_weights();
+        assert!(
+            candidate_fusion_score(&vector_only, 10, natural_language)
+                > candidate_fusion_score(&lexical_only, 10, natural_language),
+            "natural-language queries let the vector leg lead"
+        );
+    }
+
+    #[test]
     fn strong_route_rank_survives_conflicting_weak_route_evidence() {
         let retry_membership = [
             recall(SearchRouteMode::Fts, 1),
@@ -1196,8 +1243,8 @@ mod tests {
             recall(SearchRouteMode::Vector, 2),
         ];
         assert!(
-            candidate_fusion_score(&retry_membership, 10)
-                > candidate_fusion_score(&unrelated_crd_retry, 10)
+            candidate_fusion_score(&retry_membership, 10, code_weights())
+                > candidate_fusion_score(&unrelated_crd_retry, 10, code_weights())
         );
 
         let lexical_query_winner = [
@@ -1209,16 +1256,16 @@ mod tests {
             recall(SearchRouteMode::Vector, 10),
         ];
         assert!(
-            candidate_fusion_score(&lexical_query_winner, 10)
-                > candidate_fusion_score(&semantic_retry_winner, 10)
+            candidate_fusion_score(&lexical_query_winner, 10, code_weights())
+                > candidate_fusion_score(&semantic_retry_winner, 10, code_weights())
         );
         let same_kind_retry = [
             recall(SearchRouteMode::Fts, 26),
             recall(SearchRouteMode::Vector, 12),
         ];
         assert!(
-            candidate_fusion_score(&lexical_query_winner, 10)
-                > candidate_fusion_score(&same_kind_retry, 10)
+            candidate_fusion_score(&lexical_query_winner, 10, code_weights())
+                > candidate_fusion_score(&same_kind_retry, 10, code_weights())
         );
 
         let strong_lexical_result = [
@@ -1230,8 +1277,8 @@ mod tests {
             recall(SearchRouteMode::Vector, 25),
         ];
         assert!(
-            candidate_fusion_score(&strong_lexical_result, 10)
-                > candidate_fusion_score(&deep_rank_agreement, 10)
+            candidate_fusion_score(&strong_lexical_result, 10, code_weights())
+                > candidate_fusion_score(&deep_rank_agreement, 10, code_weights())
         );
 
         let validator_guard = [
@@ -1243,8 +1290,8 @@ mod tests {
             recall(SearchRouteMode::Vector, 11),
         ];
         assert!(
-            candidate_fusion_score(&validator_guard, 10)
-                > candidate_fusion_score(&unrelated_selection_result, 10)
+            candidate_fusion_score(&validator_guard, 10, code_weights())
+                > candidate_fusion_score(&unrelated_selection_result, 10, code_weights())
         );
 
         let validator_explanation = [
@@ -1256,8 +1303,8 @@ mod tests {
             recall(SearchRouteMode::Vector, 1),
         ];
         assert!(
-            candidate_fusion_score(&validator_explanation, 10)
-                > candidate_fusion_score(&validator_fetch, 10)
+            candidate_fusion_score(&validator_explanation, 10, code_weights())
+                > candidate_fusion_score(&validator_fetch, 10, code_weights())
         );
     }
 
@@ -1277,10 +1324,10 @@ mod tests {
             recall(SearchRouteMode::Vector, 11),
         ];
 
-        assert!(candidate_fusion_score(&both_routes, 10) > candidate_fusion_score(&fts_only, 10));
+        assert!(candidate_fusion_score(&both_routes, 10, code_weights()) > candidate_fusion_score(&fts_only, 10, code_weights()));
         assert!(
-            candidate_fusion_score(&fts_conflicts_with_lower_vector, 10)
-                > candidate_fusion_score(&unrelated_selection_result, 10)
+            candidate_fusion_score(&fts_conflicts_with_lower_vector, 10, code_weights())
+                > candidate_fusion_score(&unrelated_selection_result, 10, code_weights())
         );
 
         let moderately_ranked_agreement = [
@@ -1289,7 +1336,7 @@ mod tests {
         ];
         let vector_rank = 1.0 / (60.0 + 39.0);
         assert!(
-            (candidate_fusion_score(&moderately_ranked_agreement, 10)
+            (candidate_fusion_score(&moderately_ranked_agreement, 10, code_weights())
                 - (vector_rank + vector_rank * super::MAX_CORROBORATION_RATIO))
                 .abs()
                 < 1e-12
@@ -1302,7 +1349,7 @@ mod tests {
         let fts_transition_rank = 1.1 / (60.0 + 26.0);
         let vector_transition_rank = 1.0 / (60.0 + 12.0);
         assert!(
-            (candidate_fusion_score(&transition_band_agreement, 10)
+            (candidate_fusion_score(&transition_band_agreement, 10, code_weights())
                 - (vector_transition_rank
                     + super::DISCORDANT_ROUTE_RRF_WEIGHT * fts_transition_rank))
                 .abs()
