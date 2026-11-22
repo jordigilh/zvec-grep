@@ -11,8 +11,12 @@ The contract is *equal or better* per language and per metric:
 
 Only representation noise is tolerated, plus cross-platform inference drift in
 nDCG (``2e-3``, observed at 9.5e-4 between macOS and Ubuntu for an identical
-ranked set). Recall and precision are compared exactly: their quanta are small
-enough that any tolerance would hide a missed judgement. Cross-language averages are never computed.
+ranked set). MRR, recall and precision are otherwise exact: their quanta are
+small enough that a quality tolerance would hide a missed judgement. The
+``1e-12`` epsilon exists only because the floors are stored to 12 decimal
+places, so a correct run can sit 3e-13 below its own pin.
+
+Cross-language averages are never computed.
 """
 from __future__ import annotations
 

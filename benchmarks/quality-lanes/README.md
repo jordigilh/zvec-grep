@@ -8,7 +8,7 @@ Three lanes run on every PR whose diff touches their trigger paths (see
 
 | Lane | Gates | Trigger paths (in addition to `benchmarks/quality-lanes/**`) |
 |---|---|---|
-| `retrieval-quality` | hybrid semantic-search retrieval metrics vs adjudicated qrels (Go, exact) | `rust/crates/zg-engine/**`, `src/engine/**`, `src/index.ts`, `src/index-progress.ts`, `rust/Cargo.lock`, `rust/rust-toolchain.toml` |
+| `retrieval-quality` | hybrid semantic-search retrieval metrics vs adjudicated qrels (Go; nDCG within cross-platform tolerance) | `rust/crates/zg-engine/**`, `src/engine/**`, `src/index.ts`, `src/index-progress.ts`, `rust/Cargo.lock`, `rust/rust-toolchain.toml` |
 | `retrieval-quality-multilanguage` | same metrics for Go, Python, Rust and TypeScript, equal-or-better per language and metric vs `baselines-multilanguage.json` | same as `retrieval-quality` |
 | `graph-quality` | native codegraph call-edge quality vs compiler truth | `rust/crates/zg-codegraph/**`, `rust/crates/zg-graph-projection/**`, `rust/Cargo.lock`, `rust/rust-toolchain.toml` |
 
@@ -45,9 +45,12 @@ fixture; a ranking that differs between repeats aborts the run.
 `check_baselines_multilanguage.py` enforces **equal or better** for every
 metric: a regression fails, an improvement passes and is printed (re-pin it in
 a reviewed change so the floor cannot silently rot). There is no cross-language
-average and no quality tolerance; only float representation noise (1e-12) is
-allowed. The pinned values were measured on macOS/arm64 and the same numbers
-were reproduced byte-for-byte on the `ubuntu-24.04` CI runner before the label
+average and no quality tolerance. nDCG is compared within `2e-3` for
+cross-platform inference drift (Ubuntu CI measured an identical ranked set
+9.5e-4 apart from macOS); MRR, recall and precision are compared exactly, and
+their pins are stored to 12 decimal places, which is the only reason the
+`1e-12` representation epsilon exists. The pinned values were measured on
+macOS/arm64 and reproduced on the `ubuntu-24.04` CI runner before the label
 corrections below, so the floor is not host-specific.
 
 The Rust and TypeScript truth/qrels were corrected in Engram commit
@@ -89,12 +92,13 @@ regenerates the compiler truth. It is committed for regeneration only — the
 truth JSON is committed, so **the graph lane needs no Go toolchain at CI
 time**; it only adjudicates the produced codegraph against static truth.
 
-## The contract: exact equality, no retries
+## The contract: pinned values, no retries
 
-`baselines.json` is the machine-checked acceptance reference. Every
-measurement to date has been byte-reproducible across machines, so the lanes
-compare with **exact equality** and use **no retries** — determinism is the
-contract, a flake is a finding. Any deviation fails the lane:
+`baselines.json` is the machine-checked acceptance reference. The lanes use
+**no retries** — determinism is the contract, a flake is a finding. Graph
+measurements and every retrieval metric except nDCG compare with **exact
+equality**; nDCG allows `2e-3` for cross-platform inference drift. Any other
+deviation fails the lane:
 
 - **Retrieval lane** (`run_qeval.py`): copies a fixture's sources into a
   fresh work root, builds the index once (`--refresh wait` warmup), runs the

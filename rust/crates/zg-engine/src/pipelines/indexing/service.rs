@@ -753,6 +753,16 @@ fn acquire_model(
         .map_err(ModelError::into_engine_error)
 }
 
+/// Reports whether the configured local model can decide this build's model,
+/// i.e. the build is implicit and nothing explicit or stored already wins.
+fn needs_implicit_fallback(
+    implicit: bool,
+    requested: Option<&EmbeddingModelSpec>,
+    existing: Option<&WorkspaceManifest>,
+) -> bool {
+    implicit && requested.is_none() && existing.and_then(|manifest| manifest.embedding()).is_none()
+}
+
 pub(crate) fn embedding_reference(
     existing: Option<&WorkspaceManifest>,
     requested: Option<&EmbeddingModelSpec>,
@@ -763,8 +773,9 @@ pub(crate) fn embedding_reference(
     // An implicit build may use a configured local model, but never a remote
     // one, and a stored model still outranks both. Resolving it as a fallback
     // rather than as an explicit request keeps a refresh of an existing index
-    // on its stored model.
-    let implicit_local = if implicit {
+    // on its stored model. Only resolve it when it can decide the outcome, so
+    // an unusable configured value cannot fail a request that names its model.
+    let implicit_local = if needs_implicit_fallback(implicit, requested, existing) {
         crate::config::implicit_embedding_override()?
     } else {
         None
@@ -1511,6 +1522,23 @@ mod tests {
         assert!(!super::has_build(&home));
         assert!(!active.storage_home().exists());
         models.close();
+    }
+
+    #[test]
+    fn implicit_fallback_only_decides_when_nothing_else_does() {
+        // The configured local model may decide an implicit build only when no
+        // explicit model was requested and no index model is stored. This is
+        // the arm that keeps a daemon refresh on its existing model.
+        assert!(super::needs_implicit_fallback(true, None, None));
+        assert!(!super::needs_implicit_fallback(false, None, None));
+        let explicit = EmbeddingModelSpec {
+            reference: "local/gte-modernbert-base".into(),
+            revision: None,
+            cache_dir: None,
+            endpoint: None,
+            device: Device::Cpu,
+        };
+        assert!(!super::needs_implicit_fallback(true, Some(&explicit), None));
     }
 
     #[test]

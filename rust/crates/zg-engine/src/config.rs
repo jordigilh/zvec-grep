@@ -362,12 +362,13 @@ pub(crate) fn string(value: &Value, path: &[&str]) -> Option<String> {
     current.as_str().map(str::to_owned)
 }
 
-/// Selects an explicitly configured local model for CLI-only implicit
-/// indexing, never a remote default.
+/// Resolves the configured local model used as the implicit-build fallback.
 ///
-/// `None` means nothing was configured: the index request leaves the model
-/// unset so the engine profiles the repository and applies its built-in
-/// selection, which keeps first-search indexing identical to `zg --index`.
+/// It ranks below an explicit request and below a stored index model, and it is
+/// never allowed to select a remote model. `None` means nothing local was
+/// configured, so the engine profiles the repository and applies its built-in
+/// selection. The daemon's missing-index rebuild relies on this as well, so the
+/// rule is engine-side rather than CLI-only.
 /// # Errors
 /// Returns configuration I/O, validation, and invalid environment model errors.
 pub fn implicit_embedding_override() -> Result<Option<String>, EngineError> {
