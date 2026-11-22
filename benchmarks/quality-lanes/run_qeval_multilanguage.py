@@ -35,6 +35,7 @@ lists and identical unmatched-hit reports; a mismatch aborts the run.
 Usage:
   python3 run_qeval_multilanguage.py --fixture <fixture-dir> --binary <zg> \
       --work-root <dir> --output <dir> [--model-cache <dir>] [--repeats 2]
+      [--model <reference>]
 """
 from __future__ import annotations
 
@@ -284,7 +285,7 @@ def _git(cwd: Path, *args: str) -> str | None:
     return completed.stdout.strip() or None
 
 
-def build_index(binary: Path, root: Path, model_cache: Path) -> float:
+def build_index(binary: Path, root: Path, model_cache: Path, model: str) -> float:
     """Build the workspace index explicitly when the binary supports it.
 
     Newer binaries require ``zg --index --embedding <model>`` before any query;
@@ -295,7 +296,7 @@ def build_index(binary: Path, root: Path, model_cache: Path) -> float:
     command = [
         str(binary),
         "--index",
-        "--embedding", DEFAULT_MODEL,
+        "--embedding", model,
         "--model-cache", str(model_cache),
         "--device", "cpu",
         "--mode", "direct",
@@ -324,6 +325,7 @@ def main() -> None:
         )),
     )
     parser.add_argument("--repeats", type=int, default=2)
+    parser.add_argument("--model", default=DEFAULT_MODEL)
     args = parser.parse_args()
 
     if args.repeats < 1:
@@ -347,7 +349,7 @@ def main() -> None:
 
     # Build the index once; every measured query and every repeat sees it frozen.
     warmup_started = time.monotonic()
-    build_index(binary, root, model_cache)
+    build_index(binary, root, model_cache, args.model)
     run_queries(binary, root, queries[:1], "wait", model_cache)
     index_wall_seconds = round(time.monotonic() - warmup_started, 3)
 
@@ -435,7 +437,7 @@ def main() -> None:
             "binary_sha256": binary_sha256,
             "checkout_commit": checkout_commit,
             "checkout_branch": checkout_branch,
-            "model": DEFAULT_MODEL,
+            "model": args.model,
             "device": "cpu",
             "result_limit": RESULT_LIMIT,
             "refresh_measured": "off",
