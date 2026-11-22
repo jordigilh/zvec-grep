@@ -1045,9 +1045,19 @@ impl IndexOperationProvider for WorkspaceRuntimeManager {
         }
         let options = IndexOptions {
             root: request.root.clone(),
-            // A missing index is rebuilt like a first search: profile the
-            // repository instead of adopting a remote environment default.
+            // A missing index is rebuilt like a first search: a configured
+            // local model still wins, and otherwise the repository is
+            // profiled rather than adopting a remote environment default.
             implicit: true,
+            embedding: zg_engine::config::implicit_embedding_override()?.map(|reference| {
+                zg_engine::api::index::options::EmbeddingModelSpec {
+                    reference,
+                    revision: None,
+                    cache_dir: None,
+                    endpoint: None,
+                    device: zg_engine::api::index::options::Device::Auto,
+                }
+            }),
             on_progress: request.on_progress.clone(),
             signal: request.signal.clone(),
             allow_remote: request.allow_remote,

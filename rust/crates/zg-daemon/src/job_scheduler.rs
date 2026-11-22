@@ -696,6 +696,9 @@ fn merge_runtime_options(current: &mut IndexOptions, incoming: &mut IndexOptions
         current.api_key = None;
         current.endpoint = None;
     }
+    // A manual submit is authoritative: once it merges into a queued implicit
+    // rebuild, the merged job must honour configured and environment models.
+    current.implicit &= incoming.implicit;
     // Runtime/model settings are explicit updates too. A filter-only request
     // must not erase the model or credentials of an already queued manual job.
     merge_update(&mut current.root, incoming.root.take());

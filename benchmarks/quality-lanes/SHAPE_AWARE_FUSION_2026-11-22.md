@@ -163,7 +163,7 @@ Triage of the rest of the catalog is tracked in issue #66.
 ## Result on the five lanes (shipped configuration)
 
 Run with `benchmarks/quality-lanes/run_qeval_multilanguage.py --model auto`,
-which leaves selection to the engine, binary sha256 `784340a5…`, two same-root
+which leaves selection to the engine, binary sha256 `370201cc…`, two same-root
 repeats, deterministic on every lane. Each lane is a single-language repository,
 so the engine picks that language's measured best model.
 
@@ -184,7 +184,9 @@ covers `go-workflow-discovery-v1` (role tuning) and `go-inventory-audit-v1`
 (role holdout). The holdout is the one lane not used for any choice here, and it
 moves mixed: nDCG 0.6308 -> 0.6243, recall 0.7833 -> 0.7146, precision
 0.3000 -> 0.2750, MRR 0.7813 -> 0.9000. Both single-lane pins are re-baselined
-to measured two-repeat values in this change.
+to measured two-repeat values in this change. That checker compares retrieval
+metrics within 2e-3 because Ubuntu CI measured the same ranked set 9.5e-4 apart
+in nDCG from macOS; graph metrics stay byte-identical.
 
 ## Compatibility: existing indexes need a rebuild
 

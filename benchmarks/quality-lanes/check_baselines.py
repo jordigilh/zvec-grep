@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Check a lane result against baselines.json with exact equality.
+"""Check a lane result against baselines.json.
 
-The quality lanes gate on byte-reproducible measurements: every measurement to
-date has been identical across machines, so ANY deviation from the baseline —
-including an "improvement" — fails the lane. Improvements (and acknowledged
-regressions) require re-baselining through a reviewed PR that changes
-baselines.json.
+Graph measurements are byte-reproducible: ANY deviation from the baseline —
+including an "improvement" — fails the lane, and any change requires
+re-baselining through a reviewed PR that changes baselines.json.
+
+Retrieval measurements come from platform-specific inference. Tokenisation and
+attention kernels differ enough that an identical ranked set can still differ in
+nDCG by roughly 1e-3 across macOS and Ubuntu (observed 9.5e-4 on
+go-workflow-discovery-v1 in CI run 45060504745, while MRR, recall and precision
+were identical). Retrieval therefore compares within RETRIEVAL_TOLERANCE, far
+below any real quality change, and still fails on any meaningful deviation.
 
 Usage:
   python3 check_baselines.py --baselines baselines.json --lane retrieval \
@@ -22,6 +27,8 @@ import sys
 from pathlib import Path
 
 RETRIEVAL_KEYS = ["ndcg@10", "mrr@10", "recall@10", "precision@10"]
+# Cross-platform inference drift, not a quality allowance. See module docstring.
+RETRIEVAL_TOLERANCE = 2e-3
 GRAPH_KEYS = [
     "edge_count",
     "verdicts",
@@ -40,9 +47,19 @@ GRAPH_KEYS = [
 ]
 
 
-def diff(path: str, expected, actual, problems: list[str]) -> None:
+def diff(
+    path: str,
+    expected,
+    actual,
+    problems: list[str],
+    tolerance: float = 0.0,
+) -> None:
     if isinstance(expected, float) or isinstance(actual, float):
-        if expected != actual:  # exact float equality is the contract
+        if tolerance and isinstance(expected, (int, float)) and isinstance(actual, (int, float)):
+            within = abs(float(actual) - float(expected)) <= tolerance
+        else:
+            within = expected == actual
+        if not within:
             problems.append(f"{path}: expected {expected!r}, got {actual!r}")
     elif expected != actual:
         problems.append(f"{path}: expected {expected!r}, got {actual!r}")
@@ -75,7 +92,13 @@ def main() -> int:
         overall = results["runs"][0]["overall"]
         problems = []
         for key in RETRIEVAL_KEYS:
-            diff(f"overall.{key}", fixture["retrieval"][key], overall[key], problems)
+            diff(
+                f"overall.{key}",
+                fixture["retrieval"][key],
+                overall[key],
+                problems,
+                RETRIEVAL_TOLERANCE,
+            )
     else:
         problems = []
         for key in GRAPH_KEYS:
@@ -106,7 +129,13 @@ def main() -> int:
         )
         return 1
 
-    print(f"OK: {args.fixture} {args.lane} lane matches baselines.json exactly")
+    if args.lane == "retrieval":
+        print(
+            f"OK: {args.fixture} retrieval lane matches baselines.json "
+            f"within {RETRIEVAL_TOLERANCE:g}"
+        )
+    else:
+        print(f"OK: {args.fixture} graph lane matches baselines.json exactly")
     return 0
 
 
