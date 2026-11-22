@@ -3,11 +3,11 @@
   "policy": "Per language and per metric the measured value must be >= the pinned floor. Improvements pass and are printed; re-pin them in a reviewed change. No cross-language average.",
   "provenance": {
     "measured_on": "macOS 26 arm64",
-    "binary_sha256": "686d9f70eaf8fa2e631a83c74c38b7124bb6ac792b8680e6b9f9de335a7d53e3",
-    "commit": "ee7990b513b46494cbe7a954a3edee85cb0dd8cf",
-    "branch": "ci/quality-lanes-multilanguage-report-only",
+    "binary_sha256": "a26e1fda264470bb1b8b275e4a52b80ec70830292c9877ccdc3485bc89e4e194",
+    "commit": "04ada0edb2a57fa00fed415956aaa13fdd6abfbf",
+    "branch": "feat/shape-aware-fusion",
     "fixture_source": "jordigilh/engram 9032f43 (rust/typescript), 7752ae9 (python), ca6231c (java)",
-    "model": "local/potion-code-16m-v2",
+    "model": "local/gte-modernbert-base",
     "device": "cpu",
     "result_limit": 10
   },
@@ -22,50 +22,50 @@
     "go-workflow-discovery-v1": {
       "role": "tuning",
       "retrieval": {
-        "ndcg@10": 0.5887735493745122,
-        "mrr@10": 0.7333333333333333,
-        "recall@10": 0.6770833333333334,
-        "precision@10": 0.25
+        "ndcg@10": 0.646117217756,
+        "mrr@10": 0.84375,
+        "recall@10": 0.722916666667,
+        "precision@10": 0.275
       },
       "fixture_snapshot_sha256": "94183663d9e5f81b753dde7c460428c2414c46867b936b5cc42f9827dab0827f"
     },
     "python-workflow-discovery-v1": {
       "role": "tuning",
       "retrieval": {
-        "ndcg@10": 0.6386878747231478,
-        "mrr@10": 0.6375,
-        "recall@10": 0.7757440476190476,
-        "precision@10": 0.325
+        "ndcg@10": 0.628224020921,
+        "mrr@10": 0.6875,
+        "recall@10": 0.767261904762,
+        "precision@10": 0.3125
       },
       "fixture_snapshot_sha256": "0b77b06131e0a0e8ffbafa258c54e8900b7c32c2ea6f156ea75e8c6a181e076b"
     },
     "rust-workflow-discovery-v1": {
       "role": "tuning",
       "retrieval": {
-        "ndcg@10": 0.5977497592051056,
-        "mrr@10": 0.6458333333333334,
-        "recall@10": 0.7422619047619048,
-        "precision@10": 0.3
+        "ndcg@10": 0.649967356184,
+        "mrr@10": 0.791666666667,
+        "recall@10": 0.785119047619,
+        "precision@10": 0.325
       },
       "fixture_snapshot_sha256": "eb8b41c271aa13160a1ba7ce63af7c8ea35461f3f1bfa8248a3845d19d44c98a"
     },
     "typescript-workflow-discovery-v1": {
       "role": "tuning",
       "retrieval": {
-        "ndcg@10": 0.48364449473381765,
-        "mrr@10": 0.7083333333333334,
-        "recall@10": 0.555952380952381,
-        "precision@10": 0.2625
+        "ndcg@10": 0.668947032753,
+        "mrr@10": 0.84375,
+        "recall@10": 0.751636904762,
+        "precision@10": 0.3
       },
       "fixture_snapshot_sha256": "152a5562e1fbc0a44f8e7143fa29b9559c6a1ad4a5b85c309a092bb9814b1057"
     },
     "java-workflow-discovery-v1": {
       "role": "tuning",
       "retrieval": {
-        "ndcg@10": 0.32504626571216116,
-        "mrr@10": 0.4791666666666667,
-        "recall@10": 0.47023809523809523,
-        "precision@10": 0.175
+        "ndcg@10": 0.466327574012,
+        "mrr@10": 0.549107142857,
+        "recall@10": 0.642261904762,
+        "precision@10": 0.25
       },
       "fixture_snapshot_sha256": "77ac5f8c10eeebeb3097158a166eeb729ddee0d6e5d8e880b59c151363f52c38"
     }
