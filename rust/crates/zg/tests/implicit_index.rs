@@ -498,9 +498,11 @@ fn configured_local_models_follow_environment_then_global_default_precedence() {
         ),
         ("qwen/text-embedding-v4", None, "local/gte-modernbert-base"),
         (
+            // A remote environment value must not hide the local configured
+            // default: the index stays local.
             "local/potion-retrieval-32m",
             Some("qwen/text-embedding-v4"),
-            "local/gte-modernbert-base",
+            "local/potion-retrieval-32m",
         ),
     ] {
         let fixture = Fixture::new();

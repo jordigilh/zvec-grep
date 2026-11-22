@@ -613,16 +613,28 @@ fn profile_model(
     selection: &crate::file_selection::GlobMatcher,
 ) -> Option<&'static str> {
     let mut weights = HashMap::new();
+    let mut unmapped_bytes = 0_u64;
     for (path, size) in files {
         if !selection.matches_path(&path) {
             continue;
         }
-        if let Some(language) = super::language_profile::language_for_path(&path) {
-            *weights.entry(language).or_default() += size;
+        match super::language_profile::language_for_path(&path) {
+            Some(language) => *weights.entry(language).or_default() += size,
+            // A language with no measured preference still competes for
+            // dominance: if it outweighs every mapped language, no mapping may
+            // speak for the repository and the generalist applies.
+            None if super::language_profile::is_source_like(&path) => unmapped_bytes += size,
+            None => {}
         }
     }
-    super::language_profile::dominant_language(weights)
-        .map(super::language_profile::CodeLanguage::preferred_model)
+    let dominant =
+        super::language_profile::dominant_language(weights.iter().map(|(k, v)| (*k, *v)));
+    match dominant {
+        Some(language) if weights.get(&language).copied().unwrap_or_default() > unmapped_bytes => {
+            Some(language.preferred_model())
+        }
+        _ => None,
+    }
 }
 
 fn normalize_model_paths(options: &mut IndexOptions) -> Result<(), EngineError> {
@@ -1583,6 +1595,29 @@ mod tests {
         ];
         assert_eq!(
             super::profile_model(files, &selection),
+            Some("local/multilingual-e5-small")
+        );
+    }
+
+    #[test]
+    fn an_unmapped_majority_language_falls_back_to_the_generalist() {
+        let directory = tempdir().expect("profile root");
+        let selection =
+            crate::file_selection::GlobMatcher::new(directory.path(), &[]).expect("matcher");
+        // C++ outweighs Python, and no mapping exists for C++: no language may
+        // speak for the repository.
+        let cpp_majority = [
+            (PathBuf::from("src/engine.cpp"), 100_000),
+            (PathBuf::from("tools/task.py"), 1_000),
+        ];
+        assert_eq!(super::profile_model(cpp_majority, &selection), None);
+        // The same listing with the majority mapped still selects.
+        let python_majority = [
+            (PathBuf::from("src/engine.cpp"), 1_000),
+            (PathBuf::from("tools/task.py"), 100_000),
+        ];
+        assert_eq!(
+            super::profile_model(python_majority, &selection),
             Some("local/multilingual-e5-small")
         );
     }

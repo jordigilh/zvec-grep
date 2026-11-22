@@ -382,7 +382,12 @@ pub fn implicit_embedding_override() -> Result<Option<String>, EngineError> {
         },
     )
     .map_err(crate::models::ModelError::into_engine_error)?;
-    Ok(configured.filter(|reference| reference.starts_with("local/")))
+    if let Some(local) = configured.filter(|reference| reference.starts_with("local/")) {
+        return Ok(Some(local));
+    }
+    // A remote environment value must not hide a configured local default.
+    Ok(string(&config, &["defaults", "embedding"])
+        .filter(|reference| reference.starts_with("local/")))
 }
 
 pub(crate) fn device(value: &Value, reference: &str) -> Option<Device> {

@@ -372,6 +372,15 @@ def main() -> None:
     warmup_started = time.monotonic()
     build_index(binary, root, model_cache, args.model)
     run_queries(binary, root, queries[:1], "wait", model_cache)
+    # A failed explicit build falls back to the warmup query, which may create
+    # the index with a different model. Never measure under a mislabelled model.
+    indexed_model = resolved_model(root)
+    if indexed_model is None:
+        raise SystemExit(f"index manifest is missing after the warmup query: {root}")
+    if args.model != "auto" and indexed_model != args.model:
+        raise SystemExit(
+            f"index model {indexed_model} does not match the requested {args.model}"
+        )
     index_wall_seconds = round(time.monotonic() - warmup_started, 3)
 
     repeats: list[list[dict[str, Any]]] = []

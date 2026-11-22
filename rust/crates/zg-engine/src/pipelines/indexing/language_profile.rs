@@ -49,6 +49,49 @@ pub(crate) fn language_for_path(path: &std::path::Path) -> Option<CodeLanguage> 
     })
 }
 
+/// Reports a source file in a language this table does not map, so it can
+/// still compete for dominance instead of being ignored.
+pub(crate) fn is_source_like(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some(
+            "c" | "h"
+                | "cc"
+                | "cpp"
+                | "cxx"
+                | "hpp"
+                | "cs"
+                | "rb"
+                | "php"
+                | "kt"
+                | "kts"
+                | "swift"
+                | "scala"
+                | "m"
+                | "mm"
+                | "ex"
+                | "exs"
+                | "erl"
+                | "hrl"
+                | "hs"
+                | "lua"
+                | "pl"
+                | "r"
+                | "jl"
+                | "dart"
+                | "vue"
+                | "svelte"
+                | "js"
+                | "jsx"
+                | "mjs"
+                | "cjs"
+        )
+    )
+}
+
 /// Picks the language with the largest share of source bytes.
 ///
 /// Ties return `None`: an even split gives no language the right to speak for
@@ -83,6 +126,15 @@ mod tests {
     use std::path::Path;
 
     use super::{CodeLanguage, dominant_language, language_for_path};
+
+    #[test]
+    fn unmapped_source_languages_are_recognised() {
+        assert!(super::is_source_like(Path::new("src/engine.cpp")));
+        assert!(super::is_source_like(Path::new("web/app.jsx")));
+        assert!(!super::is_source_like(Path::new("README.md")));
+        assert!(!super::is_source_like(Path::new("Cargo.toml")));
+        assert_eq!(language_for_path(Path::new("src/engine.cpp")), None);
+    }
 
     #[test]
     fn maps_source_extensions() {

@@ -16,7 +16,19 @@
       "note": "Pre-relabel floor was identical to the macOS measurement on all four lanes (2 repeats, 0 unmatched).",
       "result": "identical"
     },
-    "repeats": "2 per lane, frozen index, identical normalized unit rankings"
+    "repeats": "2 per lane, frozen index, identical normalized unit rankings",
+    "ubuntu_24_04_multilanguage": {
+      "run": "45060504745",
+      "note": "Every lane met its floor on ubuntu-24.04. nDCG differed from the macOS measurement by at most 9.5e-4 (go) while MRR, recall and precision were identical.",
+      "metric": "ndcg@10",
+      "values": {
+        "go": 0.6461172177559741,
+        "python": 0.7604684857140058,
+        "rust": 0.7266872944148519,
+        "typescript": 0.6689470327527128,
+        "java": 0.5402721631882025
+      }
+    }
   },
   "fixtures": {
     "go-workflow-discovery-v1": {

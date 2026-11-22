@@ -572,33 +572,33 @@ fn candidate_fusion_score(
     limit: usize,
     weights: &FusionWeights,
 ) -> f64 {
-    // Best rank per mode, with the route that produced it, so each mode is
-    // weighted by the shape of the query that actually retrieved the hit.
-    let mut best_by_mode = HashMap::<SearchRouteMode, (usize, &str)>::new();
+    // Best weighted contribution per mode, not merely the best rank: routes
+    // carry different weights, so a rank-2 hit on a natural-language vector
+    // route outscores a rank-1 hit on an identifier route of the same mode.
+    let mut best_by_mode = HashMap::<SearchRouteMode, (f64, usize, &str)>::new();
     for trace in recall {
         let Some(rank) = trace.rank else {
             continue;
         };
+        let (lexical, vector) = weights.for_route(&trace.route_id);
+        let weight = match trace.path {
+            SearchRouteMode::Fts => lexical,
+            SearchRouteMode::Vector => vector,
+        };
+        let score = weight / (RRF_K + rank_as_f64(rank));
         best_by_mode
             .entry(trace.path)
             .and_modify(|best| {
-                if rank < best.0 {
-                    *best = (rank, trace.route_id.as_str());
+                if score > best.0 {
+                    *best = (score, rank, trace.route_id.as_str());
                 }
             })
-            .or_insert((rank, trace.route_id.as_str()));
+            .or_insert((score, rank, trace.route_id.as_str()));
     }
 
     let route_scores = best_by_mode
         .iter()
-        .map(|(mode, (rank, route_id))| {
-            let (lexical, vector) = weights.for_route(route_id);
-            let weight = match mode {
-                SearchRouteMode::Fts => lexical,
-                SearchRouteMode::Vector => vector,
-            };
-            (*mode, *rank, weight / (RRF_K + rank_as_f64(*rank)))
-        })
+        .map(|(mode, (score, rank, _))| (*mode, *rank, *score))
         .collect::<Vec<_>>();
     let Some((primary_mode, _, primary_score)) = route_scores
         .iter()
