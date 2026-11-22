@@ -568,7 +568,8 @@ async fn dominant_language_model(
         return Ok(None);
     }
     let config = crate::config::read()?;
-    if crate::config::string(&config, &["defaults", "embedding"]).is_some() {
+    let configured = crate::config::string(&config, &["defaults", "embedding"]);
+    if configured_default_wins(configured.as_deref(), options.implicit) {
         return Ok(None);
     }
 
@@ -591,6 +592,13 @@ async fn dominant_language_model(
             .map(|file| (file.relative_path, file.size_bytes)),
         selection,
     ))
+}
+
+/// Reports whether a configured default will decide this build, making the
+/// language profile irrelevant. An implicit build ignores a remote default
+/// (implicit builds never select remote models), so profiling still applies.
+fn configured_default_wins(configured: Option<&str>, implicit: bool) -> bool {
+    configured.is_some_and(|reference| !implicit || reference.starts_with("local/"))
 }
 
 /// Selects a model from a file listing. Split out from the scanner call so the
@@ -1536,6 +1544,27 @@ mod tests {
             !super::needs_implicit_fallback(true, false, true),
             "a stored index model wins"
         );
+    }
+
+    #[test]
+    fn a_configured_default_only_suppresses_profiling_when_it_will_be_used() {
+        assert!(!super::configured_default_wins(None, true));
+        assert!(super::configured_default_wins(
+            Some("local/all-minilm-l6-v2"),
+            true
+        ));
+        assert!(super::configured_default_wins(
+            Some("local/all-minilm-l6-v2"),
+            false
+        ));
+        assert!(
+            !super::configured_default_wins(Some("qwen/text-embedding-v4"), true),
+            "an implicit build ignores a remote default and still profiles"
+        );
+        assert!(super::configured_default_wins(
+            Some("qwen/text-embedding-v4"),
+            false
+        ));
     }
 
     #[test]

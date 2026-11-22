@@ -367,9 +367,9 @@ pub(crate) fn string(value: &Value, path: &[&str]) -> Option<String> {
 /// It ranks below an explicit request and below a stored index model, and it is
 /// never allowed to select a remote model. `None` means nothing local was
 /// configured; the engine then profiles the repository and applies its built-in
-/// selection, unless `defaults.embedding` names a local model, in which case
-/// that configured model applies. A remote default is ignored here, so implicit
-/// builds still profile. The daemon's missing-index rebuild relies on this as
+/// selection, unless `defaults.embedding` or `ZVEC_GREP_EMBEDDING` names a
+/// local model, in which case that configured model applies. A remote value is
+/// ignored here, so implicit builds still profile. The daemon's missing-index rebuild relies on this as
 /// well, so the rule is engine-side rather than CLI-only.
 /// # Errors
 /// Returns configuration I/O, validation, and invalid environment model errors.
