@@ -33,6 +33,9 @@ use super::{
 };
 
 const DEFAULT_LIMIT: usize = 7;
+/// Suffix of the synthesized symbol-preference recall route, derived from a
+/// plan route and therefore sharing its fusion weights.
+const PREFER_SYMBOL_SUFFIX: &str = ".prefer-symbol";
 const RRF_K: f64 = 60.0;
 // Discordant routes and candidates straddling the result budget use a dominant route.
 const DISCORDANT_ROUTE_RRF_WEIGHT: f64 = 0.07;
@@ -421,7 +424,7 @@ fn build_recall_routes(
             symbol_filter.symbol_names = Some(symbol_names);
             output.push(RecallRoute {
                 route: ResolvedSearchRoute {
-                    id: format!("{logical_id}.prefer-symbol"),
+                    id: format!("{logical_id}{PREFER_SYMBOL_SUFFIX}"),
                     mode: SearchRouteMode::Fts,
                     query: route.query.clone(),
                 },
@@ -528,6 +531,13 @@ impl FusionWeights {
     fn for_route(&self, route_id: &str) -> (f64, f64) {
         self.by_route
             .get(route_id)
+            .or_else(|| {
+                // The recall stage adds a synthesized symbol route derived from
+                // a plan route; it must keep that route's query shape.
+                route_id
+                    .strip_suffix(PREFER_SYMBOL_SUFFIX)
+                    .and_then(|base| self.by_route.get(base))
+            })
             .copied()
             .unwrap_or(self.fallback)
     }
@@ -973,9 +983,9 @@ mod tests {
     };
 
     use super::{
-        FusionWeights, GlobMatcher, MatchedBy, QueryFilter, QueryShape, SearchEmbeddingRuntime,
-        SearchPlan, SearchRecallTrace, SearchRoute, SearchRouteMode, SearchStorage,
-        candidate_fusion_score, compile_path_filter, search_workspace_index,
+        FusionWeights, GlobMatcher, MatchedBy, QueryFilter, QueryShape, ResolvedSearchRoute,
+        SearchEmbeddingRuntime, SearchPlan, SearchRecallTrace, SearchRoute, SearchRouteMode,
+        SearchStorage, candidate_fusion_score, compile_path_filter, search_workspace_index,
     };
 
     fn recall_with_route(path: SearchRouteMode, rank: usize, route_id: &str) -> SearchRecallTrace {
@@ -1284,19 +1294,19 @@ mod tests {
         // `--fuse` can mix an identifier route and a natural-language route in
         // one plan; the natural-language vector route must still be trusted
         // even though the identifier route is listed first.
-        let weights = FusionWeights {
-            by_route: HashMap::from([
-                (
-                    "identifier".to_owned(),
-                    QueryShape::Identifier.fusion_weights(),
-                ),
-                (
-                    "natural".to_owned(),
-                    QueryShape::NaturalLanguage.fusion_weights(),
-                ),
-            ]),
-            fallback: QueryShape::Identifier.fusion_weights(),
-        };
+        let routes = [
+            ResolvedSearchRoute {
+                id: "identifier".to_owned(),
+                mode: SearchRouteMode::Fts,
+                query: "validateParameters".to_owned(),
+            },
+            ResolvedSearchRoute {
+                id: "natural".to_owned(),
+                mode: SearchRouteMode::Vector,
+                query: "where does validation happen before execution".to_owned(),
+            },
+        ];
+        let weights = FusionWeights::for_routes(&routes);
         let lexical_only = [recall_with_route(SearchRouteMode::Fts, 1, "identifier")];
         let deep_vector = [recall_with_route(SearchRouteMode::Vector, 40, "natural")];
         assert!(
@@ -1304,6 +1314,10 @@ mod tests {
                 > candidate_fusion_score(&lexical_only, 10, &weights),
             "the natural-language route keeps its vector preference"
         );
+
+        // The synthesized symbol route inherits its logical route's shape.
+        let (natural_lexical, natural_vector) = weights.for_route("natural.prefer-symbol");
+        assert!(natural_vector > natural_lexical);
 
         let identifier_vector = [recall_with_route(SearchRouteMode::Vector, 40, "identifier")];
         assert!(

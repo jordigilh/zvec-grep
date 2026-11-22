@@ -489,13 +489,13 @@ This version indexes text only with one embedding model per workspace.
 Search automatically creates a missing index with a configured local model, or
 with a built-in local model chosen from the repository's dominant source
 language (falling back to local/gte-modernbert-base), never a remote model.
-Explicit --embedding and defaults.embedding always win, and an existing index
+Explicit --embedding and a local defaults.embedding win, and an existing index
 keeps its stored model.
 Model changes require --rebuild with --embedding; a rebuild alone keeps the
 stored model. Failed files are recorded; successful files remain searchable after
 a rebuild. Compatible indexes reuse their stored model.
-Rebuilding an incompatible index uses --embedding or the configured default;
-provide desired scan rules again.
+Rebuilding an incompatible index uses --embedding, the configured default, or
+the built-in language selection; provide desired scan rules again.
 
 Environment:
   ZVEC_GREP_MODE         Default client mode: direct, server, or auto

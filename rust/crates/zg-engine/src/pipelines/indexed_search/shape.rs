@@ -30,9 +30,10 @@ impl QueryShape {
     pub(crate) fn classify(query: &str) -> Self {
         let tokens = query.split_whitespace().collect::<Vec<_>>();
         if tokens.len() <= 1 {
-            // A single ASCII token is an identifier. A single token with no
-            // ASCII letters at all is a script without word spacing (CJK), so
-            // it carries sentence structure the lexical leg cannot trust.
+            // A single ASCII token is an identifier. A single token whose
+            // letters fall outside ASCII is likely a script without word
+            // spacing (CJK), so it carries sentence structure the lexical leg
+            // cannot trust.
             return match tokens.first() {
                 Some(token) if has_non_ascii_letter(token) => Self::NaturalLanguage,
                 _ => Self::Identifier,

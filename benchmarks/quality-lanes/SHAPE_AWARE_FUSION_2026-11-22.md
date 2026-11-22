@@ -163,7 +163,7 @@ Triage of the rest of the catalog is tracked in issue #66.
 ## Result on the five lanes (shipped configuration)
 
 Run with `benchmarks/quality-lanes/run_qeval_multilanguage.py --model auto`,
-which leaves selection to the engine, binary sha256 `770e69a9…`, two same-root
+which leaves selection to the engine, binary sha256 `784340a5…`, two same-root
 repeats, deterministic on every lane. Each lane is a single-language repository,
 so the engine picks that language's measured best model.
 
