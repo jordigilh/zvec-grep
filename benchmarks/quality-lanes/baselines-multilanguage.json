@@ -3,8 +3,8 @@
   "policy": "Per language and per metric the measured value must be >= the pinned floor. Improvements pass and are printed; re-pin them in a reviewed change. No cross-language average.",
   "provenance": {
     "measured_on": "macOS 26 arm64",
-    "binary_sha256": "d824f61cb656feda4eae318bb400c603d8430971b42feb6294cfab143459d87d",
-    "commit": "f491f5aadf46b201ed2ad229a09c80e423471536",
+    "binary_sha256": "ce78b5196681a0d8b4a323938165f447ab3e2233ecef8f2dd4a70e567bc53232",
+    "commit": "26dc5ef8d7d065fb78d0fe3dd21fa3948694c78d",
     "branch": "feat/shape-aware-fusion",
     "fixture_source": "jordigilh/engram 9032f43 (rust/typescript), 7752ae9 (python), ca6231c (java)",
     "model": "auto (local model chosen from the repository dominant source language; see SHAPE_AWARE_FUSION_2026-11-22.md)",
