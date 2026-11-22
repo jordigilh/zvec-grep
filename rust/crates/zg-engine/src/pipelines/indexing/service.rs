@@ -117,6 +117,19 @@ impl WorkspaceIndexService {
         Ok(())
     }
 
+    /// Resolves the scan rules, the workspace glob filter and, for a new
+    /// workspace, the model its dominant source language prefers.
+    async fn index_profile(
+        &self,
+        existing: Option<&WorkspaceManifest>,
+        options: &IndexOptions,
+        root: &Path,
+    ) -> Result<Option<&'static str>, EngineError> {
+        let scan = resolve_scan(existing, options);
+        let selection = crate::file_selection::GlobMatcher::new(root, &scan.globs)?;
+        dominant_language_model(&self.scanner, existing, options, root, &scan, &selection).await
+    }
+
     fn register_name(
         &self,
         root: &Path,
@@ -207,17 +220,9 @@ impl WorkspaceIndexService {
                 .as_ref()
                 .is_none_or(|manifest| !is_indexed(manifest));
         // Validate before model acquisition; invalid globs must not trigger downloads or inference.
-        let scan = resolve_scan(existing.as_ref(), &options);
-        let selection = crate::file_selection::GlobMatcher::new(&location.root, &scan.globs)?;
-        let language_default = dominant_language_model(
-            &self.scanner,
-            existing.as_ref(),
-            &options,
-            &location.root,
-            &scan,
-            &selection,
-        )
-        .await?;
+        let language_default = self
+            .index_profile(existing.as_ref(), &options, &location.root)
+            .await?;
         if options.reset_paths
             || options.scan != crate::api::index::options::ScanRulesUpdate::default()
         {
@@ -801,7 +806,6 @@ pub(crate) fn embedding_reference(
                 .or_else(|| language_default.map(str::to_owned))
                 .unwrap_or_else(|| DEFAULT_LOCAL_EMBEDDING.to_owned()),
         ),
-        ..ResolveEmbeddingReferenceOptions::default()
     })
     .map_err(ModelError::into_engine_error)?
     .ok_or_else(|| EngineError::internal("default embedding model is not configured"))
