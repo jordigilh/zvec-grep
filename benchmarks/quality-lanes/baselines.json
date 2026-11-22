@@ -822,7 +822,7 @@
     "README.md": "9e83f381671ab86da84b8b57c1b5dba68641429ebecf2f8c999b558d01e327c4",
     "SHAPE_AWARE_FUSION_2026-11-22.md": "19b5820df3653ba87070c96c7e55ff87d1f73e436acf4c6b663880278c0f08e2",
     "adjudicate_graph.py": "58acef2b8308ef70af4bfede8d14b3080f82373eb1ad9e13e7608365c99739ba",
-    "baselines-multilanguage.json": "b9250f530943e77a0ce87bdaec35f75b14111f24b5cde87bb84a51713117aceb",
+    "baselines-multilanguage.json": "087c761c41ecba199cb6adc6ae3ae19d87ae038a6a4d3a1dbffe02c0406ea75f",
     "check_baselines.py": "a66d044898d504dbb57662a54944efe578280cf98be12d5c8937eb2a1eff3885",
     "check_baselines_multilanguage.py": "b0039146fc334343eee5eafe3d8c1f308f5e039dca7e7eecfe1fa0db6e6b7163",
     "check_fixture_hashes.py": "ad28dbaf87e4b7cb953e722722759cbb12b0d96b8d08e880e8562a7579f8275f",
