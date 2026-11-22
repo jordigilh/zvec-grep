@@ -100,7 +100,7 @@ fn index_help_distinguishes_explicit_indexing_from_automatic_search_indexing() {
         help.contains("Search automatically creates a missing index"),
         "{help}"
     );
-    assert!(help.contains("local/all-minilm-l6-v2"), "{help}");
+    assert!(help.contains("local/gte-modernbert-base"), "{help}");
     assert!(help.contains("never a remote model"), "{help}");
 }
 

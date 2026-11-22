@@ -463,12 +463,12 @@ fn missing_index_uses_default_local_model_without_polluting_query_stdout() {
     let output = fixture.success(&["--mode", "direct", "--fts", "needle", "--no-color"]);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("No index found; creating one with local/all-minilm-l6-v2."),
+        stderr.contains("No index found; creating one with local/gte-modernbert-base."),
         "{stderr}"
     );
     assert!(stderr.contains("Index complete"), "{stderr}");
     assert_eq!(String::from_utf8_lossy(&output.stdout), "No matches.\n");
-    fixture.assert_model("direct", "local/all-minilm-l6-v2");
+    fixture.assert_model("direct", "local/gte-modernbert-base");
 }
 
 #[test]
@@ -494,11 +494,11 @@ fn configured_local_models_follow_environment_then_global_default_precedence() {
             Some("  "),
             "local/potion-retrieval-32m",
         ),
-        ("qwen/text-embedding-v4", None, "local/all-minilm-l6-v2"),
+        ("qwen/text-embedding-v4", None, "local/gte-modernbert-base"),
         (
             "local/potion-retrieval-32m",
             Some("qwen/text-embedding-v4"),
-            "local/all-minilm-l6-v2",
+            "local/gte-modernbert-base",
         ),
     ] {
         let fixture = Fixture::new();
@@ -520,9 +520,9 @@ fn configured_local_models_follow_environment_then_global_default_precedence() {
 #[test]
 fn auto_and_server_build_at_the_query_root_not_the_daemon_working_directory() {
     for (mode, server, expected) in [
-        ("auto", false, "local/all-minilm-l6-v2"),
+        ("auto", false, "local/gte-modernbert-base"),
         ("server", true, "local/potion-retrieval-32m"),
-        ("auto", true, "local/all-minilm-l6-v2"),
+        ("auto", true, "local/gte-modernbert-base"),
     ] {
         let mut fixture = Fixture::new();
         if server {
@@ -704,13 +704,13 @@ fn implicit_build_preserves_local_overrides_without_persisting_remote_credential
                 .output()
                 .expect("query with runtime overrides"),
         );
-        fixture.assert_model(mode, "local/all-minilm-l6-v2");
+        fixture.assert_model(mode, "local/gte-modernbert-base");
         let manifest: serde_json::Value = serde_json::from_slice(
             &fs::read(fixture.root.path().join(".zvec-grep/manifest.json")).expect("manifest"),
         )
         .expect("manifest JSON");
         // These persisted runtime settings are shared with the Node client.
-        let runtime = &manifest["embeddingRuntimes"]["local/all-minilm-l6-v2"];
+        let runtime = &manifest["embeddingRuntimes"]["local/gte-modernbert-base"];
         assert_eq!(runtime["device"], "cpu");
         assert_eq!(runtime["cacheDir"], json!(cache));
         assert!(runtime.get("apiKey").is_none());

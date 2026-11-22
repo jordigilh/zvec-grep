@@ -50,7 +50,7 @@ use super::pipeline::{
     IndexEmbeddingRuntime, IndexingContext, get_workspace_index_status, index_workspace,
 };
 
-const DEFAULT_LOCAL_EMBEDDING: &str = "local/all-minilm-l6-v2";
+const DEFAULT_LOCAL_EMBEDDING: &str = "local/gte-modernbert-base";
 
 #[derive(Clone)]
 pub(crate) struct WorkspaceIndexService {

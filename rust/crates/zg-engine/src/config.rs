@@ -376,7 +376,7 @@ pub fn implicit_embedding_reference() -> Result<String, EngineError> {
     .map_err(crate::models::ModelError::into_engine_error)?;
     Ok(configured
         .filter(|reference| reference.starts_with("local/"))
-        .unwrap_or_else(|| "local/all-minilm-l6-v2".to_owned()))
+        .unwrap_or_else(|| "local/gte-modernbert-base".to_owned()))
 }
 
 pub(crate) fn device(value: &Value, reference: &str) -> Option<Device> {

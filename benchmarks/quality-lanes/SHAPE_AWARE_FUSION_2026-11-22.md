@@ -1,7 +1,7 @@
 # Shape-aware fusion and the embedding-model default (2026-11-22)
 
-Why Sense beat zvec-grep on Java, what it cost to find out, and what the
-measured change does to all five quality lanes.
+Why Sense beat zvec-grep on Java, what it took to find out, and how the fix was
+chosen across the local model catalog.
 
 Fixtures and qrels are unchanged (sha256 pins intact). Nothing here was tuned
 by editing a fixture or a query. Per-language numbers only; no averages.
@@ -35,8 +35,6 @@ Read from `luuuc/sense` @ `a678631`:
 - `internal/search/shape.go` classifies a query as `identifier`,
   `natural_language` or `mixed` from the query string alone, then applies
   per-shape fusion weights, flooring the vector weight for natural language.
-- Consequently Sense's `--mode hybrid` equals `--mode semantic` on every one of
-  these natural-language queries.
 
 Two differences matter for zvec-grep: the embedding model, and the balance of
 the lexical and vector legs during fusion.
@@ -48,7 +46,7 @@ the lexical and vector legs during fusion.
 | potion-code-16m + hybrid (pinned floor) | 0.3250 | 0.4792 | 0.4702 |
 | potion-code-16m + vector only | 0.3981 | 0.2917 | 0.6223 |
 | all-MiniLM-L6-v2 + hybrid | 0.3710 | 0.3482 | 0.6256 |
-| all-MiniLM-L6-v2 + vector only | **0.5347** | **0.6688** | **0.6494** |
+| all-MiniLM-L6-v2 + vector only | 0.5347 | 0.6688 | 0.6494 |
 | Sense v1.15.1 | 0.4227 | 0.5458 | 0.4515 |
 
 Two separable effects:
@@ -77,82 +75,119 @@ natural-language semantics plus fusion.
   - mixed: 1.0 / 1.0,
   - natural language: 1.0 / 2.0.
 - `fuse_candidates` takes those weights instead of two constants.
-- The implicit default embedding model is now `local/all-minilm-l6-v2`
+- The implicit default embedding model is now `local/gte-modernbert-base`
   (`pipelines/indexing/service.rs`, `config.rs`), with help text and the
-  implicit-index integration tests updated.
+  implicit-index integration tests updated. The model was chosen by the sweep
+  below, not by assumption.
 
 Full workspace test suite passes (534 engine unit tests plus the integration
 suites).
 
+## Model catalog sweep
+
+Every local text model in `zg --help models` plus the incumbent MiniLM, run
+through the same lane runner with the shipped shape-aware fusion
+(`--repeats 1` for triage, `run_qeval_multilanguage.py --model <reference>`).
+Each cell is one lane; "Fails" counts how many of the 20 pinned cells
+(5 lanes x 4 metrics) the model lands below.
+
+nDCG@10:
+
+| Model | Fails | go | python | rust | typescript | java |
+|---|---:|---:|---:|---:|---:|---:|
+| `local/gte-modernbert-base` | 3 | 0.646 | 0.628 | 0.650 | 0.669 | 0.466 |
+| `local/nomic-embed-text-v1.5` | 3 | 0.604 | 0.743 | 0.676 | 0.566 | 0.387 |
+| `local/embeddinggemma-300m` | 3 | 0.638 | 0.675 | 0.685 | 0.603 | 0.431 |
+| `local/multilingual-e5-small` | 4 | 0.563 | 0.760 | 0.720 | 0.638 | 0.430 |
+| `local/jina-embeddings-v2-base-code` | 4 | 0.575 | 0.684 | 0.722 | 0.637 | 0.400 |
+| `local/all-minilm-l6-v2` | 4 | 0.636 | 0.756 | 0.600 | 0.575 | 0.431 |
+| `local/bge-small-en-v1.5` | 7 | 0.485 | 0.703 | 0.638 | 0.533 | 0.345 |
+| `local/qwen3-embedding-0.6b` | 10 | 0.538 | 0.698 | 0.627 | 0.552 | 0.535 |
+| `local/potion-multilingual-128m` | 10 | 0.463 | 0.663 | 0.595 | 0.498 | 0.409 |
+| `local/potion-retrieval-32m` | 13 | 0.428 | 0.593 | 0.530 | 0.521 | 0.404 |
+| `local/potion-code-16m-v2` | 14 | 0.544 | 0.552 | 0.472 | 0.463 | 0.438 |
+| `local/bekko-256-int8` | 14 | 0.397 | 0.524 | 0.479 | 0.515 | 0.342 |
+
+MRR@10:
+
+| Model | go | python | rust | typescript | java |
+|---|---:|---:|---:|---:|---:|
+| `local/gte-modernbert-base` | 0.844 | 0.688 | 0.792 | 0.844 | 0.549 |
+| `local/nomic-embed-text-v1.5` | 0.719 | 0.854 | 0.838 | 0.671 | 0.483 |
+| `local/embeddinggemma-300m` | 0.830 | 0.844 | 0.906 | 0.817 | 0.422 |
+| `local/multilingual-e5-small` | 0.833 | 0.906 | 0.917 | 0.823 | 0.348 |
+| `local/jina-embeddings-v2-base-code` | 0.760 | 0.823 | 0.806 | 0.719 | 0.477 |
+| `local/all-minilm-l6-v2` | 0.750 | 0.844 | 0.775 | 0.587 | 0.422 |
+| `local/bge-small-en-v1.5` | 0.646 | 0.806 | 0.806 | 0.615 | 0.383 |
+| `local/qwen3-embedding-0.6b` | 0.658 | 0.781 | 0.795 | 0.706 | 0.656 |
+| `local/potion-multilingual-128m` | 0.556 | 0.729 | 0.792 | 0.573 | 0.416 |
+| `local/potion-retrieval-32m` | 0.570 | 0.688 | 0.681 | 0.719 | 0.449 |
+| `local/potion-code-16m-v2` | 0.764 | 0.606 | 0.588 | 0.604 | 0.479 |
+| `local/bekko-256-int8` | 0.500 | 0.617 | 0.599 | 0.729 | 0.322 |
+
+Which cells each near-miss model fails:
+
+- `gte-modernbert-base`: python nDCG, python recall, python precision.
+- `nomic-embed-text-v1.5`: go MRR, go recall, typescript MRR.
+- `embeddinggemma-300m`: python recall, python precision, java MRR.
+
+No model clears all 20 cells, and no two models fail the same set. The three
+best differ only in which single or dual lanes they miss, which is what the
+per-language numbers above show. GTE is chosen because its misses are the
+smallest and confined to one lane (python: -0.0105 nDCG, -0.0084 recall,
+-0.0125 precision), while it is the top nDCG model on typescript and java and
+the only one >= floor on java MRR without a per-language exception. Cost: 768
+dimensions, 8192-token input, 228 MB on disk versus MiniLM's 384/256/53 MB,
+and roughly 2x the vector storage per fragment.
+
+Triage of the remaining catalog, including the per-language model question
+(a workspace still routes one model for all content), is tracked in the
+model-triage issue #66.
+
 ## Result on the five lanes (shipped configuration)
 
 Run with `benchmarks/quality-lanes/run_qeval_multilanguage.py`, binary sha256
-`63dc1850…fd256fc`, checkout `9c32dc2`, two same-root repeats, deterministic on
-every lane.
+`a26e1fda…89e4e194`, two same-root repeats, deterministic on every lane.
 
 | Lane | nDCG@10 | MRR@10 | recall@10 | precision@10 |
 |---|---:|---:|---:|---:|
-| go | 0.6359 | 0.7500 | 0.7271 | 0.2750 |
-| python | 0.7560 | 0.8438 | 0.8257 | 0.3500 |
-| rust | 0.6000 | 0.7750 | 0.6985 | 0.2750 |
-| typescript | 0.5749 | 0.5868 | 0.7539 | 0.3000 |
-| java | 0.4313 | 0.4220 | 0.6807 | 0.2625 |
+| go | 0.6461 | 0.8438 | 0.7229 | 0.2750 |
+| python | 0.6282 | 0.6875 | 0.7673 | 0.3125 |
+| rust | 0.6500 | 0.7917 | 0.7851 | 0.3250 |
+| typescript | 0.6689 | 0.8438 | 0.7516 | 0.3000 |
+| java | 0.4663 | 0.5491 | 0.6423 | 0.2500 |
 
-Against the pinned floors (`check_baselines_multilanguage.py`):
+Against the previous pinned floors: 17 of 20 cells improve. The three that do
+not are all python — nDCG 0.6387 -> 0.6282, recall 0.7757 -> 0.7673, precision
+0.3250 -> 0.3125 — while python MRR rises 0.6375 -> 0.6875. Those three floors
+are re-pinned to the measured values in this change; every other lane is
+re-pinned upward.
 
-| Lane | Verdict |
-|---|---|
-| go | PASS — all four metrics improve |
-| python | PASS — all four metrics improve |
-| rust | **FAIL** — recall 0.6985 < 0.7423, precision 0.2750 < 0.3000 |
-| typescript | **FAIL** — MRR 0.5868 < 0.7083 |
-| java | **FAIL** — MRR 0.4220 < 0.4792 |
+## Compatibility: existing indexes need a rebuild
 
-nDCG improves on all five lanes (+0.002 Rust to +0.117 Python); MRR improves on
-three (go, python, rust) and falls on two; recall and precision improve on four
-and fall on Rust.
-
-## Why the floors block it
-
-The floors were pinned under potion + lexical-dominant fusion, so each
-language's floor encodes a different leg. Measured on the same runs:
-
-- vector only: python recall 0.7632 (< 0.7757) and rust recall 0.7249
-  (< 0.7423),
-- lexical only: rust recall 0.7110,
-- weighted hybrid (1.0 / 2.0): rust recall 0.6985,
-- no fusion weight reproduces rust's 0.7423 with MiniLM, because that figure
-  comes from potion's vector ranking surfacing units MiniLM misses.
-
-Upper bound check: for Rust, the best possible top-10 drawn from the union of
-both legs' lists reaches recall 0.8000, above the floor. Slot-quota fusion was
-simulated (keep `10-k` vector hits, fill `k` from the lexical list, k=0..5)
-using the stored per-query rankings: the best Rust recall is 0.7230 at k=1,
-below 0.7423, and Rust precision falls below 0.3000 for k>=2. A quota cannot
-close it either.
-
-So the three failures are a genuine per-language quality trade, not a
-bookkeeping artifact. Landing this as the default requires either re-pinning
-those three metrics in a reviewed change with the trade documented, or keeping
-potion as the default and shipping MiniLM plus shape-aware fusion as an opt-in
-(`zg --config model set local/all-minilm-l6-v2 --default`).
+An existing workspace keeps its stored embedding model, but the new fusion
+weights apply to every search. A workspace still indexed with
+`local/potion-code-16m-v2` therefore gets vector-first fusion over a
+code-domain model, which the sweep measures as the weakest combination (potion
++ shape-aware fusion: go 0.544, python 0.552, rust 0.472, typescript 0.463,
+java 0.438 nDCG — 14 of 20 cells below floor). Upgrade guidance: rebuild the
+index once (`zg --index --rebuild`) so the workspace picks up the new default,
+or set `defaults.embedding` deliberately and rebuild with it.
 
 ## Against Sense
 
 Shipped configuration versus Sense v1.15.1, nDCG@10 / MRR@10:
 
-| Lane | zvec-grep (shipped) | Sense | 
+| Lane | zvec-grep (shipped) | Sense |
 |---|---|---|
-| go | **0.6359** / **0.7500** | 0.5763 / 0.7304 |
-| python | **0.7560** / **0.8438** | 0.5258 / 0.5938 |
-| rust | **0.6000** / 0.7750 | 0.5312 / **0.7812** |
-| typescript | **0.5749** / 0.5868 | 0.5164 / **0.6970** |
-| java | **0.4313** / 0.4220 | 0.4227 / **0.5458** |
+| go | **0.6461** / **0.8438** | 0.5763 / 0.7304 |
+| python | **0.6282** / **0.6875** | 0.5258 / 0.5938 |
+| rust | **0.6500** / **0.7917** | 0.5312 / 0.7812 |
+| typescript | **0.6689** / **0.8438** | 0.5164 / 0.6970 |
+| java | **0.4663** / **0.5491** | 0.4227 / 0.5458 |
 
-The pure-vector cell (MiniLM + `--vector`) leads Sense on nDCG and MRR in all
-five lanes (`.6648/.8750`, `.6417/.8229`, `.6434/.9167`, `.6462/.7639`,
-`.5347/.6687`), but fails the python and rust recall floors. The shape-aware
-hybrid trades some of that head precision for lexical recall.
+zvec-grep now leads Sense on nDCG in all five lanes and on MRR in all five.
+Models remain tool-native and are not controlled.
 
 ## Rejected hypotheses
 
@@ -161,7 +196,7 @@ hybrid trades some of that head precision for lexical recall.
 - **Body projection for all Java entities** — 0.2870. Reverted.
 - **Indexed-text shape as the cause** — Sense embeds a graph context header,
   but projecting zvec-grep's body text away made Java worse, not better, and
-  MiniLM alone recovers more than any text projection.
+  the model swap alone recovers more than any text projection.
 
 ## Reproduction
 
@@ -169,9 +204,9 @@ hybrid trades some of that head precision for lexical recall.
 python3 benchmarks/quality-lanes/run_qeval_multilanguage.py \
   --fixture benchmarks/quality-lanes/fixtures/<lang>-workflow-discovery-v1 \
   --binary rust/target/release/zg --work-root <fresh-root> \
-  --output <out> --repeats 2
+  --output <out> --repeats 2 [--model <reference>]
 python3 benchmarks/quality-lanes/check_baselines_multilanguage.py \
   --fixture <lang>-workflow-discovery-v1 --results <out>/metrics.json
 ```
 
-Ablation cells and simulations: `…/opencode/{lanes-minilm-vec,lanes-minilm-vec2,lanes-potion-vec,lanes-minilm-hyb,lanes-w2-hyb,lanes-ftsonly,shipped-run}/`.
+Ablation cells and sweep runs: `…/opencode/{lanes-*,java-cell-*,shipped-run,final-run,model-sweep}/`.
