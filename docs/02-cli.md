@@ -299,8 +299,10 @@ refresh, authentication, and logs. See [MCP](./03-mcp.md) for the tool contract.
 Run `zg --help environment` for advanced variables, agent integration paths,
 scope, and detailed precedence. A new index selects its model in this order:
 explicit `--embedding`, `ZVEC_GREP_EMBEDDING`, the global default, then the
-built-in local default. Existing indexes continue to use their stored model
-unless `--embedding` and `--rebuild` explicitly change it.
+built-in choice for the repository's dominant source language (see
+[Embedding](./07-embedding.md#built-in-selection)). Existing indexes continue
+to use their stored model unless `--embedding` and `--rebuild` explicitly
+change it.
 
 Embedding runtime values such as endpoint and device retain this order: explicit
 command option, Workspace snapshot, global configuration, then environment.

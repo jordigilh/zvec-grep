@@ -8,11 +8,38 @@
 The Embedding model determines the vector representation used by indexed
 search. It affects language coverage, memory use, index size, input length, and
 indexing speed. A new index selects an explicit model, an environment default,
-or a configured default, and otherwise uses the built-in local default:
+or a configured default, and otherwise picks a built-in local model from the
+repository's dominant source language:
 
 ```bash
 zg --index --embedding local/potion-code-16m-v2
 ```
+
+## Built-in selection
+
+A workspace embeds text with one model, so a polyglot repository is served by a
+single choice. With no explicit, stored or configured model, zvec-grep profiles
+the repository's source bytes per language and uses the model measured best for
+the dominant one:
+
+| Dominant source language | Built-in model |
+| --- | --- |
+| Go, TypeScript | `local/gte-modernbert-base` |
+| Python | `local/multilingual-e5-small` |
+| Rust | `local/jina-embeddings-v2-base-code` |
+| Java | `local/qwen3-embedding-0.6b` |
+| Even split, unknown, or unmapped languages | `local/gte-modernbert-base` |
+
+The other languages in a polyglot repository are still indexed and searchable
+under that model, below their own best but far above no index. An even split
+falls back to the generalist rather than letting one language speak for the
+repository, and Java-dominant repositories accept the largest download
+(`local/qwen3-embedding-0.6b`).
+
+`--embedding`, `ZVEC_GREP_EMBEDDING` and `defaults.embedding` always take
+precedence, and an existing index keeps its stored model, so this inference only
+runs on a fresh workspace. The table comes from the five-lane measurements in
+[`benchmarks/quality-lanes/SHAPE_AWARE_FUSION_2026-11-22.md`](../benchmarks/quality-lanes/SHAPE_AWARE_FUSION_2026-11-22.md).
 
 Local models keep workspace content and query text on the machine. Their files
 are downloaded from Hugging Face on first use and cached under
