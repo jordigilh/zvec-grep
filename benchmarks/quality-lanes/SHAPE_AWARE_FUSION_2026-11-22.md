@@ -163,7 +163,7 @@ Triage of the rest of the catalog is tracked in issue #66.
 ## Result on the five lanes (shipped configuration)
 
 Run with `benchmarks/quality-lanes/run_qeval_multilanguage.py --model auto`,
-which leaves selection to the engine, binary sha256 `f25324e0…`, two same-root
+which leaves selection to the engine, binary sha256 `770e69a9…`, two same-root
 repeats, deterministic on every lane. Each lane is a single-language repository,
 so the engine picks that language's measured best model.
 
@@ -179,6 +179,13 @@ Against the pre-change floors: 19 of 20 cells improve and the twentieth (python
 precision 0.3250) ties. Every lane passes
 `check_baselines_multilanguage.py`; the floors are re-pinned to this run.
 
+The single-lane runner (`run_qeval.py`, exact-value pins in `baselines.json`)
+covers `go-workflow-discovery-v1` (role tuning) and `go-inventory-audit-v1`
+(role holdout). The holdout is the one lane not used for any choice here, and it
+moves mixed: nDCG 0.6308 -> 0.6243, recall 0.7833 -> 0.7146, precision
+0.3000 -> 0.2750, MRR 0.7813 -> 0.9000. Both single-lane pins are re-baselined
+to measured two-repeat values in this change.
+
 ## Compatibility: existing indexes need a rebuild
 
 An existing workspace keeps its stored embedding model — language inference only
@@ -187,9 +194,10 @@ search. A workspace still indexed with `local/potion-code-16m-v2` therefore
 gets vector-first fusion over a code-domain model, which the sweep measures as
 the weakest combination (potion + shape-aware fusion: go 0.544, python 0.552,
 rust 0.472, typescript 0.463, java 0.438 nDCG — 14 of 20 cells below floor).
-Upgrade guidance: rebuild the index once (`zg --index --rebuild`) so the
-workspace picks up language selection, or set `defaults.embedding` deliberately
-and rebuild with it.
+Upgrade guidance: a rebuild keeps the stored model, so name the replacement —
+`zg --index --rebuild --embedding local/<model>` — or remove the workspace index
+directory and let the next search profile the repository from scratch. A manifest
+that requires a rebuild does re-infer without an explicit model.
 
 ## Against Sense
 
@@ -205,6 +213,14 @@ Shipped configuration versus Sense v1.15.1, nDCG@10 / MRR@10:
 
 zvec-grep now leads Sense on nDCG in all five lanes and on MRR in all five.
 Models remain tool-native and are not controlled.
+
+## Scope: Rust CLI
+
+Shape-aware fusion and built-in model selection are implemented in the Rust CLI
+(`rust/`). The Node implementation under `src/`, which the published package
+still ships, keeps its own fusion constants and implicit default; when the two
+diverge, the docs describe the Rust CLI. Porting both changes to the Node
+implementation is a separate piece of work.
 
 ## Rejected hypotheses
 

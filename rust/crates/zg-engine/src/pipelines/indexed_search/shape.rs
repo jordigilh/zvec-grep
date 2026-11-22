@@ -30,7 +30,13 @@ impl QueryShape {
     pub(crate) fn classify(query: &str) -> Self {
         let tokens = query.split_whitespace().collect::<Vec<_>>();
         if tokens.len() <= 1 {
-            return Self::Identifier;
+            // A single ASCII token is an identifier. A single token with no
+            // ASCII letters at all is a script without word spacing (CJK), so
+            // it carries sentence structure the lexical leg cannot trust.
+            return match tokens.first() {
+                Some(token) if has_non_ascii_letter(token) => Self::NaturalLanguage,
+                _ => Self::Identifier,
+            };
         }
 
         let mut identifiers = 0usize;
@@ -80,6 +86,11 @@ fn is_identifier_shaped(token: &str) -> bool {
         return true;
     }
     has_internal_separator(token, '/') || has_internal_separator(token, '.') || has_case_boundary(token)
+}
+
+/// Reports a letter outside ASCII, which marks a script without word spacing.
+fn has_non_ascii_letter(token: &str) -> bool {
+    token.chars().any(|ch| !ch.is_ascii() && ch.is_alphabetic())
 }
 
 fn has_internal_separator(token: &str, separator: char) -> bool {
@@ -161,6 +172,10 @@ mod tests {
             QueryShape::Mixed
         );
         assert_eq!(QueryShape::classify(""), QueryShape::Identifier);
+        assert_eq!(
+            QueryShape::classify("ワークフローはどこで検証されますか"),
+            QueryShape::NaturalLanguage
+        );
     }
 
     #[test]

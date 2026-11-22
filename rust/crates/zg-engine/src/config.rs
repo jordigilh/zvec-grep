@@ -362,10 +362,15 @@ pub(crate) fn string(value: &Value, path: &[&str]) -> Option<String> {
     current.as_str().map(str::to_owned)
 }
 
-/// Selects a local model for CLI-only implicit indexing, never a remote default.
+/// Selects an explicitly configured local model for CLI-only implicit
+/// indexing, never a remote default.
+///
+/// `None` means nothing was configured: the index request leaves the model
+/// unset so the engine profiles the repository and applies its built-in
+/// selection, which keeps first-search indexing identical to `zg --index`.
 /// # Errors
 /// Returns configuration I/O, validation, and invalid environment model errors.
-pub fn implicit_embedding_reference() -> Result<String, EngineError> {
+pub fn implicit_embedding_override() -> Result<Option<String>, EngineError> {
     let config = read()?;
     let configured = crate::models::resolve_embedding_reference(
         crate::models::ResolveEmbeddingReferenceOptions {
@@ -374,9 +379,7 @@ pub fn implicit_embedding_reference() -> Result<String, EngineError> {
         },
     )
     .map_err(crate::models::ModelError::into_engine_error)?;
-    Ok(configured
-        .filter(|reference| reference.starts_with("local/"))
-        .unwrap_or_else(|| "local/gte-modernbert-base".to_owned()))
+    Ok(configured.filter(|reference| reference.starts_with("local/")))
 }
 
 pub(crate) fn device(value: &Value, reference: &str) -> Option<Device> {

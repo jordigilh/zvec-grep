@@ -557,7 +557,7 @@ impl fmt::Debug for WorkspaceIndexService {
 /// requests, a stored model, and a configured global default all win over
 /// this inference; only a fresh workspace with no other signal is profiled.
 async fn dominant_language_model(
-    scanner: &NativeScanner,
+    scanner: &dyn WorkspaceScannerPort,
     existing: Option<&WorkspaceManifest>,
     options: &IndexOptions,
     root: &Path,
@@ -579,26 +579,37 @@ async fn dominant_language_model(
                 roots: vec![root_spec],
                 scope_paths: Vec::new(),
             },
-            &TaskControl::default(),
+            &TaskControl::new(options.signal.clone().unwrap_or_default()),
         )
         .await
-        .map_err(|error| {
-            EngineError::invalid_argument(format!(
-                "cannot profile the workspace languages: {error}"
-            ))
-        })?;
+        .map_err(super::pipeline::map_host_error)?;
 
+    Ok(profile_model(
+        snapshot
+            .files
+            .into_iter()
+            .map(|file| (file.relative_path, file.size_bytes)),
+        selection,
+    ))
+}
+
+/// Selects a model from a file listing. Split out from the scanner call so the
+/// weighting and glob filtering are testable without a workspace.
+fn profile_model(
+    files: impl IntoIterator<Item = (PathBuf, u64)>,
+    selection: &crate::file_selection::GlobMatcher,
+) -> Option<&'static str> {
     let mut weights = HashMap::new();
-    for file in snapshot.files {
-        if !selection.matches_path(&file.relative_path) {
+    for (path, size) in files {
+        if !selection.matches_path(&path) {
             continue;
         }
-        if let Some(language) = super::language_profile::language_for_path(&file.relative_path) {
-            *weights.entry(language).or_default() += file.size_bytes;
+        if let Some(language) = super::language_profile::language_for_path(&path) {
+            *weights.entry(language).or_default() += size;
         }
     }
-    Ok(super::language_profile::dominant_language(weights)
-        .map(super::language_profile::CodeLanguage::preferred_model))
+    super::language_profile::dominant_language(weights)
+        .map(super::language_profile::CodeLanguage::preferred_model)
 }
 
 fn normalize_model_paths(options: &mut IndexOptions) -> Result<(), EngineError> {
@@ -651,7 +662,12 @@ fn acquire_model(
         ));
     }
     let reference =
-        embedding_reference(existing, options.embedding.as_ref(), language_default)?;
+        embedding_reference(
+            existing,
+            options.embedding.as_ref(),
+            language_default,
+            options.implicit,
+        )?;
     let config = crate::config::read()?;
     let local = reference.starts_with("local/");
     if (!local && options.device.is_some()) || (local && options.endpoint.is_some()) {
@@ -742,6 +758,7 @@ pub(crate) fn embedding_reference(
     existing: Option<&WorkspaceManifest>,
     requested: Option<&EmbeddingModelSpec>,
     language_default: Option<&'static str>,
+    implicit: bool,
 ) -> Result<String, EngineError> {
     let config = crate::config::read()?;
     resolve_embedding_reference(ResolveEmbeddingReferenceOptions {
@@ -749,7 +766,12 @@ pub(crate) fn embedding_reference(
         existing: existing
             .and_then(|manifest| manifest.embedding())
             .map(|embedding| embedding.model.reference()),
-        global_default: crate::config::string(&config, &["defaults", "embedding"]),
+        global_default: (!implicit)
+            .then(|| crate::config::string(&config, &["defaults", "embedding"]))
+            .flatten(),
+        // An empty map suppresses ZVEC_GREP_EMBEDDING for implicit builds,
+        // which must never select a remote model on their own.
+        environment: implicit.then(std::collections::HashMap::new),
         fallback: Some(language_default.unwrap_or(DEFAULT_LOCAL_EMBEDDING).to_owned()),
         ..ResolveEmbeddingReferenceOptions::default()
     })
@@ -977,7 +999,7 @@ fn moved_registration_for(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use tempfile::tempdir;
 
@@ -1477,6 +1499,59 @@ mod tests {
         assert!(!super::has_build(&home));
         assert!(!active.storage_home().exists());
         models.close();
+    }
+
+    #[test]
+    fn profile_model_picks_the_dominant_language() {
+        let directory = tempdir().expect("profile root");
+        let selection =
+            crate::file_selection::GlobMatcher::new(directory.path(), &[]).expect("matcher");
+        let files = [
+            (PathBuf::from("pkg/validate.py"), 900),
+            (PathBuf::from("cmd/main.rs"), 100),
+            (PathBuf::from("README.md"), 5_000),
+        ];
+        assert_eq!(
+            super::profile_model(files, &selection),
+            Some("local/multilingual-e5-small")
+        );
+    }
+
+    #[test]
+    fn profile_model_ties_and_unmapped_files_fall_back() {
+        let directory = tempdir().expect("profile root");
+        let selection =
+            crate::file_selection::GlobMatcher::new(directory.path(), &[]).expect("matcher");
+        let tied = [
+            (PathBuf::from("a.rs"), 500),
+            (PathBuf::from("b.java"), 500),
+        ];
+        assert_eq!(super::profile_model(tied, &selection), None);
+        let unmapped = [(PathBuf::from("notes.txt"), 10_000)];
+        assert_eq!(super::profile_model(unmapped, &selection), None);
+        // None falls back to the generalist default.
+        assert_eq!(super::DEFAULT_LOCAL_EMBEDDING, "local/gte-modernbert-base");
+    }
+
+    #[test]
+    fn profile_model_respects_the_workspace_globs() {
+        let directory = tempdir().expect("profile root");
+        let selection = crate::file_selection::GlobMatcher::new(
+            directory.path(),
+            &[crate::domain::GlobRule {
+                pattern: "!vendor/**".to_owned(),
+                case_insensitive: false,
+            }],
+        )
+        .expect("matcher");
+        let files = [
+            (PathBuf::from("vendor/generated.py"), 10_000),
+            (PathBuf::from("cmd/main.rs"), 100),
+        ];
+        assert_eq!(
+            super::profile_model(files, &selection),
+            Some("local/jina-embeddings-v2-base-code")
+        );
     }
 
     fn empty_index_options(root: &Path) -> IndexOptions {

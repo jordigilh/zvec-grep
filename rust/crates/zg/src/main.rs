@@ -530,19 +530,25 @@ async fn ensure_query_index(
         return Ok(false);
     }
 
-    let embedding = zg_engine::config::implicit_embedding_reference()?;
-    eprintln!("No index found; creating one with {embedding}.");
+    let embedding = zg_engine::config::implicit_embedding_override()?;
+    match &embedding {
+        Some(reference) => eprintln!("No index found; creating one with {reference}."),
+        None => eprintln!(
+            "No index found; creating one with the built-in local model for this repository."
+        ),
+    }
     // Implicit builds must not inherit remote credentials or authorization.
     let mut index_request = IndexOptions {
         root: Some(info.root),
-        embedding: Some(EmbeddingModelSpec {
-            reference: embedding,
+        embedding: embedding.map(|reference| EmbeddingModelSpec {
+            reference,
             revision: None,
             cache_dir: None,
             endpoint: None,
             device: zg_engine::api::index::options::Device::Auto,
         }),
         device: request.device,
+        implicit: true,
         model_cache: request.model_cache.clone(),
         embedding_concurrency: request.embedding_concurrency,
         lock_timeout_ms: request.lock_timeout_ms,

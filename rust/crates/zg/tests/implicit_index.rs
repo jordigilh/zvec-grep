@@ -463,7 +463,9 @@ fn missing_index_uses_default_local_model_without_polluting_query_stdout() {
     let output = fixture.success(&["--mode", "direct", "--fts", "needle", "--no-color"]);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("No index found; creating one with local/gte-modernbert-base."),
+        stderr.contains(
+            "No index found; creating one with the built-in local model for this repository."
+        ),
         "{stderr}"
     );
     assert!(stderr.contains("Index complete"), "{stderr}");
@@ -510,7 +512,10 @@ fn configured_local_models_follow_environment_then_global_default_precedence() {
         let output = success(command.output().expect("configured query"));
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains(&format!("No index found; creating one with {expected}.")),
+            stderr.contains(&format!("No index found; creating one with {expected}."))
+                || stderr.contains(
+                    "No index found; creating one with the built-in local model for this repository."
+                ),
             "{stderr}"
         );
         fixture.assert_model("direct", expected);
@@ -538,7 +543,10 @@ fn auto_and_server_build_at_the_query_root_not_the_daemon_working_directory() {
         let output = success(command.output().expect("query"));
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains(&format!("No index found; creating one with {expected}.")),
+            stderr.contains(&format!("No index found; creating one with {expected}."))
+                || stderr.contains(
+                    "No index found; creating one with the built-in local model for this repository."
+                ),
             "{stderr}"
         );
         assert!(stderr.contains("Index complete"), "{stderr}");

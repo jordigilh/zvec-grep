@@ -93,7 +93,7 @@ fn index_help_describes_the_optional_workspace_name() {
 fn index_help_distinguishes_explicit_indexing_from_automatic_search_indexing() {
     let help = stdout(&["--help", "index"]);
     assert!(
-        help.contains("Explicit zg --index requires --embedding"),
+        help.contains("Explicit --embedding and defaults.embedding always win"),
         "{help}"
     );
     assert!(

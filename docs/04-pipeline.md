@@ -123,7 +123,8 @@ not list each skipped path or reason.
 ## 2. Build and maintain the index
 
 A manually created index resolves its model from explicit `--embedding`,
-`ZVEC_GREP_EMBEDDING`, the configured default, then the built-in local default.
+`ZVEC_GREP_EMBEDDING`, the configured default, then the built-in model for the
+repository's dominant source language (see [Embedding](./07-embedding.md#built-in-selection)).
 An implicit first-search index always uses a local model. Existing indexes reuse
 their stored model and file-selection settings:
 
@@ -173,7 +174,9 @@ Hybrid fusion uses the strongest reciprocal-rank contribution for each
 retrieval candidate as its primary score. Other route modes add a small
 corroboration bonus. Lexical and vector ranks are not assumed to be calibrated
 to each other, so a very weak rank from one mode cannot outweigh a much stronger
-hit from another. FTS has a 1.1 route weight and vector a 1.0 route weight. If
+hit from another. The route weights follow the query shape: an identifier query
+weights FTS 1.1 and vector 1.0, a mixed query 1.0 and 1.0, and a natural-language
+query 1.0 and 2.0. If
 both routes are within the result window, or both are deeper than twice the
 result limit, and their ranks are within 2.5x, the secondary-route corroboration
 is capped at 25% of the strongest route score. Ranks between those bands are

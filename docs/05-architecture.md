@@ -63,7 +63,8 @@ The engine exposes two complementary paths behind the same product boundary:
 Indexed search can combine lexical and vector candidates using reciprocal rank
 fusion (RRF). The strongest route contribution leads each candidate; other
 route modes add corroboration because their raw ranks are not cross-calibrated.
-The default hybrid weights are 1.1 for FTS and 1.0 for vector. If both routes
+The hybrid weights follow the query shape (identifier 1.1/1.0, mixed 1.0/1.0,
+natural language 1.0/2.0). If both routes
 are within the result window, or both rank deeper than twice the result limit,
 and their ranks are within 2.5x, secondary-route corroboration is capped at 25%
 of the strongest route score. Ranks in the transition band use the strongest
