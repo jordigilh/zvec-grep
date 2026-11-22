@@ -366,9 +366,10 @@ pub(crate) fn string(value: &Value, path: &[&str]) -> Option<String> {
 ///
 /// It ranks below an explicit request and below a stored index model, and it is
 /// never allowed to select a remote model. `None` means nothing local was
-/// configured, so the engine profiles the repository and applies its built-in
-/// selection. The daemon's missing-index rebuild relies on this as well, so the
-/// rule is engine-side rather than CLI-only.
+/// configured; the engine then profiles the repository and applies its built-in
+/// selection, unless `defaults.embedding` is set, in which case the generic
+/// local default applies. The daemon's missing-index rebuild relies on this as
+/// well, so the rule is engine-side rather than CLI-only.
 /// # Errors
 /// Returns configuration I/O, validation, and invalid environment model errors.
 pub fn implicit_embedding_override() -> Result<Option<String>, EngineError> {

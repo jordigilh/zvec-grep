@@ -755,12 +755,8 @@ fn acquire_model(
 
 /// Reports whether the configured local model can decide this build's model,
 /// i.e. the build is implicit and nothing explicit or stored already wins.
-fn needs_implicit_fallback(
-    implicit: bool,
-    requested: Option<&EmbeddingModelSpec>,
-    existing: Option<&WorkspaceManifest>,
-) -> bool {
-    implicit && requested.is_none() && existing.and_then(|manifest| manifest.embedding()).is_none()
+fn needs_implicit_fallback(implicit: bool, has_requested: bool, has_stored: bool) -> bool {
+    implicit && !has_requested && !has_stored
 }
 
 pub(crate) fn embedding_reference(
@@ -775,7 +771,8 @@ pub(crate) fn embedding_reference(
     // rather than as an explicit request keeps a refresh of an existing index
     // on its stored model. Only resolve it when it can decide the outcome, so
     // an unusable configured value cannot fail a request that names its model.
-    let implicit_local = if needs_implicit_fallback(implicit, requested, existing) {
+    let has_stored = existing.and_then(|manifest| manifest.embedding()).is_some();
+    let implicit_local = if needs_implicit_fallback(implicit, requested.is_some(), has_stored) {
         crate::config::implicit_embedding_override()?
     } else {
         None
@@ -1529,16 +1526,16 @@ mod tests {
         // The configured local model may decide an implicit build only when no
         // explicit model was requested and no index model is stored. This is
         // the arm that keeps a daemon refresh on its existing model.
-        assert!(super::needs_implicit_fallback(true, None, None));
-        assert!(!super::needs_implicit_fallback(false, None, None));
-        let explicit = EmbeddingModelSpec {
-            reference: "local/gte-modernbert-base".into(),
-            revision: None,
-            cache_dir: None,
-            endpoint: None,
-            device: Device::Cpu,
-        };
-        assert!(!super::needs_implicit_fallback(true, Some(&explicit), None));
+        assert!(super::needs_implicit_fallback(true, false, false));
+        assert!(!super::needs_implicit_fallback(false, false, false));
+        assert!(
+            !super::needs_implicit_fallback(true, true, false),
+            "an explicit request wins"
+        );
+        assert!(
+            !super::needs_implicit_fallback(true, false, true),
+            "a stored index model wins"
+        );
     }
 
     #[test]
