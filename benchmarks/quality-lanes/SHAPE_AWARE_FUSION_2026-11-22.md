@@ -75,10 +75,19 @@ natural-language semantics plus fusion.
   - mixed: 1.0 / 1.0,
   - natural language: 1.0 / 2.0.
 - `fuse_candidates` takes those weights instead of two constants.
-- The implicit default embedding model is now `local/gte-modernbert-base`
-  (`pipelines/indexing/service.rs`, `config.rs`), with help text and the
-  implicit-index integration tests updated. The model was chosen by the sweep
-  below, not by assumption.
+- A fresh workspace with no explicit model, no stored model and no configured
+  default now picks one from its dominant source language
+  (`pipelines/indexing/language_profile.rs`, wired in
+  `pipelines/indexing/service.rs`). The profile counts source bytes per
+  language, ignores globs the workspace excludes, and ties fall back to the
+  generalist default. Explicit `--embedding`, a stored model and
+  `defaults.embedding` all keep precedence, and once an index exists its model
+  is never re-inferred.
+- The fitted table, from the sweep below: Go and TypeScript ->
+  `local/gte-modernbert-base`, Python -> `local/multilingual-e5-small`,
+  Rust -> `local/jina-embeddings-v2-base-code`, Java ->
+  `local/qwen3-embedding-0.6b`. `local/gte-modernbert-base` remains the
+  generalist fallback for unknown, tied or unmapped mixes.
 
 Full workspace test suite passes (534 engine unit tests plus the integration
 suites).
@@ -131,48 +140,56 @@ Which cells each near-miss model fails:
 - `nomic-embed-text-v1.5`: go MRR, go recall, typescript MRR.
 - `embeddinggemma-300m`: python recall, python precision, java MRR.
 
-No model clears all 20 cells, and no two models fail the same set. The three
-best differ only in which single or dual lanes they miss, which is what the
-per-language numbers above show. GTE is chosen because its misses are the
-smallest and confined to one lane (python: -0.0105 nDCG, -0.0084 recall,
--0.0125 precision), while it is the top nDCG model on typescript and java and
-the only one >= floor on java MRR without a per-language exception. Cost: 768
-dimensions, 8192-token input, 228 MB on disk versus MiniLM's 384/256/53 MB,
-and roughly 2x the vector storage per fragment.
+No model clears all 20 cells, and the three leaders fail disjoint sets. That is
+the argument for choosing per repository rather than globally: a single-language
+repository is not a compromise at all, because its dominant language is its
+only language. A per-language oracle over this sweep clears all 20 cells.
 
-Triage of the remaining catalog, including the per-language model question
-(a workspace still routes one model for all content), is tracked in the
-model-triage issue #66.
+Consequences for a polyglot repository, which is served by one model:
+
+- the dominant language gets its measured best model,
+- the other languages are still indexed and searchable under that model, at a
+  quality cost of up to ~0.13 nDCG in the worst pairing measured here (Python
+  under the Go/TypeScript winner),
+- an even split is treated as no signal and falls back to the generalist.
+
+Cost, per chosen model: GTE is 768 dims / 8192 tokens / 228 MB, e5-small
+384/512/145 MB, jina-code 768/8192/164 MB, qwen3-embedding 1024/8192/~600 MB.
+A Java-dominant repository therefore accepts the largest download for the best
+Java lane result; `--embedding` overrides the inference at any time.
+
+Triage of the rest of the catalog is tracked in issue #66.
 
 ## Result on the five lanes (shipped configuration)
 
-Run with `benchmarks/quality-lanes/run_qeval_multilanguage.py`, binary sha256
-`a26e1fda…89e4e194`, two same-root repeats, deterministic on every lane.
+Run with `benchmarks/quality-lanes/run_qeval_multilanguage.py --model auto`,
+which leaves selection to the engine, binary sha256 `f25324e0…`, two same-root
+repeats, deterministic on every lane. Each lane is a single-language repository,
+so the engine picks that language's measured best model.
 
-| Lane | nDCG@10 | MRR@10 | recall@10 | precision@10 |
-|---|---:|---:|---:|---:|
-| go | 0.6461 | 0.8438 | 0.7229 | 0.2750 |
-| python | 0.6282 | 0.6875 | 0.7673 | 0.3125 |
-| rust | 0.6500 | 0.7917 | 0.7851 | 0.3250 |
-| typescript | 0.6689 | 0.8438 | 0.7516 | 0.3000 |
-| java | 0.4663 | 0.5491 | 0.6423 | 0.2500 |
+| Lane | Selected model | nDCG@10 | MRR@10 | recall@10 | precision@10 |
+|---|---|---:|---:|---:|---:|
+| go | gte-modernbert-base | 0.6461 | 0.8438 | 0.7229 | 0.2750 |
+| python | multilingual-e5-small | 0.7596 | 0.9063 | 0.7851 | 0.3250 |
+| rust | jina-embeddings-v2-base-code | 0.7224 | 0.8063 | 0.8007 | 0.3375 |
+| typescript | gte-modernbert-base | 0.6689 | 0.8438 | 0.7516 | 0.3000 |
+| java | qwen3-embedding-0.6b | 0.5348 | 0.6563 | 0.7223 | 0.2750 |
 
-Against the previous pinned floors: 17 of 20 cells improve. The three that do
-not are all python — nDCG 0.6387 -> 0.6282, recall 0.7757 -> 0.7673, precision
-0.3250 -> 0.3125 — while python MRR rises 0.6375 -> 0.6875. Those three floors
-are re-pinned to the measured values in this change; every other lane is
-re-pinned upward.
+Against the pre-change floors: 19 of 20 cells improve and the twentieth (python
+precision 0.3250) ties. Every lane passes
+`check_baselines_multilanguage.py`; the floors are re-pinned to this run.
 
 ## Compatibility: existing indexes need a rebuild
 
-An existing workspace keeps its stored embedding model, but the new fusion
-weights apply to every search. A workspace still indexed with
-`local/potion-code-16m-v2` therefore gets vector-first fusion over a
-code-domain model, which the sweep measures as the weakest combination (potion
-+ shape-aware fusion: go 0.544, python 0.552, rust 0.472, typescript 0.463,
-java 0.438 nDCG — 14 of 20 cells below floor). Upgrade guidance: rebuild the
-index once (`zg --index --rebuild`) so the workspace picks up the new default,
-or set `defaults.embedding` deliberately and rebuild with it.
+An existing workspace keeps its stored embedding model — language inference only
+runs for a workspace that has none — but the new fusion weights apply to every
+search. A workspace still indexed with `local/potion-code-16m-v2` therefore
+gets vector-first fusion over a code-domain model, which the sweep measures as
+the weakest combination (potion + shape-aware fusion: go 0.544, python 0.552,
+rust 0.472, typescript 0.463, java 0.438 nDCG — 14 of 20 cells below floor).
+Upgrade guidance: rebuild the index once (`zg --index --rebuild`) so the
+workspace picks up language selection, or set `defaults.embedding` deliberately
+and rebuild with it.
 
 ## Against Sense
 
@@ -181,10 +198,10 @@ Shipped configuration versus Sense v1.15.1, nDCG@10 / MRR@10:
 | Lane | zvec-grep (shipped) | Sense |
 |---|---|---|
 | go | **0.6461** / **0.8438** | 0.5763 / 0.7304 |
-| python | **0.6282** / **0.6875** | 0.5258 / 0.5938 |
-| rust | **0.6500** / **0.7917** | 0.5312 / 0.7812 |
+| python | **0.7596** / **0.9063** | 0.5258 / 0.5938 |
+| rust | **0.7224** / **0.8063** | 0.5312 / 0.7812 |
 | typescript | **0.6689** / **0.8438** | 0.5164 / 0.6970 |
-| java | **0.4663** / **0.5491** | 0.4227 / 0.5458 |
+| java | **0.5348** / **0.6563** | 0.4227 / 0.5458 |
 
 zvec-grep now leads Sense on nDCG in all five lanes and on MRR in all five.
 Models remain tool-native and are not controlled.
@@ -204,7 +221,7 @@ Models remain tool-native and are not controlled.
 python3 benchmarks/quality-lanes/run_qeval_multilanguage.py \
   --fixture benchmarks/quality-lanes/fixtures/<lang>-workflow-discovery-v1 \
   --binary rust/target/release/zg --work-root <fresh-root> \
-  --output <out> --repeats 2 [--model <reference>]
+  --output <out> --repeats 2 [--model <reference>|auto]
 python3 benchmarks/quality-lanes/check_baselines_multilanguage.py \
   --fixture <lang>-workflow-discovery-v1 --results <out>/metrics.json
 ```

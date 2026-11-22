@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     env, fmt,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -7,7 +7,7 @@ use std::{
 
 use std::sync::Arc;
 
-use zg_host_native::NativeScanner;
+use zg_host_native::{NativeScanner, ScanRequest, TaskControl, WorkspaceScannerPort};
 
 use crate::{
     EngineError,
@@ -208,7 +208,16 @@ impl WorkspaceIndexService {
                 .is_none_or(|manifest| !is_indexed(manifest));
         // Validate before model acquisition; invalid globs must not trigger downloads or inference.
         let scan = resolve_scan(existing.as_ref(), &options);
-        crate::file_selection::GlobMatcher::new(&location.root, &scan.globs)?;
+        let selection = crate::file_selection::GlobMatcher::new(&location.root, &scan.globs)?;
+        let language_default = dominant_language_model(
+            &self.scanner,
+            existing.as_ref(),
+            &options,
+            &location.root,
+            &scan,
+            &selection,
+        )
+        .await?;
         if options.reset_paths
             || options.scan != crate::api::index::options::ScanRulesUpdate::default()
         {
@@ -218,7 +227,7 @@ impl WorkspaceIndexService {
         let IndexModels {
             runtimes: acquired,
             descriptor,
-        } = acquire_index_models(models, existing.as_ref(), &options)?;
+        } = acquire_index_models(models, existing.as_ref(), &options, language_default)?;
         if !rebuilding
             && let Some(previous) = existing
                 .as_ref()
@@ -540,6 +549,58 @@ impl fmt::Debug for WorkspaceIndexService {
     }
 }
 
+/// Chooses the model for a workspace that has no model of its own yet.
+///
+/// A workspace embeds text with one model, so a polyglot repository has to be
+/// served by a single choice. The dominant source language picks its measured
+/// best model and the other languages stay indexed under it. Explicit
+/// requests, a stored model, and a configured global default all win over
+/// this inference; only a fresh workspace with no other signal is profiled.
+async fn dominant_language_model(
+    scanner: &NativeScanner,
+    existing: Option<&WorkspaceManifest>,
+    options: &IndexOptions,
+    root: &Path,
+    scan: &crate::domain::ScanRules,
+    selection: &crate::file_selection::GlobMatcher,
+) -> Result<Option<&'static str>, EngineError> {
+    if options.embedding.is_some() || existing.and_then(|manifest| manifest.embedding()).is_some() {
+        return Ok(None);
+    }
+    let config = crate::config::read()?;
+    if crate::config::string(&config, &["defaults", "embedding"]).is_some() {
+        return Ok(None);
+    }
+
+    let root_spec = crate::file_selection::ScanPolicy::root_spec(root, scan)?;
+    let snapshot = scanner
+        .discover(
+            &ScanRequest {
+                roots: vec![root_spec],
+                scope_paths: Vec::new(),
+            },
+            &TaskControl::default(),
+        )
+        .await
+        .map_err(|error| {
+            EngineError::invalid_argument(format!(
+                "cannot profile the workspace languages: {error}"
+            ))
+        })?;
+
+    let mut weights = HashMap::new();
+    for file in snapshot.files {
+        if !selection.matches_path(&file.relative_path) {
+            continue;
+        }
+        if let Some(language) = super::language_profile::language_for_path(&file.relative_path) {
+            *weights.entry(language).or_default() += file.size_bytes;
+        }
+    }
+    Ok(super::language_profile::dominant_language(weights)
+        .map(super::language_profile::CodeLanguage::preferred_model))
+}
+
 fn normalize_model_paths(options: &mut IndexOptions) -> Result<(), EngineError> {
     if let Some(cache_dir) = options
         .embedding
@@ -562,8 +623,9 @@ fn acquire_index_models(
     models: &ModelRuntimeManager,
     existing: Option<&WorkspaceManifest>,
     options: &IndexOptions,
+    language_default: Option<&'static str>,
 ) -> Result<IndexModels, EngineError> {
-    let model = acquire_model(models, existing, options)?;
+    let model = acquire_model(models, existing, options, language_default)?;
     let descriptor = IndexDescriptor::single(model.info().clone());
     descriptor.validate()?;
     Ok(IndexModels {
@@ -576,6 +638,7 @@ fn acquire_model(
     models: &ModelRuntimeManager,
     existing: Option<&WorkspaceManifest>,
     options: &IndexOptions,
+    language_default: Option<&'static str>,
 ) -> Result<ModelRuntimeLease, EngineError> {
     if options
         .embedding
@@ -587,7 +650,8 @@ fn acquire_model(
             "embedding revision overrides are not supported by the catalog-backed runtime",
         ));
     }
-    let reference = embedding_reference(existing, options.embedding.as_ref())?;
+    let reference =
+        embedding_reference(existing, options.embedding.as_ref(), language_default)?;
     let config = crate::config::read()?;
     let local = reference.starts_with("local/");
     if (!local && options.device.is_some()) || (local && options.endpoint.is_some()) {
@@ -677,6 +741,7 @@ fn acquire_model(
 pub(crate) fn embedding_reference(
     existing: Option<&WorkspaceManifest>,
     requested: Option<&EmbeddingModelSpec>,
+    language_default: Option<&'static str>,
 ) -> Result<String, EngineError> {
     let config = crate::config::read()?;
     resolve_embedding_reference(ResolveEmbeddingReferenceOptions {
@@ -685,7 +750,7 @@ pub(crate) fn embedding_reference(
             .and_then(|manifest| manifest.embedding())
             .map(|embedding| embedding.model.reference()),
         global_default: crate::config::string(&config, &["defaults", "embedding"]),
-        fallback: Some(DEFAULT_LOCAL_EMBEDDING.to_owned()),
+        fallback: Some(language_default.unwrap_or(DEFAULT_LOCAL_EMBEDDING).to_owned()),
         ..ResolveEmbeddingReferenceOptions::default()
     })
     .map_err(ModelError::into_engine_error)?

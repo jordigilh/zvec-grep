@@ -285,6 +285,24 @@ def _git(cwd: Path, *args: str) -> str | None:
     return completed.stdout.strip() or None
 
 
+def resolved_model(root: Path) -> str | None:
+    """Reads the model the engine actually chose for the built index."""
+    manifest = root / ".zvec-grep" / "manifest.json"
+    if not manifest.exists():
+        return None
+    try:
+        payload = json.loads(manifest.read_text())
+    except (OSError, ValueError):
+        return None
+    embeddings = payload.get("embeddings") or []
+    model = embeddings[0].get("model", {}) if embeddings else {}
+    name = model.get("name")
+    provider = model.get("provider")
+    if not name:
+        return None
+    return f"{provider}/{name}" if provider else name
+
+
 def build_index(binary: Path, root: Path, model_cache: Path, model: str) -> float:
     """Build the workspace index explicitly when the binary supports it.
 
@@ -296,11 +314,14 @@ def build_index(binary: Path, root: Path, model_cache: Path, model: str) -> floa
     command = [
         str(binary),
         "--index",
-        "--embedding", model,
         "--model-cache", str(model_cache),
         "--device", "cpu",
         "--mode", "direct",
     ]
+    # "auto" leaves model selection to the engine (dominant source language),
+    # which only a binary that profiles the workspace can do.
+    if model and model != "auto":
+        command.extend(["--embedding", model])
     started = time.monotonic()
     completed = subprocess.run(
         command, cwd=root, capture_output=True, text=True, check=False
@@ -438,6 +459,7 @@ def main() -> None:
             "checkout_commit": checkout_commit,
             "checkout_branch": checkout_branch,
             "model": args.model,
+            "resolved_model": resolved_model(root),
             "device": "cpu",
             "result_limit": RESULT_LIMIT,
             "refresh_measured": "off",

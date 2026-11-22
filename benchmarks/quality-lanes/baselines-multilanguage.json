@@ -3,11 +3,11 @@
   "policy": "Per language and per metric the measured value must be >= the pinned floor. Improvements pass and are printed; re-pin them in a reviewed change. No cross-language average.",
   "provenance": {
     "measured_on": "macOS 26 arm64",
-    "binary_sha256": "a26e1fda264470bb1b8b275e4a52b80ec70830292c9877ccdc3485bc89e4e194",
-    "commit": "04ada0edb2a57fa00fed415956aaa13fdd6abfbf",
+    "binary_sha256": "f25324e002c7d90efd31c033350af585c67b56e7ec29b05e1d18c7557dba7f93",
+    "commit": "367b1e6c14bb90f6e6fcf5253b86f8300aa9eb15",
     "branch": "feat/shape-aware-fusion",
     "fixture_source": "jordigilh/engram 9032f43 (rust/typescript), 7752ae9 (python), ca6231c (java)",
-    "model": "local/gte-modernbert-base",
+    "model": "auto (local model chosen from the repository dominant source language; see SHAPE_AWARE_FUSION_2026-11-22.md)",
     "device": "cpu",
     "result_limit": 10
   },
@@ -32,20 +32,20 @@
     "python-workflow-discovery-v1": {
       "role": "tuning",
       "retrieval": {
-        "ndcg@10": 0.628224020921,
-        "mrr@10": 0.6875,
-        "recall@10": 0.767261904762,
-        "precision@10": 0.3125
+        "ndcg@10": 0.759583795932,
+        "mrr@10": 0.90625,
+        "recall@10": 0.785119047619,
+        "precision@10": 0.325
       },
       "fixture_snapshot_sha256": "0b77b06131e0a0e8ffbafa258c54e8900b7c32c2ea6f156ea75e8c6a181e076b"
     },
     "rust-workflow-discovery-v1": {
       "role": "tuning",
       "retrieval": {
-        "ndcg@10": 0.649967356184,
-        "mrr@10": 0.791666666667,
-        "recall@10": 0.785119047619,
-        "precision@10": 0.325
+        "ndcg@10": 0.722418170322,
+        "mrr@10": 0.80625,
+        "recall@10": 0.800744047619,
+        "precision@10": 0.3375
       },
       "fixture_snapshot_sha256": "eb8b41c271aa13160a1ba7ce63af7c8ea35461f3f1bfa8248a3845d19d44c98a"
     },
@@ -62,10 +62,10 @@
     "java-workflow-discovery-v1": {
       "role": "tuning",
       "retrieval": {
-        "ndcg@10": 0.466327574012,
-        "mrr@10": 0.549107142857,
-        "recall@10": 0.642261904762,
-        "precision@10": 0.25
+        "ndcg@10": 0.534839836944,
+        "mrr@10": 0.65625,
+        "recall@10": 0.722321428571,
+        "precision@10": 0.275
       },
       "fixture_snapshot_sha256": "77ac5f8c10eeebeb3097158a166eeb729ddee0d6e5d8e880b59c151363f52c38"
     }
