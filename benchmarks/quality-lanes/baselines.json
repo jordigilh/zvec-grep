@@ -336,7 +336,7 @@
     "README.md": "9e83f381671ab86da84b8b57c1b5dba68641429ebecf2f8c999b558d01e327c4",
     "SHAPE_AWARE_FUSION_2026-11-22.md": "20cdcc594c98be37c5c0f7e841547ef75bf69ab81b63c4957c70c5a3dc4632ef",
     "adjudicate_graph.py": "58acef2b8308ef70af4bfede8d14b3080f82373eb1ad9e13e7608365c99739ba",
-    "baselines-multilanguage.json": "b399d8f3fc8459aa6f27db7e31610812f27af9c1238a23577843d586980bba41",
+    "baselines-multilanguage.json": "9955edba6bde04f5e7a67e69d52f610e0d8a68fab3310866bedb77ec72a9c2d3",
     "check_baselines.py": "9834fc492a3ffa347312e46f7ebf22a2341bf6fd02fa94c885c249e7a8c237fb",
     "check_baselines_multilanguage.py": "faa50336fb46331f200485e6e886388ba9ffdb79dc1b01707d55292e6799d325",
     "check_fixture_hashes.py": "ad28dbaf87e4b7cb953e722722759cbb12b0d96b8d08e880e8562a7579f8275f",
