@@ -100,7 +100,7 @@ jobs:
           echo "graph=$graph" >> "$GITHUB_OUTPUT"
 
   retrieval-quality:
-    name: retrieval quality (qeval, exact baselines)
+    name: retrieval quality (qeval, pinned baselines)
     needs: changes
     if: needs.changes.outputs.retrieval == 'true'
     runs-on: ubuntu-24.04
@@ -131,11 +131,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Cache the potion code model
+      - name: Cache the built-in embedding models
         uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/model-cache
-          key: quality-lanes-potion-code-16m-v2-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/engine/models/catalog.ts') }}
+          key: quality-lanes-builtin-models-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/crates/zg-engine/src/pipelines/indexing/language_profile.rs') }}
       - name: Verify fixture hashes against baselines.json
         run: python3 benchmarks/quality-lanes/check_fixture_hashes.py
       - name: Run the retrieval lane over both fixtures (2 reps each)
@@ -198,11 +198,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Cache the potion code model
+      - name: Cache the built-in embedding models
         uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/model-cache
-          key: quality-lanes-potion-code-16m-v2-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/engine/models/catalog.ts') }}
+          key: quality-lanes-builtin-models-v1-multilanguage-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/crates/zg-engine/src/pipelines/indexing/language_profile.rs') }}
       - name: Run the lane's Python unit tests
         run: python3 -m unittest discover -s benchmarks/quality-lanes -p 'test_*.py'
       - name: Verify vendored lane assets
@@ -228,7 +228,8 @@ jobs:
               --work-root "$RUNNER_TEMP/work-ml-$fixture" \
               --output "$RUNNER_TEMP/results-ml-$fixture" \
               --model-cache "$RUNNER_TEMP/model-cache" \
-              --repeats 2 | tee -a "$summary"
+              --repeats 2 \
+              --model auto | tee -a "$summary"
             python3 "$lanes/check_baselines_multilanguage.py" \
               --baselines "$lanes/baselines-multilanguage.json" \
               --fixture "$fixture" \

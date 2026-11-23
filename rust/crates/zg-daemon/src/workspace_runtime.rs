@@ -1045,6 +1045,10 @@ impl IndexOperationProvider for WorkspaceRuntimeManager {
         }
         let options = IndexOptions {
             root: request.root.clone(),
+            // A missing index is rebuilt like a first search: a configured
+            // local model acts as the fallback, and otherwise the repository
+            // is profiled rather than adopting a remote environment default.
+            implicit: true,
             on_progress: request.on_progress.clone(),
             signal: request.signal.clone(),
             allow_remote: request.allow_remote,

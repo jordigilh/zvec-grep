@@ -87,6 +87,9 @@ fn authorization_for_manifest(
     let model = crate::pipelines::indexing::service::embedding_reference(
         existing,
         options.embedding.as_ref(),
+        None,
+        false,
+        false,
     )?;
     if options.allow_remote || model.starts_with("local/") {
         return Ok(None);

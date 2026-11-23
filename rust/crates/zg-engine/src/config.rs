@@ -362,10 +362,30 @@ pub(crate) fn string(value: &Value, path: &[&str]) -> Option<String> {
     current.as_str().map(str::to_owned)
 }
 
-/// Selects a local model for CLI-only implicit indexing, never a remote default.
+/// Resolves the configured local model used as the implicit-build fallback.
+///
+/// It ranks below an explicit request and below a stored index model, and it is
+/// never allowed to select a remote model. `None` means nothing local was
+/// configured; the engine then profiles the repository and applies its built-in
+/// selection, unless `defaults.embedding` or `ZVEC_GREP_EMBEDDING` names a
+/// local model, in which case that configured model applies. A remote value is
+/// ignored here, so implicit builds still profile. The daemon's missing-index rebuild relies on this as
+/// well, so the rule is engine-side rather than CLI-only.
+/// Reads only the configured local default, ignoring the process environment.
+///
+/// The server uses this for a client-supplied implicit build: the client
+/// already applied its own environment, and the server's must not override it.
+/// # Errors
+/// Returns configuration I/O errors.
+pub fn implicit_local_default() -> Result<Option<String>, EngineError> {
+    let config = read()?;
+    Ok(string(&config, &["defaults", "embedding"])
+        .filter(|reference| reference.starts_with("local/")))
+}
+
 /// # Errors
 /// Returns configuration I/O, validation, and invalid environment model errors.
-pub fn implicit_embedding_reference() -> Result<String, EngineError> {
+pub fn implicit_embedding_override() -> Result<Option<String>, EngineError> {
     let config = read()?;
     let configured = crate::models::resolve_embedding_reference(
         crate::models::ResolveEmbeddingReferenceOptions {
@@ -374,9 +394,12 @@ pub fn implicit_embedding_reference() -> Result<String, EngineError> {
         },
     )
     .map_err(crate::models::ModelError::into_engine_error)?;
-    Ok(configured
-        .filter(|reference| reference.starts_with("local/"))
-        .unwrap_or_else(|| "local/potion-code-16m-v2".to_owned()))
+    if let Some(local) = configured.filter(|reference| reference.starts_with("local/")) {
+        return Ok(Some(local));
+    }
+    // A remote environment value must not hide a configured local default.
+    Ok(string(&config, &["defaults", "embedding"])
+        .filter(|reference| reference.starts_with("local/")))
 }
 
 pub(crate) fn device(value: &Value, reference: &str) -> Option<Device> {

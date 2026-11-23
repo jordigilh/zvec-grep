@@ -35,6 +35,7 @@ lists and identical unmatched-hit reports; a mismatch aborts the run.
 Usage:
   python3 run_qeval_multilanguage.py --fixture <fixture-dir> --binary <zg> \
       --work-root <dir> --output <dir> [--model-cache <dir>] [--repeats 2]
+      [--model <reference>]
 """
 from __future__ import annotations
 
@@ -54,7 +55,7 @@ from evaluate_semantic_search import evaluate  # noqa: E402
 from replay_normalization import ReplayError, copy_fixture_sources  # noqa: E402
 
 RESULT_LIMIT = 10
-DEFAULT_MODEL = "local/potion-code-16m-v2"
+DEFAULT_MODEL = "local/gte-modernbert-base"
 
 _HEADER = re.compile(
     r"^#(?P<rank>\d+)(?: \[[^\]]+\])?(?: matchedBy=\S+)? "
@@ -284,7 +285,25 @@ def _git(cwd: Path, *args: str) -> str | None:
     return completed.stdout.strip() or None
 
 
-def build_index(binary: Path, root: Path, model_cache: Path) -> float:
+def resolved_model(root: Path) -> str | None:
+    """Reads the model the engine actually chose for the built index."""
+    manifest = root / ".zvec-grep" / "manifest.json"
+    if not manifest.exists():
+        return None
+    try:
+        payload = json.loads(manifest.read_text())
+    except (OSError, ValueError):
+        return None
+    embeddings = payload.get("embeddings") or []
+    model = embeddings[0].get("model", {}) if embeddings else {}
+    name = model.get("name")
+    provider = model.get("provider")
+    if not name:
+        return None
+    return f"{provider}/{name}" if provider else name
+
+
+def build_index(binary: Path, root: Path, model_cache: Path, model: str) -> float:
     """Build the workspace index explicitly when the binary supports it.
 
     Newer binaries require ``zg --index --embedding <model>`` before any query;
@@ -295,11 +314,14 @@ def build_index(binary: Path, root: Path, model_cache: Path) -> float:
     command = [
         str(binary),
         "--index",
-        "--embedding", DEFAULT_MODEL,
         "--model-cache", str(model_cache),
         "--device", "cpu",
         "--mode", "direct",
     ]
+    # "auto" leaves model selection to the engine (dominant source language),
+    # which only a binary that profiles the workspace can do.
+    if model and model != "auto":
+        command.extend(["--embedding", model])
     started = time.monotonic()
     completed = subprocess.run(
         command, cwd=root, capture_output=True, text=True, check=False
@@ -324,6 +346,7 @@ def main() -> None:
         )),
     )
     parser.add_argument("--repeats", type=int, default=2)
+    parser.add_argument("--model", default=DEFAULT_MODEL)
     args = parser.parse_args()
 
     if args.repeats < 1:
@@ -347,8 +370,17 @@ def main() -> None:
 
     # Build the index once; every measured query and every repeat sees it frozen.
     warmup_started = time.monotonic()
-    build_index(binary, root, model_cache)
+    build_index(binary, root, model_cache, args.model)
     run_queries(binary, root, queries[:1], "wait", model_cache)
+    # A failed explicit build falls back to the warmup query, which may create
+    # the index with a different model. Never measure under a mislabelled model.
+    indexed_model = resolved_model(root)
+    if indexed_model is None:
+        raise SystemExit(f"index manifest is missing after the warmup query: {root}")
+    if args.model != "auto" and indexed_model != args.model:
+        raise SystemExit(
+            f"index model {indexed_model} does not match the requested {args.model}"
+        )
     index_wall_seconds = round(time.monotonic() - warmup_started, 3)
 
     repeats: list[list[dict[str, Any]]] = []
@@ -435,7 +467,8 @@ def main() -> None:
             "binary_sha256": binary_sha256,
             "checkout_commit": checkout_commit,
             "checkout_branch": checkout_branch,
-            "model": DEFAULT_MODEL,
+            "model": args.model,
+            "resolved_model": resolved_model(root),
             "device": "cpu",
             "result_limit": RESULT_LIMIT,
             "refresh_measured": "off",

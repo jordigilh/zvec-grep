@@ -1,14 +1,14 @@
 {
   "schema": "quality-lanes-baselines-v1",
-  "policy": "Strict byte-identical acceptance: any deviation from these values - including improvements - fails the lane. Improvements and acknowledged regressions are re-baselined by a reviewed PR that edits this file. Every measurement to date has been byte-reproducible across machines.",
+  "policy": "Strict acceptance: retrieval metrics must match within 2e-3 for cross-platform inference drift (observed 9.5e-4 in nDCG between macOS and Ubuntu for an identical ranked set); graph metrics remain byte-identical. Any other deviation - including improvements - fails the lane. Improvements and acknowledged regressions are re-baselined by a reviewed PR that edits this file.",
   "fixtures": {
     "go-workflow-discovery-v1": {
       "role": "tuning",
       "retrieval": {
-        "ndcg@10": 0.5887735493745122,
-        "mrr@10": 0.7333333333333333,
-        "recall@10": 0.6770833333333334,
-        "precision@10": 0.25
+        "ndcg@10": 0.6461172177559741,
+        "mrr@10": 0.84375,
+        "recall@10": 0.7229166666666667,
+        "precision@10": 0.275
       },
       "graph": {
         "edge_count": 43,
@@ -169,10 +169,10 @@
     "go-inventory-audit-v1": {
       "role": "holdout",
       "retrieval": {
-        "ndcg@10": 0.6308114991329224,
-        "mrr@10": 0.78125,
-        "recall@10": 0.7833333333333333,
-        "precision@10": 0.3
+        "ndcg@10": 0.6242574379496508,
+        "mrr@10": 0.9,
+        "recall@10": 0.7145833333333333,
+        "precision@10": 0.275
       },
       "graph": {
         "edge_count": 49,
@@ -333,11 +333,12 @@
     }
   },
   "files": {
-    "README.md": "9e83f381671ab86da84b8b57c1b5dba68641429ebecf2f8c999b558d01e327c4",
+    "README.md": "d84c010079c887c825f160c99958a6e3ac87098596e9df884e299be1aff50e97",
+    "SHAPE_AWARE_FUSION_2026-11-22.md": "3325941483b63bb0c2ad40eff6bd1c8cbacf23b64d68735da6172fa8fc6d73fb",
     "adjudicate_graph.py": "58acef2b8308ef70af4bfede8d14b3080f82373eb1ad9e13e7608365c99739ba",
-    "baselines-multilanguage.json": "35d2cdc6145714696bd4ef1771c422f7bfba2a3b0ea0d92f6e79ce977b0d92d3",
-    "check_baselines.py": "9834fc492a3ffa347312e46f7ebf22a2341bf6fd02fa94c885c249e7a8c237fb",
-    "check_baselines_multilanguage.py": "faa50336fb46331f200485e6e886388ba9ffdb79dc1b01707d55292e6799d325",
+    "baselines-multilanguage.json": "b1c884dbfe6ebce07228d5cd025faab538cc079d0c2b5ccc85d16407a5da966a",
+    "check_baselines.py": "4b2312a8fa528e9252c3fad4a790147cfa166e4c7318be529fa452a5c1c16d29",
+    "check_baselines_multilanguage.py": "6a2da77693e60859303e395b045885b046dd6925ee653a92c795f6fbffc06f59",
     "check_fixture_hashes.py": "ad28dbaf87e4b7cb953e722722759cbb12b0d96b8d08e880e8562a7579f8275f",
     "check_multilanguage_fixtures.py": "0ae9414872f6526b53e4d7010b3e0a957a0089bdefdb0bba0edfe717830c65ab",
     "evaluate_semantic_search.py": "9d0f82713b17fec0a450c117485a667a052b6a70d28dd35d5302943292a49ff7",
@@ -430,7 +431,7 @@
     "fixtures/typescript-workflow-discovery-v1/truth.json": "fc65b6904a2fc1abbb64c57480a5803febaf5d592a143ba3ef96859f499198cf",
     "replay_normalization.py": "c8cf61bab1426c28b9a036fd21dd5ca8b9d87b5bb80ac383573713ee1c4e753a",
     "run_qeval.py": "92458da627ee85471512f8ecb765c1a85cec3021b80b35b04f421478a08ed28b",
-    "run_qeval_multilanguage.py": "868075a937ba53d791e7ab07a8e870ee60516670ab59cfe5bc2912e66788a892",
+    "run_qeval_multilanguage.py": "b50b43c9445993663a07d18dc2f79bc6c1eaf66befecacb49c588f31b23cae57",
     "summarize_multilanguage.py": "7ff8707f8ccb02aa6e3d0439e69c75fbcdd262a87e3a25f5a11fad446737f8b3",
     "test_multilanguage_checks.py": "970af5ba791751c63e47f2ff94d66b6991994fc25c8e29c104e24061e2d0602e",
     "test_replay_normalization.py": "8dfb11aa8f24a9286d64d2d2eb64d10aa5a0ecc63a3d5e54c0e6fa6cef847cef",
