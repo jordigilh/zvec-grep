@@ -6,7 +6,7 @@
     "binary_sha256": "686d9f70eaf8fa2e631a83c74c38b7124bb6ac792b8680e6b9f9de335a7d53e3",
     "commit": "ee7990b513b46494cbe7a954a3edee85cb0dd8cf",
     "branch": "ci/quality-lanes-multilanguage-report-only",
-    "fixture_source": "jordigilh/engram 5bc83bd (label corrections for rust/typescript)",
+    "fixture_source": "jordigilh/engram 9032f43 (rust/typescript), 7752ae9 (python), ca6231c (java)",
     "model": "local/potion-code-16m-v2",
     "device": "cpu",
     "result_limit": 10
