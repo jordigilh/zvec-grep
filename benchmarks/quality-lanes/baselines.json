@@ -28,139 +28,361 @@
         "note": "18/18 confirmed (precision 100% on resolved edges, recall 100%)",
         "confirmed_pairs": [
           [
-            ["internal/discovery/catalog.go", "WorkflowCatalog.ListActions"],
-            ["internal/discovery/catalog.go", "WorkflowCatalog.ListWorkflows"]
+            [
+              "internal/discovery/catalog.go",
+              "WorkflowCatalog.ListActions"
+            ],
+            [
+              "internal/discovery/catalog.go",
+              "WorkflowCatalog.ListWorkflows"
+            ]
           ],
           [
-            ["internal/discovery/catalog.go", "WorkflowCatalog.ListActions"],
-            ["internal/discovery/filters.go", "ApplyLabelFilters"]
+            [
+              "internal/discovery/catalog.go",
+              "WorkflowCatalog.ListActions"
+            ],
+            [
+              "internal/discovery/filters.go",
+              "ApplyLabelFilters"
+            ]
           ],
           [
-            ["internal/selection/retry.go", "SelectWithRetry"],
-            ["internal/selection/retry.go", "SelfCorrectSelection"]
+            [
+              "internal/selection/retry.go",
+              "SelectWithRetry"
+            ],
+            [
+              "internal/selection/retry.go",
+              "SelfCorrectSelection"
+            ]
           ],
           [
-            ["internal/selection/retry.go", "SelectWithRetry"],
-            ["internal/selection/retry.go", "retrySelection"]
+            [
+              "internal/selection/retry.go",
+              "SelectWithRetry"
+            ],
+            [
+              "internal/selection/retry.go",
+              "retrySelection"
+            ]
           ],
           [
-            ["internal/selection/retry.go", "SelfCorrectSelection"],
-            ["internal/discovery/state.go", "WorkflowStateFromContext"]
+            [
+              "internal/selection/retry.go",
+              "SelfCorrectSelection"
+            ],
+            [
+              "internal/discovery/state.go",
+              "WorkflowStateFromContext"
+            ]
           ],
           [
-            ["internal/selection/retry.go", "SelfCorrectSelection"],
-            ["internal/selection/validator.go", "Validator.SetWorkflowState"]
+            [
+              "internal/selection/retry.go",
+              "SelfCorrectSelection"
+            ],
+            [
+              "internal/selection/validator.go",
+              "Validator.SetWorkflowState"
+            ]
           ],
           [
-            ["internal/selection/retry.go", "SelfCorrectSelection"],
-            ["internal/selection/validator.go", "Validator.Validate"]
+            [
+              "internal/selection/retry.go",
+              "SelfCorrectSelection"
+            ],
+            [
+              "internal/selection/validator.go",
+              "Validator.Validate"
+            ]
           ],
           [
-            ["internal/selection/retry.go", "retrySelection"],
-            ["internal/selection/retry.go", "SelfCorrectSelection"]
+            [
+              "internal/selection/retry.go",
+              "retrySelection"
+            ],
+            [
+              "internal/selection/retry.go",
+              "SelfCorrectSelection"
+            ]
           ],
           [
-            ["internal/selection/validator.go", "Validator.IsAllowed"],
-            ["internal/discovery/state.go", "WorkflowState.Contains"]
+            [
+              "internal/selection/validator.go",
+              "Validator.IsAllowed"
+            ],
+            [
+              "internal/discovery/state.go",
+              "WorkflowState.Contains"
+            ]
           ],
           [
-            ["internal/selection/validator.go", "Validator.Validate"],
-            ["internal/selection/validator.go", "Validator.IsAllowed"]
+            [
+              "internal/selection/validator.go",
+              "Validator.Validate"
+            ],
+            [
+              "internal/selection/validator.go",
+              "Validator.IsAllowed"
+            ]
           ],
           [
-            ["internal/tools/list_workflows.go", "ListWorkflows"],
-            ["internal/discovery/catalog.go", "WorkflowCatalog.ListWorkflows"]
+            [
+              "internal/tools/list_workflows.go",
+              "ListWorkflows"
+            ],
+            [
+              "internal/discovery/catalog.go",
+              "WorkflowCatalog.ListWorkflows"
+            ]
           ],
           [
-            ["internal/tools/list_workflows.go", "ListWorkflows"],
-            ["internal/tools/list_workflows.go", "RecordDiscovered"]
+            [
+              "internal/tools/list_workflows.go",
+              "ListWorkflows"
+            ],
+            [
+              "internal/tools/list_workflows.go",
+              "RecordDiscovered"
+            ]
           ],
           [
-            ["internal/tools/list_workflows.go", "RecordDiscovered"],
-            ["internal/discovery/state.go", "WorkflowState.Add"]
+            [
+              "internal/tools/list_workflows.go",
+              "RecordDiscovered"
+            ],
+            [
+              "internal/discovery/state.go",
+              "WorkflowState.Add"
+            ]
           ],
           [
-            ["internal/tools/select_workflow.go", "HandleSelectWorkflow"],
-            ["internal/discovery/catalog.go", "WorkflowCatalog.GetWorkflow"]
+            [
+              "internal/tools/select_workflow.go",
+              "HandleSelectWorkflow"
+            ],
+            [
+              "internal/discovery/catalog.go",
+              "WorkflowCatalog.GetWorkflow"
+            ]
           ],
           [
-            ["internal/tools/select_workflow.go", "HandleSelectWorkflow"],
-            ["internal/tools/select_workflow.go", "applySelectedWorkflow"]
+            [
+              "internal/tools/select_workflow.go",
+              "HandleSelectWorkflow"
+            ],
+            [
+              "internal/tools/select_workflow.go",
+              "applySelectedWorkflow"
+            ]
           ],
           [
-            ["internal/tools/select_workflow.go", "HandleSelectWorkflow"],
-            ["internal/tools/select_workflow.go", "authorizeSelectionDriver"]
+            [
+              "internal/tools/select_workflow.go",
+              "HandleSelectWorkflow"
+            ],
+            [
+              "internal/tools/select_workflow.go",
+              "authorizeSelectionDriver"
+            ]
           ],
           [
-            ["internal/tools/select_workflow.go", "applySelectedWorkflow"],
-            ["internal/tools/select_workflow.go", "lookupDiscoveredParameters"]
+            [
+              "internal/tools/select_workflow.go",
+              "applySelectedWorkflow"
+            ],
+            [
+              "internal/tools/select_workflow.go",
+              "lookupDiscoveredParameters"
+            ]
           ],
           [
-            ["internal/tools/select_workflow.go", "authorizeSelectionDriver"],
-            ["internal/tools/select_workflow.go", "isWorkflowInDiscoveryResult"]
+            [
+              "internal/tools/select_workflow.go",
+              "authorizeSelectionDriver"
+            ],
+            [
+              "internal/tools/select_workflow.go",
+              "isWorkflowInDiscoveryResult"
+            ]
           ]
         ],
         "refuted_pairs": [],
         "pending_externals": [
           [
-            ["internal/discovery/catalog.go", "WorkflowCatalog.ListWorkflows"],
+            [
+              "internal/discovery/catalog.go",
+              "WorkflowCatalog.ListWorkflows"
+            ],
             "append"
           ],
           [
-            ["internal/discovery/catalog.go", "WorkflowCatalog.ListWorkflows"],
+            [
+              "internal/discovery/catalog.go",
+              "WorkflowCatalog.ListWorkflows"
+            ],
             "len"
           ],
           [
-            ["internal/discovery/catalog.go", "WorkflowCatalog.ListWorkflows"],
+            [
+              "internal/discovery/catalog.go",
+              "WorkflowCatalog.ListWorkflows"
+            ],
             "make"
           ],
-          [["internal/discovery/filters.go", "ApplyLabelFilters"], "append"],
-          [["internal/discovery/filters.go", "ApplyLabelFilters"], "len"],
-          [["internal/discovery/filters.go", "ApplyLabelFilters"], "make"],
-          [["internal/discovery/state.go", "NewWorkflowState"], "make"],
           [
-            ["internal/discovery/state.go", "WithWorkflowState"],
+            [
+              "internal/discovery/filters.go",
+              "ApplyLabelFilters"
+            ],
+            "append"
+          ],
+          [
+            [
+              "internal/discovery/filters.go",
+              "ApplyLabelFilters"
+            ],
+            "len"
+          ],
+          [
+            [
+              "internal/discovery/filters.go",
+              "ApplyLabelFilters"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/discovery/state.go",
+              "NewWorkflowState"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/discovery/state.go",
+              "WithWorkflowState"
+            ],
             "context.WithValue"
           ],
-          [["internal/discovery/state.go", "WorkflowState.Add"], "make"],
-          [["internal/discovery/state.go", "WorkflowState.Add"], "s.mu.Lock"],
-          [["internal/discovery/state.go", "WorkflowState.Add"], "s.mu.Unlock"],
           [
-            ["internal/discovery/state.go", "WorkflowState.Contains"],
+            [
+              "internal/discovery/state.go",
+              "WorkflowState.Add"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/discovery/state.go",
+              "WorkflowState.Add"
+            ],
+            "s.mu.Lock"
+          ],
+          [
+            [
+              "internal/discovery/state.go",
+              "WorkflowState.Add"
+            ],
+            "s.mu.Unlock"
+          ],
+          [
+            [
+              "internal/discovery/state.go",
+              "WorkflowState.Contains"
+            ],
             "s.mu.RLock"
           ],
           [
-            ["internal/discovery/state.go", "WorkflowState.Contains"],
+            [
+              "internal/discovery/state.go",
+              "WorkflowState.Contains"
+            ],
             "s.mu.RUnlock"
           ],
           [
-            ["internal/discovery/state.go", "WorkflowStateFromContext"],
+            [
+              "internal/discovery/state.go",
+              "WorkflowStateFromContext"
+            ],
             "ctx.Value"
           ],
           [
-            ["internal/execution/runner.go", "ValidateWorkflowParameters"],
+            [
+              "internal/execution/runner.go",
+              "ValidateWorkflowParameters"
+            ],
             "fmt.Errorf"
           ],
-          [["internal/metrics/validator.go", "ValidateMetricName"], "rune"],
           [
-            ["internal/metrics/validator.go", "ValidateMetricName"],
+            [
+              "internal/metrics/validator.go",
+              "ValidateMetricName"
+            ],
+            "rune"
+          ],
+          [
+            [
+              "internal/metrics/validator.go",
+              "ValidateMetricName"
+            ],
             "unicode.IsLetter"
           ],
-          [["internal/selection/validator.go", "NewValidator"], "len"],
-          [["internal/selection/validator.go", "NewValidator"], "make"],
           [
-            ["internal/selection/validator.go", "ValidationError.Error"],
+            [
+              "internal/selection/validator.go",
+              "NewValidator"
+            ],
+            "len"
+          ],
+          [
+            [
+              "internal/selection/validator.go",
+              "NewValidator"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/selection/validator.go",
+              "ValidationError.Error"
+            ],
             "fmt.Sprintf"
           ],
-          [["internal/tools/list_workflows.go", "ListWorkflows"], "append"],
-          [["internal/tools/list_workflows.go", "ListWorkflows"], "len"],
-          [["internal/tools/list_workflows.go", "ListWorkflows"], "make"],
           [
-            ["internal/tools/select_workflow.go", "HandleSelectWorkflow"],
+            [
+              "internal/tools/list_workflows.go",
+              "ListWorkflows"
+            ],
+            "append"
+          ],
+          [
+            [
+              "internal/tools/list_workflows.go",
+              "ListWorkflows"
+            ],
+            "len"
+          ],
+          [
+            [
+              "internal/tools/list_workflows.go",
+              "ListWorkflows"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/tools/select_workflow.go",
+              "HandleSelectWorkflow"
+            ],
             "fmt.Errorf"
           ],
           [
-            ["internal/tools/select_workflow.go", "authorizeSelectionDriver"],
+            [
+              "internal/tools/select_workflow.go",
+              "authorizeSelectionDriver"
+            ],
             "fmt.Errorf"
           ]
         ]
@@ -199,144 +421,409 @@
         "note": "16/16 confirmed (precision 100% on resolved edges), recall 16/17",
         "confirmed_pairs": [
           [
-            ["internal/audit/ledger.go", "AuditLedger.Record"],
-            ["internal/permissions/enforcer.go", "Enforcer.RequirePermission"]
+            [
+              "internal/audit/ledger.go",
+              "AuditLedger.Record"
+            ],
+            [
+              "internal/permissions/enforcer.go",
+              "Enforcer.RequirePermission"
+            ]
           ],
           [
-            ["internal/audit/review.go", "CheckAccess"],
-            ["internal/audit/ledger.go", "AuditLedger.Entries"]
+            [
+              "internal/audit/review.go",
+              "CheckAccess"
+            ],
+            [
+              "internal/audit/ledger.go",
+              "AuditLedger.Entries"
+            ]
           ],
           [
-            ["internal/audit/review.go", "CheckAccess"],
-            ["internal/inventory/state.go", "AssetState.Contains"]
+            [
+              "internal/audit/review.go",
+              "CheckAccess"
+            ],
+            [
+              "internal/inventory/state.go",
+              "AssetState.Contains"
+            ]
           ],
           [
-            ["internal/audit/review.go", "CheckAccess"],
-            ["internal/inventory/state.go", "AssetStateFromContext"]
+            [
+              "internal/audit/review.go",
+              "CheckAccess"
+            ],
+            [
+              "internal/inventory/state.go",
+              "AssetStateFromContext"
+            ]
           ],
           [
-            ["internal/inventory/registry.go", "AssetRegistry.ListAssets"],
-            ["internal/inventory/filters.go", "ApplyTagFilters"]
+            [
+              "internal/inventory/registry.go",
+              "AssetRegistry.ListAssets"
+            ],
+            [
+              "internal/inventory/filters.go",
+              "ApplyTagFilters"
+            ]
           ],
           [
-            ["internal/permissions/enforcer.go", "Enforcer.CheckAccess"],
-            ["internal/permissions/policy.go", "PolicySet.IsGranted"]
+            [
+              "internal/permissions/enforcer.go",
+              "Enforcer.CheckAccess"
+            ],
+            [
+              "internal/permissions/policy.go",
+              "PolicySet.IsGranted"
+            ]
           ],
           [
-            ["internal/permissions/enforcer.go", "Enforcer.RequirePermission"],
-            ["internal/permissions/enforcer.go", "Enforcer.CheckAccess"]
+            [
+              "internal/permissions/enforcer.go",
+              "Enforcer.RequirePermission"
+            ],
+            [
+              "internal/permissions/enforcer.go",
+              "Enforcer.CheckAccess"
+            ]
           ],
           [
-            ["internal/tools/list_assets.go", "ListAssets"],
-            ["internal/inventory/registry.go", "AssetRegistry.ListAssets"]
+            [
+              "internal/tools/list_assets.go",
+              "ListAssets"
+            ],
+            [
+              "internal/inventory/registry.go",
+              "AssetRegistry.ListAssets"
+            ]
           ],
           [
-            ["internal/tools/list_assets.go", "ListAssets"],
-            ["internal/tools/list_assets.go", "RecordScanned"]
+            [
+              "internal/tools/list_assets.go",
+              "ListAssets"
+            ],
+            [
+              "internal/tools/list_assets.go",
+              "RecordScanned"
+            ]
           ],
           [
-            ["internal/tools/list_assets.go", "RecordScanned"],
-            ["internal/inventory/state.go", "AssetState.Add"]
+            [
+              "internal/tools/list_assets.go",
+              "RecordScanned"
+            ],
+            [
+              "internal/inventory/state.go",
+              "AssetState.Add"
+            ]
           ],
           [
-            ["internal/tools/select_asset.go", "HandleSelectAsset"],
-            ["internal/audit/ledger.go", "AuditLedger.Record"]
+            [
+              "internal/tools/select_asset.go",
+              "HandleSelectAsset"
+            ],
+            [
+              "internal/audit/ledger.go",
+              "AuditLedger.Record"
+            ]
           ],
           [
-            ["internal/tools/select_asset.go", "HandleSelectAsset"],
-            ["internal/inventory/registry.go", "AssetRegistry.GetAsset"]
+            [
+              "internal/tools/select_asset.go",
+              "HandleSelectAsset"
+            ],
+            [
+              "internal/inventory/registry.go",
+              "AssetRegistry.GetAsset"
+            ]
           ],
           [
-            ["internal/tools/select_asset.go", "HandleSelectAsset"],
-            ["internal/tools/select_asset.go", "applySelectedAsset"]
+            [
+              "internal/tools/select_asset.go",
+              "HandleSelectAsset"
+            ],
+            [
+              "internal/tools/select_asset.go",
+              "applySelectedAsset"
+            ]
           ],
           [
-            ["internal/tools/select_asset.go", "HandleSelectAsset"],
-            ["internal/tools/select_asset.go", "authorizeAccess"]
+            [
+              "internal/tools/select_asset.go",
+              "HandleSelectAsset"
+            ],
+            [
+              "internal/tools/select_asset.go",
+              "authorizeAccess"
+            ]
           ],
           [
-            ["internal/tools/select_asset.go", "authorizeAccess"],
-            ["internal/permissions/enforcer.go", "Enforcer.RequirePermission"]
+            [
+              "internal/tools/select_asset.go",
+              "authorizeAccess"
+            ],
+            [
+              "internal/permissions/enforcer.go",
+              "Enforcer.RequirePermission"
+            ]
           ],
           [
-            ["internal/tools/select_asset.go", "authorizeAccess"],
-            ["internal/tools/select_asset.go", "isAssetInScanResult"]
+            [
+              "internal/tools/select_asset.go",
+              "authorizeAccess"
+            ],
+            [
+              "internal/tools/select_asset.go",
+              "isAssetInScanResult"
+            ]
           ]
         ],
         "refuted_pairs": [],
         "pending_externals": [
-          [["internal/audit/ledger.go", "AuditLedger.Entries"], "append"],
-          [["internal/audit/ledger.go", "AuditLedger.Entries"], "len"],
-          [["internal/audit/ledger.go", "AuditLedger.Entries"], "make"],
-          [["internal/audit/ledger.go", "AuditLedger.Record"], "append"],
-          [["internal/audit/review.go", "CheckAccess"], "len"],
-          [["internal/audit/review.go", "FindingsByAsset"], "append"],
-          [["internal/audit/review.go", "FindingsByAsset"], "make"],
-          [["internal/audit/review.go", "SummarizeSeverity"], "make"],
-          [["internal/inventory/filters.go", "ApplyTagFilters"], "len"],
-          [["internal/inventory/filters.go", "ApplyTagFilters"], "make"],
-          [["internal/inventory/filters.go", "FiltersFromSignal"], "append"],
-          [["internal/inventory/filters.go", "FiltersFromSignal"], "len"],
-          [["internal/inventory/filters.go", "FiltersFromSignal"], "make"],
           [
-            ["internal/inventory/registry.go", "AssetRegistry.ListAssets"],
+            [
+              "internal/audit/ledger.go",
+              "AuditLedger.Entries"
+            ],
             "append"
           ],
           [
-            ["internal/inventory/registry.go", "AssetRegistry.ListAssets"],
+            [
+              "internal/audit/ledger.go",
+              "AuditLedger.Entries"
+            ],
             "len"
           ],
           [
-            ["internal/inventory/registry.go", "AssetRegistry.ListAssets"],
+            [
+              "internal/audit/ledger.go",
+              "AuditLedger.Entries"
+            ],
             "make"
           ],
-          [["internal/inventory/registry.go", "NewAssetRegistry"], "make"],
-          [["internal/inventory/state.go", "AssetState.Add"], "make"],
-          [["internal/inventory/state.go", "AssetState.Add"], "s.mu.Lock"],
-          [["internal/inventory/state.go", "AssetState.Add"], "s.mu.Unlock"],
           [
-            ["internal/inventory/state.go", "AssetState.Contains"],
+            [
+              "internal/audit/ledger.go",
+              "AuditLedger.Record"
+            ],
+            "append"
+          ],
+          [
+            [
+              "internal/audit/review.go",
+              "CheckAccess"
+            ],
+            "len"
+          ],
+          [
+            [
+              "internal/audit/review.go",
+              "FindingsByAsset"
+            ],
+            "append"
+          ],
+          [
+            [
+              "internal/audit/review.go",
+              "FindingsByAsset"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/audit/review.go",
+              "SummarizeSeverity"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/inventory/filters.go",
+              "ApplyTagFilters"
+            ],
+            "len"
+          ],
+          [
+            [
+              "internal/inventory/filters.go",
+              "ApplyTagFilters"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/inventory/filters.go",
+              "FiltersFromSignal"
+            ],
+            "append"
+          ],
+          [
+            [
+              "internal/inventory/filters.go",
+              "FiltersFromSignal"
+            ],
+            "len"
+          ],
+          [
+            [
+              "internal/inventory/filters.go",
+              "FiltersFromSignal"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/inventory/registry.go",
+              "AssetRegistry.ListAssets"
+            ],
+            "append"
+          ],
+          [
+            [
+              "internal/inventory/registry.go",
+              "AssetRegistry.ListAssets"
+            ],
+            "len"
+          ],
+          [
+            [
+              "internal/inventory/registry.go",
+              "AssetRegistry.ListAssets"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/inventory/registry.go",
+              "NewAssetRegistry"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/inventory/state.go",
+              "AssetState.Add"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/inventory/state.go",
+              "AssetState.Add"
+            ],
+            "s.mu.Lock"
+          ],
+          [
+            [
+              "internal/inventory/state.go",
+              "AssetState.Add"
+            ],
+            "s.mu.Unlock"
+          ],
+          [
+            [
+              "internal/inventory/state.go",
+              "AssetState.Contains"
+            ],
             "s.mu.RLock"
           ],
           [
-            ["internal/inventory/state.go", "AssetState.Contains"],
+            [
+              "internal/inventory/state.go",
+              "AssetState.Contains"
+            ],
             "s.mu.RUnlock"
           ],
           [
-            ["internal/inventory/state.go", "AssetStateFromContext"],
+            [
+              "internal/inventory/state.go",
+              "AssetStateFromContext"
+            ],
             "ctx.Value"
           ],
-          [["internal/inventory/state.go", "NewAssetState"], "make"],
           [
-            ["internal/inventory/state.go", "WithAssetState"],
+            [
+              "internal/inventory/state.go",
+              "NewAssetState"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/inventory/state.go",
+              "WithAssetState"
+            ],
             "context.WithValue"
           ],
-          [["internal/permissions/policy.go", "NewPolicySet"], "make"],
-          [["internal/tools/list_assets.go", "ListAssets"], "append"],
-          [["internal/tools/list_assets.go", "ListAssets"], "len"],
-          [["internal/tools/list_assets.go", "ListAssets"], "make"],
           [
-            ["internal/tools/select_asset.go", "HandleSelectAsset"],
+            [
+              "internal/permissions/policy.go",
+              "NewPolicySet"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/tools/list_assets.go",
+              "ListAssets"
+            ],
+            "append"
+          ],
+          [
+            [
+              "internal/tools/list_assets.go",
+              "ListAssets"
+            ],
+            "len"
+          ],
+          [
+            [
+              "internal/tools/list_assets.go",
+              "ListAssets"
+            ],
+            "make"
+          ],
+          [
+            [
+              "internal/tools/select_asset.go",
+              "HandleSelectAsset"
+            ],
             "audit.CheckAccess"
           ],
           [
-            ["internal/tools/select_asset.go", "HandleSelectAsset"],
+            [
+              "internal/tools/select_asset.go",
+              "HandleSelectAsset"
+            ],
             "errors.New"
           ],
           [
-            ["internal/tools/select_asset.go", "HandleSelectAsset"],
+            [
+              "internal/tools/select_asset.go",
+              "HandleSelectAsset"
+            ],
             "errors.New"
           ],
-          [["internal/tools/select_asset.go", "authorizeAccess"], "errors.New"]
+          [
+            [
+              "internal/tools/select_asset.go",
+              "authorizeAccess"
+            ],
+            "errors.New"
+          ]
         ]
       }
     }
   },
   "files": {
+    "FUSION_RECALL_TRACE_2026-11-23.md": "1c266c1d7b7d958d647b0bfbd53124274b33805edad2a78d5d03607373f525f3",
     "README.md": "d84c010079c887c825f160c99958a6e3ac87098596e9df884e299be1aff50e97",
     "SHAPE_AWARE_FUSION_2026-11-22.md": "3325941483b63bb0c2ad40eff6bd1c8cbacf23b64d68735da6172fa8fc6d73fb",
     "adjudicate_graph.py": "58acef2b8308ef70af4bfede8d14b3080f82373eb1ad9e13e7608365c99739ba",
-    "baselines-multilanguage.json": "b1c884dbfe6ebce07228d5cd025faab538cc079d0c2b5ccc85d16407a5da966a",
+    "baselines-multilanguage.json": "8dbd738693e7a1f0c68360535741501fb59b99cd8f3fca41d26bfd83bf6d0e07",
     "check_baselines.py": "4b2312a8fa528e9252c3fad4a790147cfa166e4c7318be529fa452a5c1c16d29",
     "check_baselines_multilanguage.py": "6a2da77693e60859303e395b045885b046dd6925ee653a92c795f6fbffc06f59",
     "check_fixture_hashes.py": "ad28dbaf87e4b7cb953e722722759cbb12b0d96b8d08e880e8562a7579f8275f",
@@ -375,6 +862,20 @@
     "fixtures/go-workflow-discovery-v1/manifest.json": "945fa2aa1a61ce665dc3750cb36dfed63aa9e687c3bb4848ad09df47cea3b467",
     "fixtures/go-workflow-discovery-v1/qrels.json": "0d89687ffd9aac8e6688e9c0931aeb27cca55b99d04f6379ecc5b9bba541c606",
     "fixtures/go-workflow-discovery-v1/truth.json": "8dfca0aabb7da243b8c6ce2eda954fcfccb8a9883cf0952d197b05de93376794",
+    "fixtures/java-inventory-audit-v1/README.md": "7c5bdfdf2d5f101cb2cdf9fa613ae722a0fb38be324d4e6a3cddf703613829f7",
+    "fixtures/java-inventory-audit-v1/audit/AuditLedger.java": "509774119c1d602703faef3525b7eaa72f6dc99686898cd1d7c40d7b8e280cbf",
+    "fixtures/java-inventory-audit-v1/audit/AuditRecord.java": "06a18bd46aea412729312797446b84fd09761d67ec9c972db8a2a5188f9f73ed",
+    "fixtures/java-inventory-audit-v1/audit/Review.java": "0ca4e6a16be0dfef2fa3db95afe4fa4fb50d113c96b13c036c6b643cc670de46",
+    "fixtures/java-inventory-audit-v1/inventory/Asset.java": "64d80f8c8ceedd42d4af716e80357a73797673a90976eab8350ffb461274524b",
+    "fixtures/java-inventory-audit-v1/inventory/AssetRegistry.java": "0bfcc31a9092ffb82d03de1c9ba0ab64b774b9265071d04acbe5978d81fe7d2a",
+    "fixtures/java-inventory-audit-v1/inventory/ScanFilters.java": "6f8d35945295f520c78a9b46b0da4dfa37edf9f625f20211c1154dc30e584c27",
+    "fixtures/java-inventory-audit-v1/inventory/ScanState.java": "772483a800b7c77369c82b1b1f2f766130a22eaf5f586bd7de142c3e1617df1e",
+    "fixtures/java-inventory-audit-v1/manifest.json": "b6236f0f9e37752cfd2620b21d327b2c7fa1e8f045bb8eb0d4349863f2c8a1b7",
+    "fixtures/java-inventory-audit-v1/permissions/Enforcer.java": "5631f1fdbbe421f4854f75e73b8bebe88ac8c7da45aaea41157db727ac0343bd",
+    "fixtures/java-inventory-audit-v1/permissions/PolicySet.java": "1e9075631c59fe10e6a6a3a8edce4ae6467f273db34242a71bba7c20fa1f774a",
+    "fixtures/java-inventory-audit-v1/qrels.json": "c69e0ea81b19f19798ef16d2d7e6555a3769168341f52b217e028e9c28d72a2c",
+    "fixtures/java-inventory-audit-v1/tools/Assets.java": "0c9f575f879c24bcf9aefa262809d96009e3db1f4e0454cd50452d1fa6e01537",
+    "fixtures/java-inventory-audit-v1/truth.json": "1d94909a5e5dc84a6a81d625c02e32b679a1fb56212cde633cc4d1db31eff94b",
     "fixtures/java-workflow-discovery-v1/README.md": "21c9a5ad7770209f8e5026cebe5d9f6964200e297ee60da926dd3db084d10293",
     "fixtures/java-workflow-discovery-v1/catalog/Workflow.java": "047ae67dba54f51caa1b7b3f614230a295b81a9b2c5444696991cdc139a269e5",
     "fixtures/java-workflow-discovery-v1/catalog/WorkflowCatalog.java": "8011b9964ef7ed9d2da02277b2160c40b69f6dafbd1f1cade5c3786778b14cf3",
@@ -388,6 +889,20 @@
     "fixtures/java-workflow-discovery-v1/selection/WorkflowValidator.java": "eb06cdf9816055447c36d07b69299419cb005232363ed10d602435f74571e7d6",
     "fixtures/java-workflow-discovery-v1/tools/Workflows.java": "049370c5e1fe4dadd81f85b7aacd2c02bf5c240ad43cd11ee00d78ee185e278b",
     "fixtures/java-workflow-discovery-v1/truth.json": "f6559f53edfc63a18adb80d26f149c6f64a06a0b28d82c242f075c81f053a969",
+    "fixtures/python-inventory-audit-v1/README.md": "17451064f7dc819ef81b060d44259bbb0381bc8d09a9280ef0e82736891980ef",
+    "fixtures/python-inventory-audit-v1/api/types.py": "d6011d8c7b9515df9ee635a4d2a4f31f5f65e5e0efd5d389e8148a78719b9ac6",
+    "fixtures/python-inventory-audit-v1/audit/ledger.py": "44ce6cd4c2fc5ff79b161e43546c66107af508e764964fb40b5de6886fd71a6b",
+    "fixtures/python-inventory-audit-v1/audit/review.py": "021b0dc3b5412654cf34cc7eee711893f775db1716fe9b4b7570cb2ec1df5093",
+    "fixtures/python-inventory-audit-v1/inventory/filters.py": "f8b062602f1a5ff3884f0d1457361c7fafd721a391869df1c6920aee6c298a62",
+    "fixtures/python-inventory-audit-v1/inventory/registry.py": "21c95583773dd2424916ede8a9b4ac55d24bd3aad9b67f5e778ffc918c3e452e",
+    "fixtures/python-inventory-audit-v1/inventory/state.py": "139463ec87d8de8c627a5f8dd7e52e2c3959d699906fac3d8957c10d33ee5b5a",
+    "fixtures/python-inventory-audit-v1/manifest.json": "695f9e155c9b8603a46e92ceb925da330c54ac0bcb833b66f353eb509bf844bd",
+    "fixtures/python-inventory-audit-v1/permissions/enforcer.py": "24a99bae5575df413955ee279f9395fa7172452968582c3418138919f0f81316",
+    "fixtures/python-inventory-audit-v1/permissions/policy.py": "49f83eca2fdb501edb065dd2687d3bab8c62509b90a29a0e034a55b46a6fc875",
+    "fixtures/python-inventory-audit-v1/qrels.json": "1694c364e427cbb8eb0a357bfc089aecdb2697be8b952315dafa45040f2a5e78",
+    "fixtures/python-inventory-audit-v1/tools/list_assets.py": "d183c5fd782db6342c0fe311e22bb440c0a57eafdb2849bc5ff61c94f9e95d94",
+    "fixtures/python-inventory-audit-v1/tools/select_asset.py": "b61fe50492bc0dc613cd7f6fbe4585bedc284f1389f8467190a7ae6dabda0c9f",
+    "fixtures/python-inventory-audit-v1/truth.json": "ae371a27374d84085f913e7fc309caf6a75823d0ab05fb700a2348523cfcf419",
     "fixtures/python-workflow-discovery-v1/discovery/catalog.py": "df38d29ddd85d2c4a6770740e60a65792d62f4509a15a4e39bb21ee528479c5f",
     "fixtures/python-workflow-discovery-v1/discovery/filters.py": "bdc282ab8883a0d72af1cc641c309126e68c27a1f47eda777fc3d418f3498d46",
     "fixtures/python-workflow-discovery-v1/discovery/state.py": "b41dd82fd6854a35f59824b1bbe73c0005fb02db9f2153708ec61250e80a684b",
@@ -399,6 +914,26 @@
     "fixtures/python-workflow-discovery-v1/selection/validator.py": "88d2b211b1733c77aa6f3cecc358f4d4c80d1f2bc2dd92264ef13c88960fc566",
     "fixtures/python-workflow-discovery-v1/tools/workflows.py": "e1cbef80da543fd2bde4596754091d99d84c3fd2f8791049b320da2d25e0fc23",
     "fixtures/python-workflow-discovery-v1/truth.json": "27b0528a3e70edaa836d722a0004f45e48fe965996545a6cfe9b071462e5850c",
+    "fixtures/rust-inventory-audit-v1/Cargo.lock": "5d4e24c3fe7ab837c04cdde14ab51e9f7d940e7b2977df3d51dc1eb82afe545a",
+    "fixtures/rust-inventory-audit-v1/Cargo.toml": "a915a35f336b7ca878d59c6c168b9e37e13b904859261b3b63cafa9820e85bd7",
+    "fixtures/rust-inventory-audit-v1/README.md": "42cf6090c7acbf4759c485c1c8d38436dce01751a3e4a40f5e522e4a28405719",
+    "fixtures/rust-inventory-audit-v1/manifest.json": "893de0f815493794bf0fcfd13cae21bae30036d6b3f4566e5221af256d2cb96c",
+    "fixtures/rust-inventory-audit-v1/qrels.json": "2e96fa3c590a52016e6064307d50ab833da70e4904de370dad60e31401f0a904",
+    "fixtures/rust-inventory-audit-v1/src/audit/ledger.rs": "8263c1953bcf6cc559458caa264ce6710237fe3a9fa0bb16ed306dbb5c974c4d",
+    "fixtures/rust-inventory-audit-v1/src/audit/mod.rs": "ba6e3d9fbd07ac9a674057184244e197582cffa8d00f57557a05ad9875fb2a7a",
+    "fixtures/rust-inventory-audit-v1/src/audit/review.rs": "80d765bc1afa3d75e6a03e63d2dac68e86c3d9123911d797bcfcde9c8a6af270",
+    "fixtures/rust-inventory-audit-v1/src/inventory/filters.rs": "5ea36c8239d10f959e32e67e8dad9d917fc508e5654f43694c4e0af79ef35d3b",
+    "fixtures/rust-inventory-audit-v1/src/inventory/mod.rs": "c49d2e0b5f575da34d4298fe8d365faa59eaa8f6d9f015cf4609371752a8e8dc",
+    "fixtures/rust-inventory-audit-v1/src/inventory/registry.rs": "5e8d02ef2b8c55c17060382114c2d7e85566ad296d93dcc74a2669d99e84e0e2",
+    "fixtures/rust-inventory-audit-v1/src/inventory/state.rs": "dbd8fa18a9cf85c4335f12e25ffa1bbbdc5648aa4a541909a03e4c1eb46fe05b",
+    "fixtures/rust-inventory-audit-v1/src/lib.rs": "9a2f37469abca3256ba654fe0c62481c21f8f7ab6d19b7f373c86bc6b747f53f",
+    "fixtures/rust-inventory-audit-v1/src/permissions/enforcer.rs": "94a94bda3f0f12a4e0ff081a082a77ce02fb2f96c36291e13fd81d243af0f1ff",
+    "fixtures/rust-inventory-audit-v1/src/permissions/mod.rs": "1a9c027df94ecadf2333a58a371bb9f96d94a8975d6cb5844445db83ed3d12d7",
+    "fixtures/rust-inventory-audit-v1/src/permissions/policy.rs": "e8b4c907d164a83904421f57af7d627fc48e1e980f503d5285800836c50569ac",
+    "fixtures/rust-inventory-audit-v1/src/tools/list_assets.rs": "0658d82d53199d1b1f22b629b738a0b69d31d2ffd9d10042aa240cee8b1ef1fc",
+    "fixtures/rust-inventory-audit-v1/src/tools/mod.rs": "1dc4b2dec9ee925afaaa9be740df7c8ac808f1f448b40310ce5e820460c95c0f",
+    "fixtures/rust-inventory-audit-v1/src/tools/select_asset.rs": "5ecdcdeb92af258c01874ff9e61a96fe4f673ef6d9677eb928c4545ee1babfe6",
+    "fixtures/rust-inventory-audit-v1/truth.json": "a1507d587ad4165d6ff43e3c3aa5027587d70c16508e3ea19d1b37a6966e092b",
     "fixtures/rust-workflow-discovery-v1/Cargo.lock": "c2f641393639dc40b76dfec3056c37dec304279f9092ae7204e2790ac774e61f",
     "fixtures/rust-workflow-discovery-v1/Cargo.toml": "a76fc0a57fedee07e8bcb9f0bbaea5e8da5845df82fbd532662434a1171a904f",
     "fixtures/rust-workflow-discovery-v1/manifest.json": "e5edb7912413905c564016e8c61065414228f97daeec604c04356ae6b8fad166",
@@ -418,6 +953,20 @@
     "fixtures/rust-workflow-discovery-v1/src/tools/mod.rs": "d010c59369f0dff7ee33686d5c8b70c81e791f32928cb0d40d0e852d4c410045",
     "fixtures/rust-workflow-discovery-v1/src/tools/workflows.rs": "d1683db25586e935707f976b141c367f3ee91d206f80c2b7cc8d5ce743eb2366",
     "fixtures/rust-workflow-discovery-v1/truth.json": "3d57e3bc4f443ad92c29c32264ba34d08af59d83101bcc2945dffda6f2e603f9",
+    "fixtures/typescript-inventory-audit-v1/README.md": "2ea41332dfd6ec8321ee65312f1c1804fb7b7a73dcbb7b463584336be3d84f12",
+    "fixtures/typescript-inventory-audit-v1/api/summary.ts": "e1855364efd9c40788bbe7f9695779e64846ff4d5076875af63bb1a0350383a5",
+    "fixtures/typescript-inventory-audit-v1/audit/ledger.ts": "ea81ddc8085b310cf52d875c591a56f476804b2c304b3da5c31880a626341623",
+    "fixtures/typescript-inventory-audit-v1/audit/review.ts": "a06f3ef90f36a74a36ade8f9911dbd7e703f738de3b63fa86e92f3974a15c65f",
+    "fixtures/typescript-inventory-audit-v1/inventory/filters.ts": "37eec06d9cf9eb9ba14a0c3299de7ec9780819f9849192f536bab4f35aa6b075",
+    "fixtures/typescript-inventory-audit-v1/inventory/registry.ts": "6018423a717b87fc6f97a6443a51b9030a9de9a1ef212a63927eccab1ec69ea8",
+    "fixtures/typescript-inventory-audit-v1/inventory/state.ts": "3e2297d5b7c8c5e70cc8203633bf57efb602874ac6c73ec2642d51449383bf79",
+    "fixtures/typescript-inventory-audit-v1/manifest.json": "8263c7395dea44eb94d6853787bf1f3dc3f5e66800011ff7c556c654a20da1b0",
+    "fixtures/typescript-inventory-audit-v1/permissions/enforcer.ts": "82f8c958abf7f71e09f74db77680e8cce382a5557331de0546a52436ff8e63f7",
+    "fixtures/typescript-inventory-audit-v1/permissions/policy.ts": "46d1a5c319ee0f001bf194d6a216eddcb59cd8bb3525fe3f3bb9e8101abf521e",
+    "fixtures/typescript-inventory-audit-v1/qrels.json": "679b3f749542ba43ac987e80e4bf4b09e00ae821b3ea9f4f6555fbb7fe44fbf6",
+    "fixtures/typescript-inventory-audit-v1/tools/list_assets.ts": "0abbc8de7654c27088d5f3488c7c9df5f2a226b6ef81b87a36868b14f2f26203",
+    "fixtures/typescript-inventory-audit-v1/tools/select_asset.ts": "cc35b273e4f803efc3dafc7b2f6369b5d5768cf99a2edf32ce2486bbe36b2d2d",
+    "fixtures/typescript-inventory-audit-v1/truth.json": "a5d97af709b51b06e5a76feb01edc229b4a55325de592ee1f00c58a1a5635324",
     "fixtures/typescript-workflow-discovery-v1/discovery/catalog.ts": "2a16376bc97142a748912829d52a794d7822fdd7298289923a7581ab04d1af9b",
     "fixtures/typescript-workflow-discovery-v1/discovery/filters.ts": "f4231b45873bc72c6c2ffcfc970b3a66d0e7d1a7e2fa7164d844780017d810df",
     "fixtures/typescript-workflow-discovery-v1/discovery/state.ts": "bf9415282309bb4b34ae48d7140ebfd3a565ac4635e35a197032a91f60e6350d",
@@ -429,14 +978,20 @@
     "fixtures/typescript-workflow-discovery-v1/selection/validator.ts": "762511df03e276e95d5d8ef7e2942dffaf2695d1b7815b68fd11a2b6e7f73241",
     "fixtures/typescript-workflow-discovery-v1/tools/workflows.ts": "221316898076c3ec13d1f261e5732825876b44e5a79d0130cfe97f554b8b1a9a",
     "fixtures/typescript-workflow-discovery-v1/truth.json": "fc65b6904a2fc1abbb64c57480a5803febaf5d592a143ba3ef96859f499198cf",
+    "replay_fusion.py": "1ce848a3eb33029a49e7b308e22e8e5cd703cb0d44c8d28a05056bd9453a0b1c",
     "replay_normalization.py": "c8cf61bab1426c28b9a036fd21dd5ca8b9d87b5bb80ac383573713ee1c4e753a",
     "run_qeval.py": "92458da627ee85471512f8ecb765c1a85cec3021b80b35b04f421478a08ed28b",
     "run_qeval_multilanguage.py": "b50b43c9445993663a07d18dc2f79bc6c1eaf66befecacb49c588f31b23cae57",
     "summarize_multilanguage.py": "7ff8707f8ccb02aa6e3d0439e69c75fbcdd262a87e3a25f5a11fad446737f8b3",
+    "test_build_synthetic_qrels.py": "f31beee198751923f9ef52e729730901ff2f925c334352738164419525fbd6a2",
     "test_multilanguage_checks.py": "970af5ba791751c63e47f2ff94d66b6991994fc25c8e29c104e24061e2d0602e",
+    "test_replay_fusion.py": "14212c4144cb0c36514462e56783d1ef9b87b862fd4661fd5f29f69e80d64b6f",
     "test_replay_normalization.py": "8dfb11aa8f24a9286d64d2d2eb64d10aa5a0ecc63a3d5e54c0e6fa6cef847cef",
+    "test_trace_route_diff.py": "513b48eea3d8494f3bd336a1f84c50d089acbc5fb69d793bfa55961b3e99784d",
+    "tools/build_synthetic_qrels.py": "c66ddd1390605d2817b2fd1e610c13dc506b844c5537696d5727fe7e7539a240",
     "tools/go-graph-truth/go.mod": "7f239967ac7899e29dc8a55b175938c8d383533f7b0d6e26e20e7d58687da170",
     "tools/go-graph-truth/go.sum": "7b37b969e6c069e2f58457fd2a810090582c045224f35294723de6ea5407282f",
-    "tools/go-graph-truth/main.go": "234606dd063c73c9a7c688b2c1905067daa3d654660251f205794d41836dd8d2"
+    "tools/go-graph-truth/main.go": "234606dd063c73c9a7c688b2c1905067daa3d654660251f205794d41836dd8d2",
+    "trace_route_diff.py": "86145f09ea6e8eb25b9bd4f0ab09784844e97e23795ca5cd35ca9a72b41f2ed4"
   }
 }

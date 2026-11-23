@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "suite_id": "synthetic-rust-inventory-audit",
+  "description": "Source-authored relevance truth for a small Rust inventory-audit fixture.",
+  "queries": [
+    {
+      "id": "record-scanned-membership",
+      "query": "Where are asset IDs returned by list_assets stored for later permission checks?",
+      "category": "exact implementation / data flow",
+      "judgments": [
+        {"unit_id": "src/tools/list_assets.rs::record_scanned", "grade": 3, "rationale": "Forwards every returned asset ID into the shared scan state."},
+        {"unit_id": "src/inventory/state.rs::ScanState.add", "grade": 3, "rationale": "Inserts each non-empty ID into the shared set."},
+        {"unit_id": "src/tools/list_assets.rs::list_assets", "grade": 2, "rationale": "Drives the registry scan and hands the returned IDs to the recording path."},
+        {"unit_id": "src/inventory/state.rs::ScanState", "grade": 2, "rationale": "Defines the shared set that holds scanned asset IDs."}
+      ]
+    },
+    {
+      "id": "deny-unpermitted-asset",
+      "query": "How is a registry-known asset refused when policy never granted the permission it needs?",
+      "category": "policy check / semantic behavior",
+      "judgments": [
+        {"unit_id": "src/permissions/enforcer.rs::Enforcer.require_permission", "grade": 3, "rationale": "Turns the failed policy membership check into a fail-closed AccessDenied error."},
+        {"unit_id": "src/permissions/enforcer.rs::Enforcer.check_access", "grade": 3, "rationale": "Consults the policy set for the required permission name."},
+        {"unit_id": "src/permissions/policy.rs::PolicySet.is_granted", "grade": 2, "rationale": "Answers the granted-permission membership question."},
+        {"unit_id": "src/permissions/enforcer.rs::AccessDenied", "grade": 2, "rationale": "Represents the fail-closed enforcement error surfaced to the caller."}
+      ]
+    },
+    {
+      "id": "forward-tags-to-scan",
+      "query": "How do raw scanner tags become filters before the registry lists matching assets?",
+      "category": "data flow / semantic behavior",
+      "judgments": [
+        {"unit_id": "src/inventory/filters.rs::filters_from_signal", "grade": 3, "rationale": "Converts non-empty scanner tags into the audit filter structure."},
+        {"unit_id": "src/inventory/registry.rs::AssetRegistry.list_assets", "grade": 3, "rationale": "Applies the audit filters while listing registry entries."},
+        {"unit_id": "src/inventory/filters.rs::apply_tag_filters", "grade": 2, "rationale": "Keeps only assets whose kind matches a required tag."},
+        {"unit_id": "src/inventory/filters.rs::AuditFilters", "grade": 1, "rationale": "Defines the filter shape but not the conversion path."},
+        {"unit_id": "src/inventory/filters.rs::ScanSignal", "grade": 0, "rationale": "Only the raw tag carrier; the conversion itself lives elsewhere."}
+      ]
+    },
+    {
+      "id": "preserve-membership-on-recheck",
+      "query": "How does scanned-asset membership persist across repeated audit rechecks?",
+      "category": "multi-hop state / recheck flow",
+      "judgments": [
+        {"unit_id": "src/audit/review.rs::check_access", "grade": 3, "rationale": "Reloads the shared scan state while rechecking ledger coverage."},
+        {"unit_id": "src/inventory/state.rs::scan_state_from_context", "grade": 2, "rationale": "Recovers the shared state from the context map on every recheck."},
+        {"unit_id": "src/inventory/state.rs::ScanState.add", "grade": 2, "rationale": "Lets later scan calls extend the same set."},
+        {"unit_id": "src/inventory/state.rs::ScanState.contains", "grade": 2, "rationale": "Answers the membership question the recheck relies on."}
+      ]
+    },
+    {
+      "id": "interactive-selection-guard",
+      "query": "Where does interactive selection turn down an asset missing from the current scan result?",
+      "category": "exact implementation / interactive guard",
+      "judgments": [
+        {"unit_id": "src/tools/select_asset.rs::authorize_access", "grade": 3, "rationale": "Rejects IDs absent from the current scan result before registry lookup."},
+        {"unit_id": "src/tools/select_asset.rs::is_asset_in_scan_result", "grade": 3, "rationale": "Checks the recommended and alternative asset IDs."},
+        {"unit_id": "src/tools/select_asset.rs::handle_select_asset", "grade": 2, "rationale": "Runs the guard before resolving the registry entry."},
+        {"unit_id": "src/tools/select_asset.rs::ScanResult", "grade": 2, "rationale": "Defines the recommended and alternative IDs the guard consumes."}
+      ]
+    },
+    {
+      "id": "enforce-permission-before-audit",
+      "query": "Where is the ledger write permission checked before an audit entry is appended?",
+      "category": "exact implementation / validation",
+      "judgments": [
+        {"unit_id": "src/audit/ledger.rs::AuditLedger.record", "grade": 3, "rationale": "Enforces audit:write before pushing the ledger entry."},
+        {"unit_id": "src/permissions/enforcer.rs::Enforcer.require_permission", "grade": 3, "rationale": "Performs the permission check on the ledger write path."},
+        {"unit_id": "src/permissions/enforcer.rs::Enforcer.check_access", "grade": 2, "rationale": "Answers the policy membership question enforcement uses."},
+        {"unit_id": "src/permissions/enforcer.rs::AccessDenied", "grade": 2, "rationale": "Carries the fail-closed error when the write permission is missing."}
+      ]
+    },
+    {
+      "id": "empty-scan-fails-closed",
+      "query": "What happens when the inventory scan finds nothing and a selection is attempted anyway?",
+      "category": "behavior / failure mode",
+      "judgments": [
+        {"unit_id": "src/inventory/state.rs::ScanState.contains", "grade": 3, "rationale": "An empty scan state makes any asset ID fail the membership predicate."},
+        {"unit_id": "src/audit/review.rs::check_access", "grade": 3, "rationale": "An empty state and an empty ledger make the audit recheck fail closed."},
+        {"unit_id": "src/tools/list_assets.rs::list_assets", "grade": 2, "rationale": "Defines the scan call that leaves the state empty."},
+        {"unit_id": "src/tools/list_assets.rs::record_scanned", "grade": 2, "rationale": "Shows the path that adds zero IDs for an empty result."},
+        {"unit_id": "src/tools/select_asset.rs::authorize_access", "grade": 2, "rationale": "Rejects the selection because the asset is absent from the empty result."}
+      ]
+    },
+    {
+      "id": "copy-selected-asset-details",
+      "query": "How do the chosen asset's details end up in the final investigation summary?",
+      "category": "multi-symbol data flow",
+      "judgments": [
+        {"unit_id": "src/tools/select_asset.rs::apply_selected_asset", "grade": 3, "rationale": "Copies registry-resolved asset fields and scan parameters into the final summary."},
+        {"unit_id": "src/inventory/registry.rs::AssetRegistry.get_asset", "grade": 2, "rationale": "Supplies the registry asset details used by final assembly."},
+        {"unit_id": "src/audit/mod.rs::AssetSummary", "grade": 2, "rationale": "Defines the final result shape that receives the copied fields."},
+        {"unit_id": "src/tools/select_asset.rs::ScanResult", "grade": 1, "rationale": "Carries source parameters for the final result but performs no copying."}
+      ]
+    }
+  ]
+}

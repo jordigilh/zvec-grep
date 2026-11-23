@@ -94,6 +94,46 @@
         "precision@10": 0.275
       },
       "fixture_snapshot_sha256": "77ac5f8c10eeebeb3097158a166eeb729ddee0d6e5d8e880b59c151363f52c38"
+    },
+    "python-inventory-audit-v1": {
+      "role": "holdout",
+      "retrieval": {
+        "ndcg@10": 0.4173811389912667,
+        "mrr@10": 0.4791666666666667,
+        "recall@10": 0.5645833333333333,
+        "precision@10": 0.2125
+      },
+      "fixture_snapshot_sha256": "0657eec8b6c226b48411c5c3ee3e2268c72b6189648cdfe47f890f28eb24f2bb"
+    },
+    "rust-inventory-audit-v1": {
+      "role": "holdout",
+      "retrieval": {
+        "ndcg@10": 0.5579500349227331,
+        "mrr@10": 0.6770833333333334,
+        "recall@10": 0.7,
+        "precision@10": 0.2625
+      },
+      "fixture_snapshot_sha256": "2a2643f8da8a4d2fc153558755bf73d63ff99707d3fecb6db14aee02986d1630"
+    },
+    "typescript-inventory-audit-v1": {
+      "role": "holdout",
+      "retrieval": {
+        "ndcg@10": 0.36839953570922057,
+        "mrr@10": 0.5,
+        "recall@10": 0.5854166666666667,
+        "precision@10": 0.225
+      },
+      "fixture_snapshot_sha256": "b61cb54625bc1a63ebcc557b9f41c3d895fa020021f562d57a741e1057da8887"
+    },
+    "java-inventory-audit-v1": {
+      "role": "holdout",
+      "retrieval": {
+        "ndcg@10": 0.37588846556895106,
+        "mrr@10": 0.515625,
+        "recall@10": 0.5395833333333333,
+        "precision@10": 0.2
+      },
+      "fixture_snapshot_sha256": "ebd6673eecdd648904da6d0b89882a3fd26b70490cc7f2f8d04a0c4d907c56a1"
     }
   }
 }

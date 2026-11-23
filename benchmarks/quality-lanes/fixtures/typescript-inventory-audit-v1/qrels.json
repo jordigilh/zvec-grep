@@ -1,0 +1,1801 @@
+{
+  "schema_version": 1,
+  "suite_id": "synthetic-typescript-inventory-audit",
+  "fixture_id": "typescript-inventory-audit-v1",
+  "judgment_status": "adjudicated",
+  "candidate_pool_complete": true,
+  "source_truth": true,
+  "source": {
+    "repository": "synthetic/typescript-inventory-audit",
+    "revision": "fixture-v1",
+    "root": ".",
+    "include": [
+      "**/*.ts"
+    ],
+    "exclude": [
+      "**/*.test.ts"
+    ],
+    "snapshot_sha256": "b61cb54625bc1a63ebcc557b9f41c3d895fa020021f562d57a741e1057da8887",
+    "files": 10,
+    "bytes": 8466
+  },
+  "unit_count": 43,
+  "queries": [
+    {
+      "id": "record-scanned-membership",
+      "query": "Where do the asset IDs returned by the inventory scanner get recorded for later enforcement?",
+      "category": "exact implementation / data flow",
+      "judgments": [
+        {
+          "unit_id": "inventory/state.ts::AssetState",
+          "grade": 2,
+          "rationale": "Defines the shared state that holds scanned asset IDs."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.add",
+          "grade": 3,
+          "rationale": "Stores the returned IDs in the state set, skipping empty strings."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.contains",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::stateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.listAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.getAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::filtersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::applyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.isGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.checkAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.requirePermission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::checkAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::summarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::findingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::listAssets",
+          "grade": 2,
+          "rationale": "Runs the registry scan and feeds the returned IDs to the recording path."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::recordScanned",
+          "grade": 3,
+          "rationale": "Records every returned asset ID in the shared scan state."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::ScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::assetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::authorizeAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::handleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "api/summary.ts::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "deny-unpermitted-asset",
+      "query": "How does an asset that exists in the registry get denied when policy never granted the permission it needs?",
+      "category": "policy check / semantic behavior",
+      "judgments": [
+        {
+          "unit_id": "inventory/state.ts::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.add",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.contains",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::stateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.listAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.getAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::filtersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::applyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.isGranted",
+          "grade": 2,
+          "rationale": "Provides the granted-permission membership predicate."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied",
+          "grade": 2,
+          "rationale": "Represents the fail-closed enforcement error surfaced to the caller."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.checkAccess",
+          "grade": 3,
+          "rationale": "Combines the policy-set membership predicate for the required permission."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.requirePermission",
+          "grade": 3,
+          "rationale": "Turns the failed policy membership check into a fail-closed AccessDenied result."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::checkAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::summarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::findingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::listAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::recordScanned",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::ScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::assetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::authorizeAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::handleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "api/summary.ts::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "forward-tags-to-scan",
+      "query": "How are raw scanner tags converted into filters before the registry lists matching assets?",
+      "category": "data flow / semantic behavior",
+      "judgments": [
+        {
+          "unit_id": "inventory/state.ts::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.add",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.contains",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::stateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.listAssets",
+          "grade": 3,
+          "rationale": "Uses the audit filters when listing registry assets."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.getAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::AuditFilters",
+          "grade": 1,
+          "rationale": "Defines the filter shape but not the runtime conversion path."
+        },
+        {
+          "unit_id": "inventory/filters.ts::filtersFromSignal",
+          "grade": 3,
+          "rationale": "Converts scanner signal tags into the audit filter structure, dropping empty tags."
+        },
+        {
+          "unit_id": "inventory/filters.ts::applyTagFilters",
+          "grade": 2,
+          "rationale": "Applies tag constraints to candidate assets."
+        },
+        {
+          "unit_id": "permissions/policy.ts::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.isGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.checkAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.requirePermission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::checkAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::summarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::findingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::listAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::recordScanned",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::ScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::assetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::authorizeAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::handleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "api/summary.ts::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "preserve-membership-on-recheck",
+      "query": "How does scanned-asset membership stay intact across repeated audit rechecks?",
+      "category": "multi-hop state / recheck flow",
+      "judgments": [
+        {
+          "unit_id": "inventory/state.ts::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.add",
+          "grade": 2,
+          "rationale": "Allows later scanner calls to extend the same set."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.contains",
+          "grade": 2,
+          "rationale": "Answers the membership question the recheck relies on."
+        },
+        {
+          "unit_id": "inventory/state.ts::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::stateFromContext",
+          "grade": 2,
+          "rationale": "Recovers the shared state from the selection context on every recheck."
+        },
+        {
+          "unit_id": "inventory/registry.ts::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.listAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.getAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::filtersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::applyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.isGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.checkAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.requirePermission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::checkAccess",
+          "grade": 3,
+          "rationale": "Reuses the shared scan state while rechecking ledger coverage on every recheck."
+        },
+        {
+          "unit_id": "audit/review.ts::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::summarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::findingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::listAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::recordScanned",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::ScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::assetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::authorizeAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::handleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "api/summary.ts::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "interactive-selection-guard",
+      "query": "Where does interactive asset selection reject an ID that is missing from the current scan result?",
+      "category": "exact implementation / interactive guard",
+      "judgments": [
+        {
+          "unit_id": "inventory/state.ts::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.add",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.contains",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::stateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.listAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.getAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::filtersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::applyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.isGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.checkAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.requirePermission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::checkAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::summarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::findingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::listAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::recordScanned",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::ScanResult",
+          "grade": 2,
+          "rationale": "Defines the recommended and alternative IDs checked by the guard."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::assetInScanResult",
+          "grade": 3,
+          "rationale": "Checks the recommended and alternative asset IDs."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::authorizeAccess",
+          "grade": 3,
+          "rationale": "Rejects IDs that are not in the current scan result before any registry lookup."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::handleSelectAsset",
+          "grade": 2,
+          "rationale": "Calls the authorization guard before resolving the registry entry."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "api/summary.ts::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "enforce-permission-before-audit",
+      "query": "Where is the ledger write permission enforced before an audit entry is appended?",
+      "category": "exact implementation / validation",
+      "judgments": [
+        {
+          "unit_id": "inventory/state.ts::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.add",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.contains",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::stateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.listAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.getAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::filtersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::applyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.isGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied",
+          "grade": 2,
+          "rationale": "Carries the fail-closed error when the write permission is missing."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.checkAccess",
+          "grade": 2,
+          "rationale": "Answers the policy membership question used by enforcement."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.requirePermission",
+          "grade": 3,
+          "rationale": "Performs the permission check on the ledger write path."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.record",
+          "grade": 3,
+          "rationale": "Enforces audit:write before appending the ledger entry."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::checkAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::summarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::findingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::listAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::recordScanned",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::ScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::assetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::authorizeAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::handleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "api/summary.ts::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "empty-scan-fails-closed",
+      "query": "What happens when the inventory scanner returns no assets and a selection is then attempted?",
+      "category": "behavior / failure mode",
+      "judgments": [
+        {
+          "unit_id": "inventory/state.ts::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.add",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.contains",
+          "grade": 3,
+          "rationale": "An empty scan state makes any asset ID fail the membership predicate."
+        },
+        {
+          "unit_id": "inventory/state.ts::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::stateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.listAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.getAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::filtersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::applyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.isGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.checkAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.requirePermission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::checkAccess",
+          "grade": 3,
+          "rationale": "An empty state and an empty ledger make the audit recheck fail closed."
+        },
+        {
+          "unit_id": "audit/review.ts::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::summarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::findingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::listAssets",
+          "grade": 2,
+          "rationale": "Defines the scanner call that leaves the state empty."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::recordScanned",
+          "grade": 2,
+          "rationale": "Shows that no IDs are added when the scanner result is empty."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::ScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::assetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::authorizeAccess",
+          "grade": 2,
+          "rationale": "Rejects the selection because the asset is absent from the empty scan result."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::handleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::applySelectedAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "api/summary.ts::AssetSummary",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        }
+      ]
+    },
+    {
+      "id": "copy-selected-asset-details",
+      "query": "How are the chosen asset's details copied into the final audit summary?",
+      "category": "multi-symbol data flow",
+      "judgments": [
+        {
+          "unit_id": "inventory/state.ts::AssetState",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.add",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::AssetState.contains",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::assetStateKey",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/state.ts::stateFromContext",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::Asset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.listAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/registry.ts::AssetRegistry.getAsset",
+          "grade": 2,
+          "rationale": "Supplies the registry asset details used by final assembly."
+        },
+        {
+          "unit_id": "inventory/filters.ts::ScanSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::AuditFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::filtersFromSignal",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "inventory/filters.ts::applyTagFilters",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::Permission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.grant",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/policy.ts::PolicySet.isGranted",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::AccessDenied.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.checkAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "permissions/enforcer.ts::Enforcer.requirePermission",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditRecord",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.constructor",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.record",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/ledger.ts::AuditLedger.entries",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::checkAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::ReviewFindings",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::summarizeSeverity",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::findingsByAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "audit/review.ts::reviewBudget",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::listAssets",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/list_assets.ts::recordScanned",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::ScanResult",
+          "grade": 1,
+          "rationale": "Defines source parameters for the final result but does not perform copying."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::assetInScanResult",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::authorizeAccess",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::handleSelectAsset",
+          "grade": 0,
+          "rationale": "Source-authored fixture negative: this unit is not an answer site for the query."
+        },
+        {
+          "unit_id": "tools/select_asset.ts::applySelectedAsset",
+          "grade": 3,
+          "rationale": "Copies registry-resolved asset fields and scan parameters into the final summary."
+        },
+        {
+          "unit_id": "api/summary.ts::AssetSummary",
+          "grade": 2,
+          "rationale": "Defines the final result shape that receives the copied fields."
+        }
+      ]
+    }
+  ]
+}
