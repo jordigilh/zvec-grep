@@ -4,7 +4,7 @@
   "provenance": {
     "measured_on": "macOS 26 arm64",
     "binary_sha256": "ddd74b6264074980cdbaf5e1258a641e2f0524676766af7ac721c98a77d11ecb",
-    "commit": "c33ff0442739e3d67e116dfeea6a4948f377f1d6",
+    "commit": "798921914e88eaceb66b6d7bfa67ff520e906fd5",
     "branch": "feat/shape-aware-fusion",
     "fixture_source": "jordigilh/engram 9032f43 (rust/typescript), 7752ae9 (python), ca6231c (java)",
     "model": "auto (local model chosen from the repository dominant source language; see SHAPE_AWARE_FUSION_2026-11-22.md)",
