@@ -698,7 +698,9 @@ fn merge_runtime_options(current: &mut IndexOptions, incoming: &mut IndexOptions
     }
     // A manual submit is authoritative: once it merges into a queued implicit
     // rebuild, the merged job must honour configured and environment models.
+    // A client that decided against its environment keeps that decision.
     current.implicit &= incoming.implicit;
+    current.suppress_environment |= incoming.suppress_environment;
     // Runtime/model settings are explicit updates too. A filter-only request
     // must not erase the model or credentials of an already queued manual job.
     merge_update(&mut current.root, incoming.root.take());
@@ -1079,6 +1081,28 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
+    use super::merge_runtime_options;
+
+    #[test]
+    fn a_merged_client_request_keeps_its_environment_decision() {
+        let mut queued = IndexOptions {
+            implicit: true,
+            suppress_environment: false,
+            ..IndexOptions::default()
+        };
+        let mut client = IndexOptions {
+            implicit: true,
+            suppress_environment: true,
+            ..IndexOptions::default()
+        };
+        merge_runtime_options(&mut queued, &mut client);
+        assert!(queued.implicit);
+        assert!(
+            queued.suppress_environment,
+            "the client decision must survive the merge"
+        );
+    }
+
     use std::{
         path::PathBuf,
         sync::{Arc, Mutex},

@@ -1355,20 +1355,24 @@ mod tests {
             },
         ];
         let weights = FusionWeights::for_routes(&routes);
-        let with_rank_one = [
-            recall_with_route(SearchRouteMode::Fts, 1, "identifier"),
-            recall_with_route(SearchRouteMode::Vector, 1, "identifier"),
-            recall_with_route(SearchRouteMode::Vector, 62, "natural"),
-        ];
-        let only_deep = [
-            recall_with_route(SearchRouteMode::Fts, 1, "identifier"),
-            recall_with_route(SearchRouteMode::Vector, 62, "natural"),
-        ];
-        assert!(
-            candidate_fusion_score(&with_rank_one, 10, &weights)
-                > candidate_fusion_score(&only_deep, 10, &weights),
-            "the tied rank-1 vector trace must be retained"
-        );
+        let lexical = recall_with_route(SearchRouteMode::Fts, 1, "identifier");
+        let rank_one = recall_with_route(SearchRouteMode::Vector, 1, "identifier");
+        let rank_62 = recall_with_route(SearchRouteMode::Vector, 62, "natural");
+        let only_deep = candidate_fusion_score(&[lexical.clone(), rank_62.clone()], 10, &weights);
+        // Trace order must not matter: the rank-1 trace wins whichever side of
+        // the tie it is visited from.
+        for (label, traces) in [
+            (
+                "rank-one first",
+                [lexical.clone(), rank_one.clone(), rank_62.clone()],
+            ),
+            ("deep first", [lexical, rank_62, rank_one]),
+        ] {
+            assert!(
+                candidate_fusion_score(&traces, 10, &weights) > only_deep,
+                "the tied rank-1 vector trace must be retained ({label})"
+            );
+        }
     }
 
     #[test]
