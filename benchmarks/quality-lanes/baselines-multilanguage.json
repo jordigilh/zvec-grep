@@ -19,9 +19,17 @@
     "repeats": "2 per lane, frozen index, identical normalized unit rankings",
     "ubuntu_24_04_multilanguage": {
       "run": "45060504745",
-      "note": "Every lane met its floor on ubuntu-24.04. nDCG differed from the macOS measurement by at most 9.5e-4 (go) while MRR, recall and precision were identical.",
-      "metric": "ndcg@10",
-      "values": {
+      "job": "137402440022",
+      "binary_sha256": "07d02ece8c490a9c38f30eac61a4ed6b96a2e6423be158468adea45b118e5c4a",
+      "note": "Reviewed-head run on ubuntu-24.04: every lane met its floor and the Java lane improved on all four metrics. nDCG differed from the macOS measurement by at most 9.5e-4 (go); MRR, recall and precision were identical on the other lanes.",
+      "java": {
+        "fixture_snapshot_sha256": "77ac5f8c10eeebeb3097158a166eeb729ddee0d6e5d8e880b59c151363f52c38",
+        "ndcg@10": 0.5402721631882025,
+        "mrr@10": 0.65625,
+        "recall@10": 0.7401785714285714,
+        "precision@10": 0.2875
+      },
+      "ndcg@10_by_lane": {
         "go": 0.6461172177559741,
         "python": 0.7604684857140058,
         "rust": 0.7266872944148519,
