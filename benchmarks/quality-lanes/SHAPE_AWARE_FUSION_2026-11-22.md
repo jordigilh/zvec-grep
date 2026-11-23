@@ -188,6 +188,41 @@ to measured two-repeat values in this change. That checker compares nDCG within 
 Ubuntu CI measured the same ranked set 9.5e-4 apart in nDCG from macOS; every
 other retrieval metric and every graph metric stays exact.
 
+## Holdout attribution: model or fusion?
+
+`go-inventory-audit-v1` is the only lane not used for any choice in this change,
+and its recall fell. A 2x2 on the unchanged fixture separates the two changes
+(two repeats per cell, all deterministic; the pre-change binary is built from
+`main`). Cells are nDCG@10 / MRR@10 / recall@10 / precision@10:
+
+| Model | Old fusion (1.1 / 1.0) | New shape-aware fusion |
+|---|---|---|
+| `local/potion-code-16m-v2` | 0.6308 / 0.7813 / 0.7833 / 0.3000 | 0.6185 / 0.7917 / 0.7563 / 0.2875 |
+| `local/gte-modernbert-base` | **0.6611** / 0.7708 / **0.7833** / **0.3000** | 0.6243 / **0.9000** / 0.7146 / 0.2750 |
+
+The model is not the cause. Under the old fusion, choosing gte raises nDCG by
+0.030 and leaves recall and precision unchanged; the shape-aware weighting is
+what trades recall and precision for MRR.
+
+Two candidate remedies were measured and rejected:
+
+- **Lower the natural-language vector weight.** At 1.5 and 1.25 the holdout
+  recall stays 0.715 (2.0: 0.715) and the five lanes move by at most 0.006 nDCG.
+  The relative weight is not what removes the units.
+- **Reserve slots for lexical-only candidates**, simulated on stored rankings by
+  keeping the hybrid top-(10-k) and filling k slots with lexical-only hits:
+
+| k | go nDCG / recall | java nDCG / recall | holdout nDCG / recall / precision |
+|---|---|---|---|
+| 0 | 0.6461 / 0.7229 | 0.5348 / 0.7223 | 0.6243 / 0.7146 / 0.2750 |
+| 2 | 0.6330 / 0.6979 | 0.5291 / 0.7390 | 0.6412 / 0.7771 / 0.3000 |
+| 3 | 0.6331 / 0.6979 | 0.5035 / 0.6589 | 0.6604 / 0.8083 / 0.3125 |
+
+k=3 recovers the holdout completely, but costs Go 0.025 recall and Java 0.031
+nDCG / 0.063 recall. The trade is local to the fixture rather than a global
+misconfiguration, so the configuration stays as measured and the holdout pins
+record the movement.
+
 ## Compatibility: existing indexes need a rebuild
 
 An existing workspace keeps its stored embedding model — language inference only
