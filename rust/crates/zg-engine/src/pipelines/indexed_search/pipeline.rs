@@ -589,7 +589,17 @@ fn candidate_fusion_score(
         best_by_mode
             .entry(trace.path)
             .and_modify(|best| {
-                if score > best.0 {
+                // Equal weighted contributions are broken by rank: the
+                // retained rank drives corroboration, and rank 1 is the more
+                // informative evidence even when the weights make the scores
+                // coincide (1/61 for identifier rank 1 and 2/122 for
+                // natural-language rank 62).
+                let better = match score.total_cmp(&best.0) {
+                    std::cmp::Ordering::Greater => true,
+                    std::cmp::Ordering::Equal => rank < best.1,
+                    std::cmp::Ordering::Less => false,
+                };
+                if better {
                     *best = (score, rank, trace.route_id.as_str());
                 }
             })
@@ -1324,6 +1334,40 @@ mod tests {
             candidate_fusion_score(&lexical_only, 10, &weights)
                 > candidate_fusion_score(&identifier_vector, 10, &weights),
             "the identifier route keeps its lexical preference"
+        );
+    }
+
+    #[test]
+    fn equal_weighted_contributions_keep_the_better_rank() {
+        // Identifier vector rank 1 (1/61) and natural-language vector rank 62
+        // (2/122) contribute the same score. The retained rank decides whether
+        // the routes count as agreeing, so the better rank must win.
+        let routes = [
+            ResolvedSearchRoute {
+                id: "identifier".to_owned(),
+                mode: SearchRouteMode::Fts,
+                query: "validateParameters".to_owned(),
+            },
+            ResolvedSearchRoute {
+                id: "natural".to_owned(),
+                mode: SearchRouteMode::Vector,
+                query: "where does validation happen before execution".to_owned(),
+            },
+        ];
+        let weights = FusionWeights::for_routes(&routes);
+        let with_rank_one = [
+            recall_with_route(SearchRouteMode::Fts, 1, "identifier"),
+            recall_with_route(SearchRouteMode::Vector, 1, "identifier"),
+            recall_with_route(SearchRouteMode::Vector, 62, "natural"),
+        ];
+        let only_deep = [
+            recall_with_route(SearchRouteMode::Fts, 1, "identifier"),
+            recall_with_route(SearchRouteMode::Vector, 62, "natural"),
+        ];
+        assert!(
+            candidate_fusion_score(&with_rank_one, 10, &weights)
+                > candidate_fusion_score(&only_deep, 10, &weights),
+            "the tied rank-1 vector trace must be retained"
         );
     }
 

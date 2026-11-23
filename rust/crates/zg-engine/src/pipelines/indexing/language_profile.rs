@@ -34,9 +34,10 @@ impl CodeLanguage {
 
 /// Maps a repository-relative path to a measured source language.
 ///
-/// Only languages with a dedicated measurement are mapped; everything else
-/// contributes nothing to the profile, so a repository of Markdown or unknown
-/// formats keeps the generalist default.
+/// Only languages with a dedicated measurement are mapped. An unmapped
+/// *source* file still counts toward dominance through [`is_source_like`], so a
+/// repository dominated by one (say C++) falls back to the generalist; non-source
+/// files such as Markdown or configuration never contribute.
 pub(crate) fn language_for_path(path: &std::path::Path) -> Option<CodeLanguage> {
     let extension = path.extension()?.to_str()?;
     Some(match extension.to_ascii_lowercase().as_str() {

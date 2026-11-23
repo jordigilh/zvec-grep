@@ -553,6 +553,7 @@ async fn ensure_query_index(
         }),
         device: request.device,
         implicit: true,
+        suppress_environment: true,
         model_cache: request.model_cache.clone(),
         embedding_concurrency: request.embedding_concurrency,
         lock_timeout_ms: request.lock_timeout_ms,

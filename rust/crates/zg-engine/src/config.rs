@@ -371,6 +371,18 @@ pub(crate) fn string(value: &Value, path: &[&str]) -> Option<String> {
 /// local model, in which case that configured model applies. A remote value is
 /// ignored here, so implicit builds still profile. The daemon's missing-index rebuild relies on this as
 /// well, so the rule is engine-side rather than CLI-only.
+/// Reads only the configured local default, ignoring the process environment.
+///
+/// The server uses this for a client-supplied implicit build: the client
+/// already applied its own environment, and the server's must not override it.
+/// # Errors
+/// Returns configuration I/O errors.
+pub fn implicit_local_default() -> Result<Option<String>, EngineError> {
+    let config = read()?;
+    Ok(string(&config, &["defaults", "embedding"])
+        .filter(|reference| reference.starts_with("local/")))
+}
+
 /// # Errors
 /// Returns configuration I/O, validation, and invalid environment model errors.
 pub fn implicit_embedding_override() -> Result<Option<String>, EngineError> {

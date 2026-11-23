@@ -670,12 +670,9 @@ fn acquire_index_models(
     })
 }
 
-fn acquire_model(
-    models: &ModelRuntimeManager,
-    existing: Option<&WorkspaceManifest>,
-    options: &IndexOptions,
-    language_default: Option<&'static str>,
-) -> Result<ModelRuntimeLease, EngineError> {
+/// Rejects a pinned model revision: the catalog-backed runtime only supports
+/// the revision it ships.
+fn reject_revision_override(options: &IndexOptions) -> Result<(), EngineError> {
     if options
         .embedding
         .as_ref()
@@ -686,11 +683,22 @@ fn acquire_model(
             "embedding revision overrides are not supported by the catalog-backed runtime",
         ));
     }
+    Ok(())
+}
+
+fn acquire_model(
+    models: &ModelRuntimeManager,
+    existing: Option<&WorkspaceManifest>,
+    options: &IndexOptions,
+    language_default: Option<&'static str>,
+) -> Result<ModelRuntimeLease, EngineError> {
+    reject_revision_override(options)?;
     let reference = embedding_reference(
         existing,
         options.embedding.as_ref(),
         language_default,
         options.implicit,
+        options.suppress_environment,
     )?;
     let config = crate::config::read()?;
     let local = reference.starts_with("local/");
@@ -789,6 +797,7 @@ pub(crate) fn embedding_reference(
     requested: Option<&EmbeddingModelSpec>,
     language_default: Option<&'static str>,
     implicit: bool,
+    suppress_environment: bool,
 ) -> Result<String, EngineError> {
     let config = crate::config::read()?;
     // An implicit build may use a configured local model, but never a remote
@@ -798,7 +807,11 @@ pub(crate) fn embedding_reference(
     // an unusable configured value cannot fail a request that names its model.
     let has_stored = existing.and_then(|manifest| manifest.embedding()).is_some();
     let implicit_local = if needs_implicit_fallback(implicit, requested.is_some(), has_stored) {
-        crate::config::implicit_embedding_override()?
+        if suppress_environment {
+            crate::config::implicit_local_default()?
+        } else {
+            crate::config::implicit_embedding_override()?
+        }
     } else {
         None
     };

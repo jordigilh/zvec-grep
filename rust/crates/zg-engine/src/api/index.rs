@@ -37,6 +37,12 @@ pub mod options {
         /// and the built-in selection applies unless `embedding` is set.
         #[serde(default)]
         pub implicit: bool,
+        /// Internal: the implicit build came from a client that already
+        /// resolved its own environment. The server must not apply its own
+        /// `ZVEC_GREP_EMBEDDING` on top; a configured local default and the
+        /// language profile still apply.
+        #[serde(default)]
+        pub suppress_environment: bool,
         /// Maximum embedding batch tasks for this index operation.
         /// The model default is used when omitted.
         pub embedding_concurrency: Option<usize>,
