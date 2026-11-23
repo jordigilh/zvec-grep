@@ -3,8 +3,8 @@
   "policy": "Per language and per metric the measured value must be >= the pinned floor. Improvements pass and are printed; re-pin them in a reviewed change. No cross-language average.",
   "provenance": {
     "measured_on": "macOS 26 arm64",
-    "binary_sha256": "7e091849fa08352db75023b0d2721b41abf724113db39c6ffb2a04d642ece650",
-    "commit": "cc2b4460cb34e79cfd33a85388521e5d7babef57",
+    "binary_sha256": "ddd74b6264074980cdbaf5e1258a641e2f0524676766af7ac721c98a77d11ecb",
+    "commit": "c33ff0442739e3d67e116dfeea6a4948f377f1d6",
     "branch": "feat/shape-aware-fusion",
     "fixture_source": "jordigilh/engram 9032f43 (rust/typescript), 7752ae9 (python), ca6231c (java)",
     "model": "auto (local model chosen from the repository dominant source language; see SHAPE_AWARE_FUSION_2026-11-22.md)",
@@ -21,7 +21,7 @@
       "run": "45060504745",
       "job": "137402440022",
       "binary_sha256": "07d02ece8c490a9c38f30eac61a4ed6b96a2e6423be158468adea45b118e5c4a",
-      "note": "Reviewed-head run on ubuntu-24.04: every lane met its floor and the Java lane improved on all four metrics. nDCG differed from the macOS measurement by at most 9.5e-4 (go); MRR, recall and precision were identical on the other lanes.",
+      "note": "Reviewed-head run on ubuntu-24.04: every lane met its floor and the Java lane improved on all four metrics. nDCG differed from the macOS measurement by 5.4e-3 on Java and 9.5e-4 on go, the largest deltas; MRR, recall and precision were identical on the other lanes.",
       "java": {
         "fixture_snapshot_sha256": "77ac5f8c10eeebeb3097158a166eeb729ddee0d6e5d8e880b59c151363f52c38",
         "ndcg@10": 0.5402721631882025,
@@ -35,6 +35,12 @@
         "rust": 0.7266872944148519,
         "typescript": 0.6689470327527128,
         "java": 0.5402721631882025
+      },
+      "floor_exception": {
+        "criterion": "issue #58 asks that the Java floor be derived from an ubuntu-24.04 run",
+        "decision": "kept the lower macOS measurement as the floor",
+        "reason": "ubuntu-24.04 measures Java nDCG 5.4e-3 higher. Pinning the higher value would fail this same checker on macOS, which is also a supported development platform; the macOS value passes on both. The Ubuntu run is recorded above and passes the floor.",
+        "approved_by": "maintainer jordigilh on PR #67"
       }
     }
   },

@@ -578,6 +578,18 @@ async fn dominant_language_model(
         return Ok(None);
     }
 
+    language_model_from_scan(scanner, options, root, scan, selection).await
+}
+
+/// Scans the workspace and maps its file profile to a model. Split from the
+/// configuration gate so the scanner-to-profile path is testable.
+async fn language_model_from_scan(
+    scanner: &dyn WorkspaceScannerPort,
+    options: &IndexOptions,
+    root: &Path,
+    scan: &crate::domain::ScanRules,
+    selection: &crate::file_selection::GlobMatcher,
+) -> Result<Option<&'static str>, EngineError> {
     let root_spec = crate::file_selection::ScanPolicy::root_spec(root, scan)?;
     let snapshot = scanner
         .discover(
@@ -1059,6 +1071,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use tempfile::tempdir;
+    use zg_host_native::{ScanRequest, TaskControl, WorkspaceScannerPort};
 
     use crate::{
         api::{
@@ -1594,6 +1607,62 @@ mod tests {
             Some("qwen/text-embedding-v4"),
             false
         ));
+    }
+
+    struct PythonWorkspace;
+
+    #[async_trait::async_trait]
+    impl WorkspaceScannerPort for PythonWorkspace {
+        async fn discover(
+            &self,
+            _request: &ScanRequest,
+            _control: &TaskControl,
+        ) -> Result<zg_host_native::ScanSnapshot, zg_host_native::HostError> {
+            Ok(zg_host_native::ScanSnapshot {
+                files: vec![zg_host_native::DiscoveredFile {
+                    root: PathBuf::from("/repo"),
+                    relative_path: PathBuf::from("src/task.py"),
+                    size_bytes: 900,
+                    modified_epoch_ms: None,
+                    source_fingerprint: String::new(),
+                }],
+                ..zg_host_native::ScanSnapshot::default()
+            })
+        }
+
+        async fn read_batch(
+            &self,
+            _request: &zg_host_native::ReadBatchRequest,
+            _control: &TaskControl,
+        ) -> Result<Vec<zg_host_native::SourceFile>, zg_host_native::HostError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_python_dominant_workspace_selects_e5_small() {
+        // End-to-end scan -> profile -> model for a workspace whose only source
+        // file is Python, without acquiring or downloading a model.
+        let directory = tempdir().expect("profile root");
+        let selection =
+            crate::file_selection::GlobMatcher::new(directory.path(), &[]).expect("matcher");
+        let options = IndexOptions {
+            implicit: true,
+            ..IndexOptions::default()
+        };
+        let scan = crate::domain::ScanRules::default();
+        assert_eq!(
+            super::language_model_from_scan(
+                &PythonWorkspace,
+                &options,
+                directory.path(),
+                &scan,
+                &selection,
+            )
+            .await
+            .expect("language model"),
+            Some("local/multilingual-e5-small")
+        );
     }
 
     #[test]
