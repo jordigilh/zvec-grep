@@ -438,13 +438,20 @@ class NormalizationVariantTest(unittest.TestCase):
             replay_fusion.make_query_variant("norm:nope", {})
 
     def test_make_query_variant_rejects_malformed_specs(self) -> None:
-        # The numeric parameter applies to hybrid/capped only, and must parse.
+        # The numeric parameter applies to hybrid/capped only, must parse,
+        # and must be finite: NaN would silently poison every score.
         with self.assertRaises(SystemExit):
             replay_fusion.make_query_variant("norm:minmax:0.3", {})
         with self.assertRaises(SystemExit):
             replay_fusion.make_query_variant("norm:hybrid:abc", {})
         with self.assertRaises(SystemExit):
             replay_fusion.make_query_variant("norm:capped:xyz", {})
+        with self.assertRaises(SystemExit):
+            replay_fusion.make_query_variant("norm:hybrid:nan", {})
+        with self.assertRaises(SystemExit):
+            replay_fusion.make_query_variant("norm:hybrid:inf", {})
+        with self.assertRaises(SystemExit):
+            replay_fusion.make_query_variant("norm:capped:-inf", {})
 
     def test_normalization_variants_need_stats(self) -> None:
         # A normalization variant cannot be built without per-query stats;

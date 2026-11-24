@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -554,6 +555,10 @@ def make_query_variant(
                 value = float(parameter)
             except ValueError:
                 raise SystemExit(f"invalid parameter in variant: {name}") from None
+            if not math.isfinite(value):
+                raise SystemExit(
+                    f"non-finite parameter in variant: {name}"
+                )
             if spec == "hybrid":
                 alpha = value
             else:
@@ -703,10 +708,11 @@ def main() -> None:
                 f"{manifest['fixture_id']!r}"
             )
         rows = traces_payload["rows"]
-        expected_query_ids = [q["id"] for q in queries]
-        if [row["id"] for row in rows] != expected_query_ids:
+        expected_pairs = [(q["id"], q["query"]) for q in queries]
+        if [(row["id"], row["query"]) for row in rows] != expected_pairs:
             raise SystemExit(
-                f"traces in {traces_path} do not cover this fixture's queries"
+                f"traces in {traces_path} do not match this fixture's "
+                "queries; collect them again"
             )
         provenance["replayed_from"] = str(traces_path)
     else:
