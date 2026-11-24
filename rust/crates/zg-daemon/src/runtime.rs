@@ -128,7 +128,14 @@ pub(crate) async fn run_server(
         .with_max_request_body_bytes(1024 * 1024);
     let mcp_service = StreamableHttpService::new(
         move || Ok(mcp_server.clone()),
-        Arc::new(crate::mcp_sessions::BoundedSessionManager::default()),
+        {
+            let sessions = crate::mcp_sessions::BoundedSessionManager::from_env();
+            info!(
+                idle_secs = sessions.idle().as_secs(),
+                "MCP session idle TTL"
+            );
+            Arc::new(sessions)
+        },
         mcp_config,
     );
     let app = Router::new()

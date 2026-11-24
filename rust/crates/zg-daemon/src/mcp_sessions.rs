@@ -14,6 +14,12 @@ use std::{
 };
 use tokio::time::Instant;
 
+/// Legacy MCP transport sessions are capped independently of request
+/// bookkeeping. The idle TTL is deployment-adjustable; see `from_env`.
+pub(crate) const MCP_SESSION_CAPACITY: usize = 256;
+pub(crate) const MCP_SESSION_IDLE: Duration = Duration::from_mins(30);
+pub(crate) const MCP_SESSION_IDLE_ENV: &str = "ZG_MCP_SESSION_IDLE_SECS";
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SessionError {
     #[error("legacy MCP session capacity reached")]
@@ -42,11 +48,34 @@ pub(crate) struct BoundedSessionManager {
 
 impl Default for BoundedSessionManager {
     fn default() -> Self {
-        Self::new(256, Duration::from_mins(30))
+        Self::new(MCP_SESSION_CAPACITY, MCP_SESSION_IDLE)
     }
 }
 
+fn parse_session_idle(value: Option<&str>) -> Duration {
+    value
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(MCP_SESSION_IDLE)
+}
+
 impl BoundedSessionManager {
+    /// Deployment override for the MCP session idle TTL. Unset, malformed, and
+    /// zero values keep the 30-minute default so a typo cannot disable expiry
+    /// entirely. Long-lived agent sessions can raise this to outlive their
+    /// idle gaps; the per-session activity rules are unchanged.
+    pub fn from_env() -> Self {
+        Self::new(
+            MCP_SESSION_CAPACITY,
+            parse_session_idle(std::env::var(MCP_SESSION_IDLE_ENV).ok().as_deref()),
+        )
+    }
+
+    pub fn idle(&self) -> Duration {
+        self.idle
+    }
+
     fn new(capacity: usize, idle: Duration) -> Self {
         let mut inner = LocalSessionManager::default();
         // This manager owns request-aware expiry; rmcp's independent timer also
@@ -228,6 +257,20 @@ impl SessionManager for BoundedSessionManager {
 mod tests {
     use super::*;
     use rmcp::transport::{Transport, streamable_http_server::session::local::SessionTransport};
+
+    #[test]
+    fn session_idle_override_has_safe_bounds() {
+        assert_eq!(parse_session_idle(None), MCP_SESSION_IDLE);
+        assert_eq!(parse_session_idle(Some("")), MCP_SESSION_IDLE);
+        assert_eq!(parse_session_idle(Some("  ")), MCP_SESSION_IDLE);
+        assert_eq!(parse_session_idle(Some("nope")), MCP_SESSION_IDLE);
+        assert_eq!(parse_session_idle(Some("0")), MCP_SESSION_IDLE);
+        assert_eq!(parse_session_idle(Some("-5")), MCP_SESSION_IDLE);
+        assert_eq!(
+            parse_session_idle(Some(" 43200 ")),
+            Duration::from_secs(43_200)
+        );
+    }
 
     #[tokio::test(start_paused = true)]
     async fn bounds_sessions_and_expires_only_idle_work() {
