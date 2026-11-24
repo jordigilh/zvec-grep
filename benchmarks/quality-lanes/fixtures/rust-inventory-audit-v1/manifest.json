@@ -1,0 +1,333 @@
+{
+  "schema_version": 1,
+  "fixture_id": "rust-inventory-audit-v1",
+  "language": "rust",
+  "source": {
+    "repository": "synthetic/rust-inventory-audit",
+    "revision": "fixture-v1",
+    "root": ".",
+    "include": [
+      "**/*.rs"
+    ],
+    "exclude": [
+      "**/*_test.rs"
+    ]
+  },
+  "units": [
+    {
+      "unit_id": "src/lib.rs::module-declarations",
+      "path": "src/lib.rs",
+      "symbol": "module-declarations",
+      "start_line": 1,
+      "end_line": 4
+    },
+    {
+      "unit_id": "src/inventory/mod.rs::module-declarations",
+      "path": "src/inventory/mod.rs",
+      "symbol": "module-declarations",
+      "start_line": 1,
+      "end_line": 3
+    },
+    {
+      "unit_id": "src/permissions/mod.rs::module-declarations",
+      "path": "src/permissions/mod.rs",
+      "symbol": "module-declarations",
+      "start_line": 1,
+      "end_line": 2
+    },
+    {
+      "unit_id": "src/audit/mod.rs::module-declarations",
+      "path": "src/audit/mod.rs",
+      "symbol": "module-declarations",
+      "start_line": 1,
+      "end_line": 2
+    },
+    {
+      "unit_id": "src/tools/mod.rs::module-declarations",
+      "path": "src/tools/mod.rs",
+      "symbol": "module-declarations",
+      "start_line": 1,
+      "end_line": 2
+    },
+    {
+      "unit_id": "src/audit/mod.rs::AssetSummary",
+      "path": "src/audit/mod.rs",
+      "symbol": "AssetSummary",
+      "start_line": 4,
+      "end_line": 10
+    },
+    {
+      "unit_id": "src/inventory/registry.rs::Asset",
+      "path": "src/inventory/registry.rs",
+      "symbol": "Asset",
+      "start_line": 3,
+      "end_line": 9
+    },
+    {
+      "unit_id": "src/inventory/registry.rs::AssetRegistry",
+      "path": "src/inventory/registry.rs",
+      "symbol": "AssetRegistry",
+      "start_line": 11,
+      "end_line": 39
+    },
+    {
+      "unit_id": "src/inventory/registry.rs::AssetRegistry.new",
+      "path": "src/inventory/registry.rs",
+      "symbol": "AssetRegistry.new",
+      "start_line": 17,
+      "end_line": 24
+    },
+    {
+      "unit_id": "src/inventory/registry.rs::AssetRegistry.list_assets",
+      "path": "src/inventory/registry.rs",
+      "symbol": "AssetRegistry.list_assets",
+      "start_line": 26,
+      "end_line": 34
+    },
+    {
+      "unit_id": "src/inventory/registry.rs::AssetRegistry.get_asset",
+      "path": "src/inventory/registry.rs",
+      "symbol": "AssetRegistry.get_asset",
+      "start_line": 36,
+      "end_line": 38
+    },
+    {
+      "unit_id": "src/inventory/state.rs::ScanState",
+      "path": "src/inventory/state.rs",
+      "symbol": "ScanState",
+      "start_line": 3,
+      "end_line": 20
+    },
+    {
+      "unit_id": "src/inventory/state.rs::ScanState.add",
+      "path": "src/inventory/state.rs",
+      "symbol": "ScanState.add",
+      "start_line": 11,
+      "end_line": 15
+    },
+    {
+      "unit_id": "src/inventory/state.rs::ScanState.contains",
+      "path": "src/inventory/state.rs",
+      "symbol": "ScanState.contains",
+      "start_line": 17,
+      "end_line": 19
+    },
+    {
+      "unit_id": "src/inventory/state.rs::scan_state_from_context",
+      "path": "src/inventory/state.rs",
+      "symbol": "scan_state_from_context",
+      "start_line": 22,
+      "end_line": 24
+    },
+    {
+      "unit_id": "src/inventory/filters.rs::ScanSignal",
+      "path": "src/inventory/filters.rs",
+      "symbol": "ScanSignal",
+      "start_line": 3,
+      "end_line": 6
+    },
+    {
+      "unit_id": "src/inventory/filters.rs::AuditFilters",
+      "path": "src/inventory/filters.rs",
+      "symbol": "AuditFilters",
+      "start_line": 8,
+      "end_line": 11
+    },
+    {
+      "unit_id": "src/inventory/filters.rs::filters_from_signal",
+      "path": "src/inventory/filters.rs",
+      "symbol": "filters_from_signal",
+      "start_line": 13,
+      "end_line": 22
+    },
+    {
+      "unit_id": "src/inventory/filters.rs::apply_tag_filters",
+      "path": "src/inventory/filters.rs",
+      "symbol": "apply_tag_filters",
+      "start_line": 24,
+      "end_line": 30
+    },
+    {
+      "unit_id": "src/permissions/policy.rs::Permission",
+      "path": "src/permissions/policy.rs",
+      "symbol": "Permission",
+      "start_line": 3,
+      "end_line": 7
+    },
+    {
+      "unit_id": "src/permissions/policy.rs::PolicySet",
+      "path": "src/permissions/policy.rs",
+      "symbol": "PolicySet",
+      "start_line": 9,
+      "end_line": 35
+    },
+    {
+      "unit_id": "src/permissions/policy.rs::PolicySet.new",
+      "path": "src/permissions/policy.rs",
+      "symbol": "PolicySet.new",
+      "start_line": 15,
+      "end_line": 19
+    },
+    {
+      "unit_id": "src/permissions/policy.rs::PolicySet.grant",
+      "path": "src/permissions/policy.rs",
+      "symbol": "PolicySet.grant",
+      "start_line": 21,
+      "end_line": 30
+    },
+    {
+      "unit_id": "src/permissions/policy.rs::PolicySet.is_granted",
+      "path": "src/permissions/policy.rs",
+      "symbol": "PolicySet.is_granted",
+      "start_line": 32,
+      "end_line": 34
+    },
+    {
+      "unit_id": "src/permissions/enforcer.rs::Enforcer",
+      "path": "src/permissions/enforcer.rs",
+      "symbol": "Enforcer",
+      "start_line": 3,
+      "end_line": 28
+    },
+    {
+      "unit_id": "src/permissions/enforcer.rs::Enforcer.new",
+      "path": "src/permissions/enforcer.rs",
+      "symbol": "Enforcer.new",
+      "start_line": 9,
+      "end_line": 11
+    },
+    {
+      "unit_id": "src/permissions/enforcer.rs::Enforcer.check_access",
+      "path": "src/permissions/enforcer.rs",
+      "symbol": "Enforcer.check_access",
+      "start_line": 13,
+      "end_line": 16
+    },
+    {
+      "unit_id": "src/permissions/enforcer.rs::Enforcer.require_permission",
+      "path": "src/permissions/enforcer.rs",
+      "symbol": "Enforcer.require_permission",
+      "start_line": 18,
+      "end_line": 27
+    },
+    {
+      "unit_id": "src/permissions/enforcer.rs::AccessDenied",
+      "path": "src/permissions/enforcer.rs",
+      "symbol": "AccessDenied",
+      "start_line": 30,
+      "end_line": 34
+    },
+    {
+      "unit_id": "src/audit/ledger.rs::AuditRecord",
+      "path": "src/audit/ledger.rs",
+      "symbol": "AuditRecord",
+      "start_line": 3,
+      "end_line": 8
+    },
+    {
+      "unit_id": "src/audit/ledger.rs::AuditLedger",
+      "path": "src/audit/ledger.rs",
+      "symbol": "AuditLedger",
+      "start_line": 10,
+      "end_line": 38
+    },
+    {
+      "unit_id": "src/audit/ledger.rs::AuditLedger.new",
+      "path": "src/audit/ledger.rs",
+      "symbol": "AuditLedger.new",
+      "start_line": 17,
+      "end_line": 22
+    },
+    {
+      "unit_id": "src/audit/ledger.rs::AuditLedger.record",
+      "path": "src/audit/ledger.rs",
+      "symbol": "AuditLedger.record",
+      "start_line": 24,
+      "end_line": 29
+    },
+    {
+      "unit_id": "src/audit/ledger.rs::AuditLedger.entries",
+      "path": "src/audit/ledger.rs",
+      "symbol": "AuditLedger.entries",
+      "start_line": 31,
+      "end_line": 37
+    },
+    {
+      "unit_id": "src/audit/review.rs::check_access",
+      "path": "src/audit/review.rs",
+      "symbol": "check_access",
+      "start_line": 6,
+      "end_line": 19
+    },
+    {
+      "unit_id": "src/audit/review.rs::ReviewFindings",
+      "path": "src/audit/review.rs",
+      "symbol": "ReviewFindings",
+      "start_line": 21,
+      "end_line": 26
+    },
+    {
+      "unit_id": "src/audit/review.rs::findings_by_asset",
+      "path": "src/audit/review.rs",
+      "symbol": "findings_by_asset",
+      "start_line": 28,
+      "end_line": 46
+    },
+    {
+      "unit_id": "src/audit/review.rs::review_budget",
+      "path": "src/audit/review.rs",
+      "symbol": "review_budget",
+      "start_line": 48,
+      "end_line": 51
+    },
+    {
+      "unit_id": "src/tools/list_assets.rs::list_assets",
+      "path": "src/tools/list_assets.rs",
+      "symbol": "list_assets",
+      "start_line": 5,
+      "end_line": 18
+    },
+    {
+      "unit_id": "src/tools/list_assets.rs::record_scanned",
+      "path": "src/tools/list_assets.rs",
+      "symbol": "record_scanned",
+      "start_line": 20,
+      "end_line": 22
+    },
+    {
+      "unit_id": "src/tools/select_asset.rs::ScanResult",
+      "path": "src/tools/select_asset.rs",
+      "symbol": "ScanResult",
+      "start_line": 10,
+      "end_line": 15
+    },
+    {
+      "unit_id": "src/tools/select_asset.rs::is_asset_in_scan_result",
+      "path": "src/tools/select_asset.rs",
+      "symbol": "is_asset_in_scan_result",
+      "start_line": 17,
+      "end_line": 22
+    },
+    {
+      "unit_id": "src/tools/select_asset.rs::authorize_access",
+      "path": "src/tools/select_asset.rs",
+      "symbol": "authorize_access",
+      "start_line": 24,
+      "end_line": 37
+    },
+    {
+      "unit_id": "src/tools/select_asset.rs::handle_select_asset",
+      "path": "src/tools/select_asset.rs",
+      "symbol": "handle_select_asset",
+      "start_line": 39,
+      "end_line": 64
+    },
+    {
+      "unit_id": "src/tools/select_asset.rs::apply_selected_asset",
+      "path": "src/tools/select_asset.rs",
+      "symbol": "apply_selected_asset",
+      "start_line": 66,
+      "end_line": 77
+    }
+  ]
+}

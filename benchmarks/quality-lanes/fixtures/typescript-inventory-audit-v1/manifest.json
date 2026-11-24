@@ -1,0 +1,319 @@
+{
+  "schema_version": 1,
+  "fixture_id": "typescript-inventory-audit-v1",
+  "language": "typescript",
+  "source": {
+    "repository": "synthetic/typescript-inventory-audit",
+    "revision": "fixture-v1",
+    "root": ".",
+    "include": [
+      "**/*.ts"
+    ],
+    "exclude": [
+      "**/*.test.ts"
+    ]
+  },
+  "units": [
+    {
+      "unit_id": "inventory/state.ts::AssetState",
+      "path": "inventory/state.ts",
+      "symbol": "AssetState",
+      "start_line": 1,
+      "end_line": 13
+    },
+    {
+      "unit_id": "inventory/state.ts::AssetState.add",
+      "path": "inventory/state.ts",
+      "symbol": "AssetState.add",
+      "start_line": 4,
+      "end_line": 8
+    },
+    {
+      "unit_id": "inventory/state.ts::AssetState.contains",
+      "path": "inventory/state.ts",
+      "symbol": "AssetState.contains",
+      "start_line": 10,
+      "end_line": 12
+    },
+    {
+      "unit_id": "inventory/state.ts::assetStateKey",
+      "path": "inventory/state.ts",
+      "symbol": "assetStateKey",
+      "start_line": 15,
+      "end_line": 15
+    },
+    {
+      "unit_id": "inventory/state.ts::stateFromContext",
+      "path": "inventory/state.ts",
+      "symbol": "stateFromContext",
+      "start_line": 17,
+      "end_line": 20
+    },
+    {
+      "unit_id": "inventory/registry.ts::Asset",
+      "path": "inventory/registry.ts",
+      "symbol": "Asset",
+      "start_line": 4,
+      "end_line": 8
+    },
+    {
+      "unit_id": "inventory/registry.ts::AssetRegistry",
+      "path": "inventory/registry.ts",
+      "symbol": "AssetRegistry",
+      "start_line": 10,
+      "end_line": 22
+    },
+    {
+      "unit_id": "inventory/registry.ts::AssetRegistry.constructor",
+      "path": "inventory/registry.ts",
+      "symbol": "AssetRegistry.constructor",
+      "start_line": 11,
+      "end_line": 11
+    },
+    {
+      "unit_id": "inventory/registry.ts::AssetRegistry.listAssets",
+      "path": "inventory/registry.ts",
+      "symbol": "AssetRegistry.listAssets",
+      "start_line": 15,
+      "end_line": 17
+    },
+    {
+      "unit_id": "inventory/registry.ts::AssetRegistry.getAsset",
+      "path": "inventory/registry.ts",
+      "symbol": "AssetRegistry.getAsset",
+      "start_line": 19,
+      "end_line": 21
+    },
+    {
+      "unit_id": "inventory/filters.ts::ScanSignal",
+      "path": "inventory/filters.ts",
+      "symbol": "ScanSignal",
+      "start_line": 3,
+      "end_line": 5
+    },
+    {
+      "unit_id": "inventory/filters.ts::AuditFilters",
+      "path": "inventory/filters.ts",
+      "symbol": "AuditFilters",
+      "start_line": 7,
+      "end_line": 9
+    },
+    {
+      "unit_id": "inventory/filters.ts::filtersFromSignal",
+      "path": "inventory/filters.ts",
+      "symbol": "filtersFromSignal",
+      "start_line": 11,
+      "end_line": 14
+    },
+    {
+      "unit_id": "inventory/filters.ts::applyTagFilters",
+      "path": "inventory/filters.ts",
+      "symbol": "applyTagFilters",
+      "start_line": 16,
+      "end_line": 20
+    },
+    {
+      "unit_id": "permissions/policy.ts::Permission",
+      "path": "permissions/policy.ts",
+      "symbol": "Permission",
+      "start_line": 1,
+      "end_line": 4
+    },
+    {
+      "unit_id": "permissions/policy.ts::PolicySet",
+      "path": "permissions/policy.ts",
+      "symbol": "PolicySet",
+      "start_line": 6,
+      "end_line": 17
+    },
+    {
+      "unit_id": "permissions/policy.ts::PolicySet.constructor",
+      "path": "permissions/policy.ts",
+      "symbol": "PolicySet.constructor",
+      "start_line": 7,
+      "end_line": 7
+    },
+    {
+      "unit_id": "permissions/policy.ts::PolicySet.grant",
+      "path": "permissions/policy.ts",
+      "symbol": "PolicySet.grant",
+      "start_line": 9,
+      "end_line": 12
+    },
+    {
+      "unit_id": "permissions/policy.ts::PolicySet.isGranted",
+      "path": "permissions/policy.ts",
+      "symbol": "PolicySet.isGranted",
+      "start_line": 14,
+      "end_line": 16
+    },
+    {
+      "unit_id": "permissions/enforcer.ts::AccessDenied",
+      "path": "permissions/enforcer.ts",
+      "symbol": "AccessDenied",
+      "start_line": 4,
+      "end_line": 8
+    },
+    {
+      "unit_id": "permissions/enforcer.ts::AccessDenied.constructor",
+      "path": "permissions/enforcer.ts",
+      "symbol": "AccessDenied.constructor",
+      "start_line": 5,
+      "end_line": 7
+    },
+    {
+      "unit_id": "permissions/enforcer.ts::Enforcer",
+      "path": "permissions/enforcer.ts",
+      "symbol": "Enforcer",
+      "start_line": 10,
+      "end_line": 22
+    },
+    {
+      "unit_id": "permissions/enforcer.ts::Enforcer.constructor",
+      "path": "permissions/enforcer.ts",
+      "symbol": "Enforcer.constructor",
+      "start_line": 11,
+      "end_line": 11
+    },
+    {
+      "unit_id": "permissions/enforcer.ts::Enforcer.checkAccess",
+      "path": "permissions/enforcer.ts",
+      "symbol": "Enforcer.checkAccess",
+      "start_line": 15,
+      "end_line": 17
+    },
+    {
+      "unit_id": "permissions/enforcer.ts::Enforcer.requirePermission",
+      "path": "permissions/enforcer.ts",
+      "symbol": "Enforcer.requirePermission",
+      "start_line": 19,
+      "end_line": 21
+    },
+    {
+      "unit_id": "audit/ledger.ts::AuditRecord",
+      "path": "audit/ledger.ts",
+      "symbol": "AuditRecord",
+      "start_line": 3,
+      "end_line": 7
+    },
+    {
+      "unit_id": "audit/ledger.ts::AuditLedger",
+      "path": "audit/ledger.ts",
+      "symbol": "AuditLedger",
+      "start_line": 9,
+      "end_line": 25
+    },
+    {
+      "unit_id": "audit/ledger.ts::AuditLedger.constructor",
+      "path": "audit/ledger.ts",
+      "symbol": "AuditLedger.constructor",
+      "start_line": 12,
+      "end_line": 12
+    },
+    {
+      "unit_id": "audit/ledger.ts::AuditLedger.record",
+      "path": "audit/ledger.ts",
+      "symbol": "AuditLedger.record",
+      "start_line": 15,
+      "end_line": 20
+    },
+    {
+      "unit_id": "audit/ledger.ts::AuditLedger.entries",
+      "path": "audit/ledger.ts",
+      "symbol": "AuditLedger.entries",
+      "start_line": 22,
+      "end_line": 24
+    },
+    {
+      "unit_id": "audit/review.ts::checkAccess",
+      "path": "audit/review.ts",
+      "symbol": "checkAccess",
+      "start_line": 8,
+      "end_line": 16
+    },
+    {
+      "unit_id": "audit/review.ts::ReviewFindings",
+      "path": "audit/review.ts",
+      "symbol": "ReviewFindings",
+      "start_line": 18,
+      "end_line": 22
+    },
+    {
+      "unit_id": "audit/review.ts::summarizeSeverity",
+      "path": "audit/review.ts",
+      "symbol": "summarizeSeverity",
+      "start_line": 24,
+      "end_line": 32
+    },
+    {
+      "unit_id": "audit/review.ts::findingsByAsset",
+      "path": "audit/review.ts",
+      "symbol": "findingsByAsset",
+      "start_line": 34,
+      "end_line": 48
+    },
+    {
+      "unit_id": "audit/review.ts::reviewBudget",
+      "path": "audit/review.ts",
+      "symbol": "reviewBudget",
+      "start_line": 54,
+      "end_line": 54
+    },
+    {
+      "unit_id": "tools/list_assets.ts::listAssets",
+      "path": "tools/list_assets.ts",
+      "symbol": "listAssets",
+      "start_line": 8,
+      "end_line": 16
+    },
+    {
+      "unit_id": "tools/list_assets.ts::recordScanned",
+      "path": "tools/list_assets.ts",
+      "symbol": "recordScanned",
+      "start_line": 18,
+      "end_line": 20
+    },
+    {
+      "unit_id": "tools/select_asset.ts::ScanResult",
+      "path": "tools/select_asset.ts",
+      "symbol": "ScanResult",
+      "start_line": 7,
+      "end_line": 11
+    },
+    {
+      "unit_id": "tools/select_asset.ts::assetInScanResult",
+      "path": "tools/select_asset.ts",
+      "symbol": "assetInScanResult",
+      "start_line": 13,
+      "end_line": 16
+    },
+    {
+      "unit_id": "tools/select_asset.ts::authorizeAccess",
+      "path": "tools/select_asset.ts",
+      "symbol": "authorizeAccess",
+      "start_line": 20,
+      "end_line": 29
+    },
+    {
+      "unit_id": "tools/select_asset.ts::handleSelectAsset",
+      "path": "tools/select_asset.ts",
+      "symbol": "handleSelectAsset",
+      "start_line": 33,
+      "end_line": 52
+    },
+    {
+      "unit_id": "tools/select_asset.ts::applySelectedAsset",
+      "path": "tools/select_asset.ts",
+      "symbol": "applySelectedAsset",
+      "start_line": 54,
+      "end_line": 62
+    },
+    {
+      "unit_id": "api/summary.ts::AssetSummary",
+      "path": "api/summary.ts",
+      "symbol": "AssetSummary",
+      "start_line": 2,
+      "end_line": 7
+    }
+  ]
+}

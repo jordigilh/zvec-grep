@@ -221,7 +221,11 @@ jobs:
             python-workflow-discovery-v1 \
             rust-workflow-discovery-v1 \
             typescript-workflow-discovery-v1 \
-            java-workflow-discovery-v1; do
+            java-workflow-discovery-v1 \
+            python-inventory-audit-v1 \
+            rust-inventory-audit-v1 \
+            typescript-inventory-audit-v1 \
+            java-inventory-audit-v1; do
             python3 "$lanes/run_qeval_multilanguage.py" \
               --fixture "$lanes/fixtures/$fixture" \
               --binary "$zg" \

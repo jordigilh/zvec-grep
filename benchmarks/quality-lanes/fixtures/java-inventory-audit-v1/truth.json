@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "suite_id": "synthetic-java-inventory-audit",
+  "description": "Source-authored relevance truth for a small Java inventory-audit fixture with permission enforcement.",
+  "queries": [
+    {
+      "id": "record-scanned-membership",
+      "query": "Where does the asset scan store the IDs it returns so enforcement can consult them later?",
+      "category": "exact implementation / data flow",
+      "judgments": [
+        {"unit_id": "tools/Assets.java::Assets.recordScanned", "grade": 3, "rationale": "Hands every asset ID returned by the registry listing to the shared scan state."},
+        {"unit_id": "inventory/ScanState.java::ScanState.add", "grade": 3, "rationale": "Inserts each non-blank asset ID into the insertion-ordered shared set."},
+        {"unit_id": "tools/Assets.java::Assets.listAssets", "grade": 2, "rationale": "Obtains the registry listing and passes its mapped IDs to recordScanned."},
+        {"unit_id": "inventory/ScanState.java::ScanState", "grade": 2, "rationale": "Defines the shared state object that holds the scanned asset IDs."},
+        {"unit_id": "inventory/ScanState.java::ScanState.contains", "grade": 1, "rationale": "Reads membership during enforcement; it does not record returned IDs."}
+      ]
+    },
+    {
+      "id": "deny-unpermitted-asset",
+      "query": "How is an asset that exists in the registry still refused when policy never granted the required permission?",
+      "category": "policy check / semantic behavior",
+      "judgments": [
+        {"unit_id": "permissions/Enforcer.java::Enforcer.requirePermission", "grade": 3, "rationale": "Turns the failed policy membership check into a thrown fail-closed AccessDenied error."},
+        {"unit_id": "permissions/Enforcer.java::Enforcer.checkAccess", "grade": 3, "rationale": "Combines the policy-set membership predicate for the required permission."},
+        {"unit_id": "permissions/PolicySet.java::PolicySet.isGranted", "grade": 2, "rationale": "Provides the granted-permission membership predicate consulted by checkAccess."},
+        {"unit_id": "permissions/Enforcer.java::Enforcer.AccessDenied", "grade": 2, "rationale": "Represents the fail-closed enforcement error returned to the caller."}
+      ]
+    },
+    {
+      "id": "forward-tags-to-scan",
+      "query": "How do scan signal tags get converted into filters before the registry enumerates matching assets?",
+      "category": "data flow / semantic behavior",
+      "judgments": [
+        {"unit_id": "inventory/ScanFilters.java::ScanFilters.fromSignal", "grade": 3, "rationale": "Reads the zone, environment, and severity tags and normalizes each into a ScanFilters value."},
+        {"unit_id": "inventory/AssetRegistry.java::AssetRegistry.listAssets", "grade": 3, "rationale": "Enumerates registry assets using the converted scan filters."},
+        {"unit_id": "inventory/ScanFilters.java::ScanFilters.applyTagFilters", "grade": 2, "rationale": "Applies the populated tag constraints to candidate assets before they are returned."},
+        {"unit_id": "inventory/ScanFilters.java::ScanFilters", "grade": 1, "rationale": "Defines the zone/environment/severity filter shape produced by fromSignal."}
+      ]
+    },
+    {
+      "id": "preserve-membership-on-recheck",
+      "query": "How does scanned-asset membership persist across repeated audit rechecks?",
+      "category": "multi-hop state / recheck flow",
+      "judgments": [
+        {"unit_id": "audit/Review.java::Review.checkAccess", "grade": 3, "rationale": "Reuses the shared scan state on every recheck while verifying ledger coverage."},
+        {"unit_id": "inventory/ScanState.java::ScanState.stateFromContext", "grade": 2, "rationale": "Retrieves the same shared state instance from the selection context on each recheck."},
+        {"unit_id": "inventory/ScanState.java::ScanState.add", "grade": 2, "rationale": "Lets later scan calls extend the same set without replacing it."},
+        {"unit_id": "inventory/ScanState.java::ScanState.contains", "grade": 2, "rationale": "Answers the membership question the recheck relies on."}
+      ]
+    },
+    {
+      "id": "interactive-selection-guard",
+      "query": "Where does the interactive asset picker refuse an ID that is not part of the current scan result?",
+      "category": "exact implementation / interactive guard",
+      "judgments": [
+        {"unit_id": "tools/Assets.java::Assets.authorizeAccess", "grade": 3, "rationale": "Rejects asset IDs that are absent from the current scan result before any registry lookup."},
+        {"unit_id": "tools/Assets.java::Assets.isAssetInScanResult", "grade": 3, "rationale": "Implements the recommended-or-alternative membership test the guard consults."},
+        {"unit_id": "tools/Assets.java::Assets.handleSelectAsset", "grade": 2, "rationale": "Calls the guard before resolving the registry identity and appending the ledger entry."},
+        {"unit_id": "tools/Assets.java::Assets.ScanResult", "grade": 2, "rationale": "Defines the recommended and alternative IDs checked by the guard."}
+      ]
+    },
+    {
+      "id": "enforce-permission-before-audit",
+      "query": "Where is the ledger write permission checked before an audit entry gets appended?",
+      "category": "exact implementation / validation",
+      "judgments": [
+        {"unit_id": "audit/AuditLedger.java::AuditLedger.append", "grade": 3, "rationale": "Requires the audit:write permission before the entry is stored in the ledger."},
+        {"unit_id": "permissions/Enforcer.java::Enforcer.requirePermission", "grade": 3, "rationale": "Performs the permission check on the ledger append path."},
+        {"unit_id": "permissions/Enforcer.java::Enforcer.checkAccess", "grade": 2, "rationale": "Answers the policy membership question used by enforcement."},
+        {"unit_id": "permissions/Enforcer.java::Enforcer.AccessDenied", "grade": 2, "rationale": "Carries the fail-closed error when the write permission is missing."}
+      ]
+    },
+    {
+      "id": "empty-scan-fails-closed",
+      "query": "What is the behavior when the inventory scan returns no assets and a selection is attempted anyway?",
+      "category": "behavior / failure mode",
+      "judgments": [
+        {"unit_id": "inventory/ScanState.java::ScanState.contains", "grade": 3, "rationale": "An empty scan state makes any asset ID fail the membership predicate."},
+        {"unit_id": "audit/Review.java::Review.checkAccess", "grade": 3, "rationale": "An empty state and an empty ledger make the audit recheck fail closed."},
+        {"unit_id": "tools/Assets.java::Assets.listAssets", "grade": 2, "rationale": "Defines the scan call that leaves the state empty when nothing is returned."},
+        {"unit_id": "tools/Assets.java::Assets.recordScanned", "grade": 2, "rationale": "Adds no IDs when the scan result is empty, which is what leaves the state empty."},
+        {"unit_id": "tools/Assets.java::Assets.authorizeAccess", "grade": 2, "rationale": "Rejects the selection because the asset is absent from the empty scan result."}
+      ]
+    },
+    {
+      "id": "copy-selected-asset-details",
+      "query": "How are the chosen asset's registry fields copied into the final investigation summary?",
+      "category": "multi-symbol data flow",
+      "judgments": [
+        {"unit_id": "tools/Assets.java::Assets.applySelectedAsset", "grade": 3, "rationale": "Copies the registry-resolved asset fields and scan parameters into the final summary."},
+        {"unit_id": "inventory/AssetRegistry.java::AssetRegistry.getAsset", "grade": 2, "rationale": "Supplies the registry asset whose fields are copied by the final assembly."},
+        {"unit_id": "tools/Assets.java::Assets.AssetSummary", "grade": 2, "rationale": "Defines the final result shape that receives the copied fields."},
+        {"unit_id": "tools/Assets.java::Assets.ScanResult", "grade": 1, "rationale": "Defines the source parameters for the final result but does not perform the copying."}
+      ]
+    }
+  ]
+}

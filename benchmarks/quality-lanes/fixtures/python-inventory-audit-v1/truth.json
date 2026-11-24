@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "suite_id": "synthetic-python-inventory-audit",
+  "description": "Source-authored relevance truth for a small Python inventory-audit fixture.",
+  "queries": [
+    {
+      "id": "record-scanned-membership",
+      "query": "Where are asset IDs returned by list_assets stored for later permission checks?",
+      "category": "exact implementation / data flow",
+      "judgments": [
+        {"unit_id": "tools/list_assets.py::record_scanned", "grade": 3, "rationale": "Records each returned asset ID in the shared scan state."},
+        {"unit_id": "inventory/state.py::ScanState.add", "grade": 3, "rationale": "Stores the returned IDs in the shared set."},
+        {"unit_id": "tools/list_assets.py::list_assets", "grade": 2, "rationale": "Obtains the scan output and calls the recording path."},
+        {"unit_id": "inventory/state.py::ScanState", "grade": 2, "rationale": "Defines the shared state that holds scanned asset IDs."}
+      ]
+    },
+    {
+      "id": "deny-unpermitted-asset",
+      "query": "How is a registry-known asset refused when policy never granted the required permission?",
+      "category": "policy check / semantic behavior",
+      "judgments": [
+        {"unit_id": "permissions/enforcer.py::Enforcer.require_permission", "grade": 3, "rationale": "Turns the failed policy membership check into a fail-closed AccessDenied error."},
+        {"unit_id": "permissions/enforcer.py::Enforcer.check_access", "grade": 3, "rationale": "Answers the policy-set membership question for the required permission."},
+        {"unit_id": "permissions/policy.py::PolicySet.is_granted", "grade": 2, "rationale": "Provides the granted-permission membership predicate."},
+        {"unit_id": "permissions/enforcer.py::AccessDenied", "grade": 2, "rationale": "Represents the fail-closed enforcement error raised to the caller."}
+      ]
+    },
+    {
+      "id": "forward-tags-to-scan",
+      "query": "How do scanner signal tags become filters that narrow which assets the registry lists?",
+      "category": "data flow / semantic behavior",
+      "judgments": [
+        {"unit_id": "inventory/filters.py::filters_from_signal", "grade": 3, "rationale": "Converts scanner signal tags into the audit filter structure."},
+        {"unit_id": "inventory/registry.py::AssetRegistry.list_assets", "grade": 3, "rationale": "Applies audit filters when listing registry assets."},
+        {"unit_id": "inventory/filters.py::apply_tag_filters", "grade": 2, "rationale": "Applies tag constraints to candidate assets."},
+        {"unit_id": "inventory/filters.py::AuditFilters", "grade": 1, "rationale": "Defines the filter shape but not the runtime conversion path."}
+      ]
+    },
+    {
+      "id": "preserve-membership-on-recheck",
+      "query": "How does scanned-asset membership persist across repeated audit rechecks?",
+      "category": "multi-hop state / recheck flow",
+      "judgments": [
+        {"unit_id": "audit/review.py::check_access", "grade": 3, "rationale": "Reuses the shared scan state while rechecking ledger coverage."},
+        {"unit_id": "inventory/state.py::state_from_context", "grade": 2, "rationale": "Recovers the shared scan state from the selection context on every recheck."},
+        {"unit_id": "inventory/state.py::ScanState.add", "grade": 2, "rationale": "Allows later scan calls to extend the same set."},
+        {"unit_id": "inventory/state.py::ScanState.contains", "grade": 2, "rationale": "Answers the membership question the recheck relies on."}
+      ]
+    },
+    {
+      "id": "interactive-selection-guard",
+      "query": "Where does interactive selection refuse an asset that the current scan result did not include?",
+      "category": "exact implementation / interactive guard",
+      "judgments": [
+        {"unit_id": "tools/select_asset.py::_authorize_access", "grade": 3, "rationale": "Rejects asset IDs absent from the current scan result before registry lookup."},
+        {"unit_id": "tools/select_asset.py::_asset_in_scan_result", "grade": 3, "rationale": "Checks the recommended and alternative asset IDs."},
+        {"unit_id": "tools/select_asset.py::handle_select_asset", "grade": 2, "rationale": "Calls the authorization guard before returning the selected asset."},
+        {"unit_id": "tools/select_asset.py::ScanResult", "grade": 2, "rationale": "Defines the recommended and alternative IDs checked by the guard."}
+      ]
+    },
+    {
+      "id": "enforce-permission-before-audit",
+      "query": "Where is the audit write permission checked before an entry is appended to the ledger?",
+      "category": "exact implementation / validation",
+      "judgments": [
+        {"unit_id": "audit/ledger.py::AuditLedger.record", "grade": 3, "rationale": "Enforces audit:write before appending the ledger entry."},
+        {"unit_id": "permissions/enforcer.py::Enforcer.require_permission", "grade": 3, "rationale": "Performs the permission check on the ledger write path."},
+        {"unit_id": "permissions/enforcer.py::Enforcer.check_access", "grade": 2, "rationale": "Answers the policy membership question used by enforcement."},
+        {"unit_id": "permissions/enforcer.py::AccessDenied", "grade": 2, "rationale": "Carries the fail-closed error when the write permission is missing."}
+      ]
+    },
+    {
+      "id": "empty-scan-fails-closed",
+      "query": "What happens when the inventory scan yields no assets and a selection is attempted?",
+      "category": "behavior / failure mode",
+      "judgments": [
+        {"unit_id": "inventory/state.py::ScanState.contains", "grade": 3, "rationale": "An empty scan state makes any asset ID fail the membership predicate."},
+        {"unit_id": "audit/review.py::check_access", "grade": 3, "rationale": "An empty state and an empty ledger make the audit recheck fail closed."},
+        {"unit_id": "tools/list_assets.py::list_assets", "grade": 2, "rationale": "Defines the scan call that leaves the state empty."},
+        {"unit_id": "tools/list_assets.py::record_scanned", "grade": 2, "rationale": "Shows that no IDs are added when the scan output is empty."},
+        {"unit_id": "tools/select_asset.py::_authorize_access", "grade": 2, "rationale": "Rejects the selection because the asset is absent from the empty scan result."}
+      ]
+    },
+    {
+      "id": "copy-selected-asset-details",
+      "query": "How are the chosen asset's registry details carried into the final investigation summary?",
+      "category": "multi-symbol data flow",
+      "judgments": [
+        {"unit_id": "tools/select_asset.py::apply_selected_asset", "grade": 3, "rationale": "Copies registry-resolved asset fields into the final summary."},
+        {"unit_id": "inventory/registry.py::AssetRegistry.get_asset", "grade": 2, "rationale": "Supplies the registry asset details used by final assembly."},
+        {"unit_id": "api/types.py::AssetSummary", "grade": 2, "rationale": "Defines the final result shape that receives the copied fields."},
+        {"unit_id": "tools/select_asset.py::ScanResult", "grade": 1, "rationale": "Defines source parameters for the final result but does not perform copying."}
+      ]
+    }
+  ]
+}

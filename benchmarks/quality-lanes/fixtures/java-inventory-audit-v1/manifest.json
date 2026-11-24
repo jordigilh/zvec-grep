@@ -1,0 +1,417 @@
+{
+  "schema_version": 1,
+  "fixture_id": "java-inventory-audit-v1",
+  "language": "java",
+  "source": {
+    "repository": "synthetic/java-inventory-audit",
+    "revision": "fixture-v1",
+    "root": ".",
+    "include": [
+      "**/*.java"
+    ],
+    "exclude": [
+      "_tools/**"
+    ],
+    "files": 10,
+    "bytes": 10944,
+    "snapshot_sha256": "ebd6673eecdd648904da6d0b89882a3fd26b70490cc7f2f8d04a0c4d907c56a1"
+  },
+  "units": [
+    {
+      "unit_id": "inventory/Asset.java::Asset",
+      "path": "inventory/Asset.java",
+      "symbol": "Asset",
+      "kind": "record",
+      "start_line": 9,
+      "end_line": 10,
+      "declaration_anchor": "public record Asset(String assetId, String kind, String location, Map<String, String> tags) {"
+    },
+    {
+      "unit_id": "inventory/AssetRegistry.java::AssetRegistry",
+      "path": "inventory/AssetRegistry.java",
+      "symbol": "AssetRegistry",
+      "kind": "class",
+      "start_line": 11,
+      "end_line": 30,
+      "declaration_anchor": "public final class AssetRegistry {"
+    },
+    {
+      "unit_id": "inventory/AssetRegistry.java::AssetRegistry.constructor",
+      "path": "inventory/AssetRegistry.java",
+      "symbol": "constructor",
+      "kind": "constructor",
+      "start_line": 14,
+      "end_line": 16,
+      "declaration_anchor": "public AssetRegistry(List<Asset> assets) {"
+    },
+    {
+      "unit_id": "inventory/AssetRegistry.java::AssetRegistry.listAssets",
+      "path": "inventory/AssetRegistry.java",
+      "symbol": "listAssets",
+      "kind": "method",
+      "start_line": 21,
+      "end_line": 23,
+      "declaration_anchor": "public List<Asset> listAssets(ScanFilters filters) {"
+    },
+    {
+      "unit_id": "inventory/AssetRegistry.java::AssetRegistry.getAsset",
+      "path": "inventory/AssetRegistry.java",
+      "symbol": "getAsset",
+      "kind": "method",
+      "start_line": 25,
+      "end_line": 29,
+      "declaration_anchor": "public Optional<Asset> getAsset(String assetId) {"
+    },
+    {
+      "unit_id": "inventory/ScanState.java::ScanState",
+      "path": "inventory/ScanState.java",
+      "symbol": "ScanState",
+      "kind": "class",
+      "start_line": 17,
+      "end_line": 36,
+      "declaration_anchor": "public final class ScanState {"
+    },
+    {
+      "unit_id": "inventory/ScanState.java::ScanState.add",
+      "path": "inventory/ScanState.java",
+      "symbol": "add",
+      "kind": "method",
+      "start_line": 20,
+      "end_line": 26,
+      "declaration_anchor": "public void add(List<String> assetIds) {"
+    },
+    {
+      "unit_id": "inventory/ScanState.java::ScanState.contains",
+      "path": "inventory/ScanState.java",
+      "symbol": "contains",
+      "kind": "method",
+      "start_line": 28,
+      "end_line": 30,
+      "declaration_anchor": "public boolean contains(String assetId) {"
+    },
+    {
+      "unit_id": "inventory/ScanState.java::ScanState.stateFromContext",
+      "path": "inventory/ScanState.java",
+      "symbol": "stateFromContext",
+      "kind": "method",
+      "start_line": 32,
+      "end_line": 35,
+      "declaration_anchor": "public static ScanState stateFromContext(Map<String, Object> context) {"
+    },
+    {
+      "unit_id": "inventory/ScanFilters.java::ScanFilters",
+      "path": "inventory/ScanFilters.java",
+      "symbol": "ScanFilters",
+      "kind": "record",
+      "start_line": 12,
+      "end_line": 38,
+      "declaration_anchor": "public record ScanFilters(String zone, String environment, String severity) {"
+    },
+    {
+      "unit_id": "inventory/ScanFilters.java::ScanFilters.fromSignal",
+      "path": "inventory/ScanFilters.java",
+      "symbol": "fromSignal",
+      "kind": "method",
+      "start_line": 14,
+      "end_line": 19,
+      "declaration_anchor": "public static ScanFilters fromSignal(Map<String, String> tags) {"
+    },
+    {
+      "unit_id": "inventory/ScanFilters.java::ScanFilters.applyTagFilters",
+      "path": "inventory/ScanFilters.java",
+      "symbol": "applyTagFilters",
+      "kind": "method",
+      "start_line": 21,
+      "end_line": 37,
+      "declaration_anchor": "public static List<Asset> applyTagFilters(List<Asset> assets, ScanFilters filters) {"
+    },
+    {
+      "unit_id": "inventory/ScanFilters.java::Normalize",
+      "path": "inventory/ScanFilters.java",
+      "symbol": "Normalize",
+      "kind": "class",
+      "start_line": 41,
+      "end_line": 45,
+      "declaration_anchor": "final class Normalize {"
+    },
+    {
+      "unit_id": "inventory/ScanFilters.java::Normalize.term",
+      "path": "inventory/ScanFilters.java",
+      "symbol": "term",
+      "kind": "method",
+      "start_line": 42,
+      "end_line": 44,
+      "declaration_anchor": "static String term(String value) {"
+    },
+    {
+      "unit_id": "permissions/PolicySet.java::PolicySet",
+      "path": "permissions/PolicySet.java",
+      "symbol": "PolicySet",
+      "kind": "class",
+      "start_line": 10,
+      "end_line": 29,
+      "declaration_anchor": "public final class PolicySet {"
+    },
+    {
+      "unit_id": "permissions/PolicySet.java::PolicySet.Permission",
+      "path": "permissions/PolicySet.java",
+      "symbol": "Permission",
+      "kind": "record",
+      "start_line": 13,
+      "end_line": 14,
+      "declaration_anchor": "public record Permission(String name) {"
+    },
+    {
+      "unit_id": "permissions/PolicySet.java::PolicySet.constructor",
+      "path": "permissions/PolicySet.java",
+      "symbol": "constructor",
+      "kind": "constructor",
+      "start_line": 18,
+      "end_line": 20,
+      "declaration_anchor": "public PolicySet(Set<String> names) {"
+    },
+    {
+      "unit_id": "permissions/PolicySet.java::PolicySet.grant",
+      "path": "permissions/PolicySet.java",
+      "symbol": "grant",
+      "kind": "method",
+      "start_line": 22,
+      "end_line": 24,
+      "declaration_anchor": "public void grant(Permission permission) {"
+    },
+    {
+      "unit_id": "permissions/PolicySet.java::PolicySet.isGranted",
+      "path": "permissions/PolicySet.java",
+      "symbol": "isGranted",
+      "kind": "method",
+      "start_line": 26,
+      "end_line": 28,
+      "declaration_anchor": "public boolean isGranted(String name) {"
+    },
+    {
+      "unit_id": "permissions/Enforcer.java::Enforcer",
+      "path": "permissions/Enforcer.java",
+      "symbol": "Enforcer",
+      "kind": "class",
+      "start_line": 8,
+      "end_line": 32,
+      "declaration_anchor": "public final class Enforcer {"
+    },
+    {
+      "unit_id": "permissions/Enforcer.java::Enforcer.AccessDenied",
+      "path": "permissions/Enforcer.java",
+      "symbol": "AccessDenied",
+      "kind": "class",
+      "start_line": 11,
+      "end_line": 15,
+      "declaration_anchor": "public static final class AccessDenied extends RuntimeException {"
+    },
+    {
+      "unit_id": "permissions/Enforcer.java::Enforcer.constructor",
+      "path": "permissions/Enforcer.java",
+      "symbol": "constructor",
+      "kind": "constructor",
+      "start_line": 19,
+      "end_line": 21,
+      "declaration_anchor": "public Enforcer(PolicySet policy) {"
+    },
+    {
+      "unit_id": "permissions/Enforcer.java::Enforcer.checkAccess",
+      "path": "permissions/Enforcer.java",
+      "symbol": "checkAccess",
+      "kind": "method",
+      "start_line": 23,
+      "end_line": 25,
+      "declaration_anchor": "public boolean checkAccess(String permission) {"
+    },
+    {
+      "unit_id": "permissions/Enforcer.java::Enforcer.requirePermission",
+      "path": "permissions/Enforcer.java",
+      "symbol": "requirePermission",
+      "kind": "method",
+      "start_line": 27,
+      "end_line": 31,
+      "declaration_anchor": "public void requirePermission(String permission) {"
+    },
+    {
+      "unit_id": "audit/AuditRecord.java::AuditRecord",
+      "path": "audit/AuditRecord.java",
+      "symbol": "AuditRecord",
+      "kind": "record",
+      "start_line": 6,
+      "end_line": 7,
+      "declaration_anchor": "public record AuditRecord(String assetId, String action, String detail) {"
+    },
+    {
+      "unit_id": "audit/AuditLedger.java::AuditLedger",
+      "path": "audit/AuditLedger.java",
+      "symbol": "AuditLedger",
+      "kind": "class",
+      "start_line": 11,
+      "end_line": 29,
+      "declaration_anchor": "public final class AuditLedger {"
+    },
+    {
+      "unit_id": "audit/AuditLedger.java::AuditLedger.constructor",
+      "path": "audit/AuditLedger.java",
+      "symbol": "constructor",
+      "kind": "constructor",
+      "start_line": 15,
+      "end_line": 17,
+      "declaration_anchor": "public AuditLedger(Enforcer enforcer) {"
+    },
+    {
+      "unit_id": "audit/AuditLedger.java::AuditLedger.append",
+      "path": "audit/AuditLedger.java",
+      "symbol": "append",
+      "kind": "method",
+      "start_line": 19,
+      "end_line": 22,
+      "declaration_anchor": "public void append(AuditRecord entry) {"
+    },
+    {
+      "unit_id": "audit/AuditLedger.java::AuditLedger.entries",
+      "path": "audit/AuditLedger.java",
+      "symbol": "entries",
+      "kind": "method",
+      "start_line": 24,
+      "end_line": 28,
+      "declaration_anchor": "public List<AuditRecord> entries(String assetId) {"
+    },
+    {
+      "unit_id": "audit/Review.java::Review",
+      "path": "audit/Review.java",
+      "symbol": "Review",
+      "kind": "class",
+      "start_line": 14,
+      "end_line": 48,
+      "declaration_anchor": "public final class Review {"
+    },
+    {
+      "unit_id": "audit/Review.java::Review.ReviewFindings",
+      "path": "audit/Review.java",
+      "symbol": "ReviewFindings",
+      "kind": "record",
+      "start_line": 17,
+      "end_line": 18,
+      "declaration_anchor": "public record ReviewFindings(String assetId, String severity, List<String> notes) {"
+    },
+    {
+      "unit_id": "audit/Review.java::Review.REVIEW_BUDGET",
+      "path": "audit/Review.java",
+      "symbol": "REVIEW_BUDGET",
+      "kind": "field",
+      "start_line": 20,
+      "end_line": 20,
+      "declaration_anchor": "private static final int REVIEW_BUDGET = 100;"
+    },
+    {
+      "unit_id": "audit/Review.java::Review.checkAccess",
+      "path": "audit/Review.java",
+      "symbol": "checkAccess",
+      "kind": "method",
+      "start_line": 22,
+      "end_line": 28,
+      "declaration_anchor": "public static boolean checkAccess(Map<String, Object> context, AuditLedger ledger, String assetId) {"
+    },
+    {
+      "unit_id": "audit/Review.java::Review.findingsByAsset",
+      "path": "audit/Review.java",
+      "symbol": "findingsByAsset",
+      "kind": "method",
+      "start_line": 30,
+      "end_line": 39,
+      "declaration_anchor": "public static Map<String, List<ReviewFindings>> findingsByAsset(List<AuditRecord> records) {"
+    },
+    {
+      "unit_id": "audit/Review.java::Review.summarizeSeverity",
+      "path": "audit/Review.java",
+      "symbol": "summarizeSeverity",
+      "kind": "method",
+      "start_line": 41,
+      "end_line": 47,
+      "declaration_anchor": "public static Map<String, Integer> summarizeSeverity(List<ReviewFindings> findings) {"
+    },
+    {
+      "unit_id": "tools/Assets.java::Assets",
+      "path": "tools/Assets.java",
+      "symbol": "Assets",
+      "kind": "class",
+      "start_line": 19,
+      "end_line": 74,
+      "declaration_anchor": "public final class Assets {"
+    },
+    {
+      "unit_id": "tools/Assets.java::Assets.ScanResult",
+      "path": "tools/Assets.java",
+      "symbol": "ScanResult",
+      "kind": "record",
+      "start_line": 22,
+      "end_line": 23,
+      "declaration_anchor": "public record ScanResult(String recommendedId, List<String> alternativeIds, Map<String, String> parameters) {"
+    },
+    {
+      "unit_id": "tools/Assets.java::Assets.AssetSummary",
+      "path": "tools/Assets.java",
+      "symbol": "AssetSummary",
+      "kind": "record",
+      "start_line": 26,
+      "end_line": 27,
+      "declaration_anchor": "public record AssetSummary(String assetId, String kind, String location, String parameters) {"
+    },
+    {
+      "unit_id": "tools/Assets.java::Assets.listAssets",
+      "path": "tools/Assets.java",
+      "symbol": "listAssets",
+      "kind": "method",
+      "start_line": 29,
+      "end_line": 33,
+      "declaration_anchor": "public static List<Asset> listAssets(AssetRegistry registry, ScanState state, ScanFilters filters) {"
+    },
+    {
+      "unit_id": "tools/Assets.java::Assets.recordScanned",
+      "path": "tools/Assets.java",
+      "symbol": "recordScanned",
+      "kind": "method",
+      "start_line": 35,
+      "end_line": 39,
+      "declaration_anchor": "public static void recordScanned(ScanState state, List<String> assetIds) {"
+    },
+    {
+      "unit_id": "tools/Assets.java::Assets.isAssetInScanResult",
+      "path": "tools/Assets.java",
+      "symbol": "isAssetInScanResult",
+      "kind": "method",
+      "start_line": 41,
+      "end_line": 44,
+      "declaration_anchor": "static boolean isAssetInScanResult(ScanResult result, String assetId) {"
+    },
+    {
+      "unit_id": "tools/Assets.java::Assets.authorizeAccess",
+      "path": "tools/Assets.java",
+      "symbol": "authorizeAccess",
+      "kind": "method",
+      "start_line": 46,
+      "end_line": 51,
+      "declaration_anchor": "static void authorizeAccess(ScanResult result, String assetId, Enforcer enforcer) {"
+    },
+    {
+      "unit_id": "tools/Assets.java::Assets.handleSelectAsset",
+      "path": "tools/Assets.java",
+      "symbol": "handleSelectAsset",
+      "kind": "method",
+      "start_line": 53,
+      "end_line": 68,
+      "declaration_anchor": "public static AssetSummary handleSelectAsset("
+    },
+    {
+      "unit_id": "tools/Assets.java::Assets.applySelectedAsset",
+      "path": "tools/Assets.java",
+      "symbol": "applySelectedAsset",
+      "kind": "method",
+      "start_line": 70,
+      "end_line": 73,
+      "declaration_anchor": "static AssetSummary applySelectedAsset(Asset asset, ScanResult result) {"
+    }
+  ]
+}

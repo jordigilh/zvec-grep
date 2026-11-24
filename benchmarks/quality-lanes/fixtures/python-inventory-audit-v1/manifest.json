@@ -1,0 +1,333 @@
+{
+  "schema_version": 1,
+  "fixture_id": "python-inventory-audit-v1",
+  "language": "python",
+  "source": {
+    "repository": "synthetic/python-inventory-audit",
+    "revision": "fixture-v1",
+    "root": ".",
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": [
+      "**/test_*.py"
+    ]
+  },
+  "units": [
+    {
+      "unit_id": "inventory/state.py::ScanState",
+      "path": "inventory/state.py",
+      "symbol": "ScanState",
+      "start_line": 7,
+      "end_line": 16
+    },
+    {
+      "unit_id": "inventory/state.py::ScanState.add",
+      "path": "inventory/state.py",
+      "symbol": "ScanState.add",
+      "start_line": 12,
+      "end_line": 13
+    },
+    {
+      "unit_id": "inventory/state.py::ScanState.contains",
+      "path": "inventory/state.py",
+      "symbol": "ScanState.contains",
+      "start_line": 15,
+      "end_line": 16
+    },
+    {
+      "unit_id": "inventory/state.py::state_from_context",
+      "path": "inventory/state.py",
+      "symbol": "state_from_context",
+      "start_line": 19,
+      "end_line": 21
+    },
+    {
+      "unit_id": "inventory/state.py::_scan_state_key",
+      "path": "inventory/state.py",
+      "symbol": "_scan_state_key",
+      "start_line": 25,
+      "end_line": 25
+    },
+    {
+      "unit_id": "inventory/registry.py::Asset",
+      "path": "inventory/registry.py",
+      "symbol": "Asset",
+      "start_line": 9,
+      "end_line": 15
+    },
+    {
+      "unit_id": "inventory/registry.py::AssetRegistry",
+      "path": "inventory/registry.py",
+      "symbol": "AssetRegistry",
+      "start_line": 18,
+      "end_line": 29
+    },
+    {
+      "unit_id": "inventory/registry.py::AssetRegistry.__init__",
+      "path": "inventory/registry.py",
+      "symbol": "AssetRegistry.__init__",
+      "start_line": 19,
+      "end_line": 20
+    },
+    {
+      "unit_id": "inventory/registry.py::AssetRegistry.list_assets",
+      "path": "inventory/registry.py",
+      "symbol": "AssetRegistry.list_assets",
+      "start_line": 22,
+      "end_line": 26
+    },
+    {
+      "unit_id": "inventory/registry.py::AssetRegistry.get_asset",
+      "path": "inventory/registry.py",
+      "symbol": "AssetRegistry.get_asset",
+      "start_line": 28,
+      "end_line": 29
+    },
+    {
+      "unit_id": "inventory/filters.py::ScanSignal",
+      "path": "inventory/filters.py",
+      "symbol": "ScanSignal",
+      "start_line": 11,
+      "end_line": 14
+    },
+    {
+      "unit_id": "inventory/filters.py::AuditFilters",
+      "path": "inventory/filters.py",
+      "symbol": "AuditFilters",
+      "start_line": 18,
+      "end_line": 19
+    },
+    {
+      "unit_id": "inventory/filters.py::filters_from_signal",
+      "path": "inventory/filters.py",
+      "symbol": "filters_from_signal",
+      "start_line": 22,
+      "end_line": 24
+    },
+    {
+      "unit_id": "inventory/filters.py::apply_tag_filters",
+      "path": "inventory/filters.py",
+      "symbol": "apply_tag_filters",
+      "start_line": 27,
+      "end_line": 32
+    },
+    {
+      "unit_id": "permissions/policy.py::Permission",
+      "path": "permissions/policy.py",
+      "symbol": "Permission",
+      "start_line": 7,
+      "end_line": 9
+    },
+    {
+      "unit_id": "permissions/policy.py::PolicySet",
+      "path": "permissions/policy.py",
+      "symbol": "PolicySet",
+      "start_line": 12,
+      "end_line": 20
+    },
+    {
+      "unit_id": "permissions/policy.py::PolicySet.__init__",
+      "path": "permissions/policy.py",
+      "symbol": "PolicySet.__init__",
+      "start_line": 13,
+      "end_line": 14
+    },
+    {
+      "unit_id": "permissions/policy.py::PolicySet.grant",
+      "path": "permissions/policy.py",
+      "symbol": "PolicySet.grant",
+      "start_line": 16,
+      "end_line": 17
+    },
+    {
+      "unit_id": "permissions/policy.py::PolicySet.is_granted",
+      "path": "permissions/policy.py",
+      "symbol": "PolicySet.is_granted",
+      "start_line": 19,
+      "end_line": 20
+    },
+    {
+      "unit_id": "permissions/enforcer.py::AccessDenied",
+      "path": "permissions/enforcer.py",
+      "symbol": "AccessDenied",
+      "start_line": 6,
+      "end_line": 13
+    },
+    {
+      "unit_id": "permissions/enforcer.py::AccessDenied.__init__",
+      "path": "permissions/enforcer.py",
+      "symbol": "AccessDenied.__init__",
+      "start_line": 9,
+      "end_line": 10
+    },
+    {
+      "unit_id": "permissions/enforcer.py::AccessDenied.__str__",
+      "path": "permissions/enforcer.py",
+      "symbol": "AccessDenied.__str__",
+      "start_line": 12,
+      "end_line": 13
+    },
+    {
+      "unit_id": "permissions/enforcer.py::Enforcer",
+      "path": "permissions/enforcer.py",
+      "symbol": "Enforcer",
+      "start_line": 16,
+      "end_line": 25
+    },
+    {
+      "unit_id": "permissions/enforcer.py::Enforcer.__init__",
+      "path": "permissions/enforcer.py",
+      "symbol": "Enforcer.__init__",
+      "start_line": 17,
+      "end_line": 18
+    },
+    {
+      "unit_id": "permissions/enforcer.py::Enforcer.check_access",
+      "path": "permissions/enforcer.py",
+      "symbol": "Enforcer.check_access",
+      "start_line": 20,
+      "end_line": 21
+    },
+    {
+      "unit_id": "permissions/enforcer.py::Enforcer.require_permission",
+      "path": "permissions/enforcer.py",
+      "symbol": "Enforcer.require_permission",
+      "start_line": 23,
+      "end_line": 25
+    },
+    {
+      "unit_id": "audit/ledger.py::AuditRecord",
+      "path": "audit/ledger.py",
+      "symbol": "AuditRecord",
+      "start_line": 9,
+      "end_line": 12
+    },
+    {
+      "unit_id": "audit/ledger.py::AuditLedger",
+      "path": "audit/ledger.py",
+      "symbol": "AuditLedger",
+      "start_line": 15,
+      "end_line": 25
+    },
+    {
+      "unit_id": "audit/ledger.py::AuditLedger.__init__",
+      "path": "audit/ledger.py",
+      "symbol": "AuditLedger.__init__",
+      "start_line": 16,
+      "end_line": 18
+    },
+    {
+      "unit_id": "audit/ledger.py::AuditLedger.record",
+      "path": "audit/ledger.py",
+      "symbol": "AuditLedger.record",
+      "start_line": 20,
+      "end_line": 22
+    },
+    {
+      "unit_id": "audit/ledger.py::AuditLedger.entries",
+      "path": "audit/ledger.py",
+      "symbol": "AuditLedger.entries",
+      "start_line": 24,
+      "end_line": 25
+    },
+    {
+      "unit_id": "audit/review.py::check_access",
+      "path": "audit/review.py",
+      "symbol": "check_access",
+      "start_line": 9,
+      "end_line": 18
+    },
+    {
+      "unit_id": "audit/review.py::ReviewFindings",
+      "path": "audit/review.py",
+      "symbol": "ReviewFindings",
+      "start_line": 22,
+      "end_line": 25
+    },
+    {
+      "unit_id": "audit/review.py::summarize_severity",
+      "path": "audit/review.py",
+      "symbol": "summarize_severity",
+      "start_line": 28,
+      "end_line": 32
+    },
+    {
+      "unit_id": "audit/review.py::findings_by_asset",
+      "path": "audit/review.py",
+      "symbol": "findings_by_asset",
+      "start_line": 35,
+      "end_line": 46
+    },
+    {
+      "unit_id": "audit/review.py::_review_budget",
+      "path": "audit/review.py",
+      "symbol": "_review_budget",
+      "start_line": 51,
+      "end_line": 51
+    },
+    {
+      "unit_id": "tools/list_assets.py::list_assets",
+      "path": "tools/list_assets.py",
+      "symbol": "list_assets",
+      "start_line": 8,
+      "end_line": 16
+    },
+    {
+      "unit_id": "tools/list_assets.py::record_scanned",
+      "path": "tools/list_assets.py",
+      "symbol": "record_scanned",
+      "start_line": 19,
+      "end_line": 20
+    },
+    {
+      "unit_id": "tools/select_asset.py::ScanResult",
+      "path": "tools/select_asset.py",
+      "symbol": "ScanResult",
+      "start_line": 13,
+      "end_line": 18
+    },
+    {
+      "unit_id": "tools/select_asset.py::_asset_in_scan_result",
+      "path": "tools/select_asset.py",
+      "symbol": "_asset_in_scan_result",
+      "start_line": 21,
+      "end_line": 24
+    },
+    {
+      "unit_id": "tools/select_asset.py::_authorize_access",
+      "path": "tools/select_asset.py",
+      "symbol": "_authorize_access",
+      "start_line": 27,
+      "end_line": 30
+    },
+    {
+      "unit_id": "tools/select_asset.py::handle_select_asset",
+      "path": "tools/select_asset.py",
+      "symbol": "handle_select_asset",
+      "start_line": 33,
+      "end_line": 48
+    },
+    {
+      "unit_id": "tools/select_asset.py::apply_selected_asset",
+      "path": "tools/select_asset.py",
+      "symbol": "apply_selected_asset",
+      "start_line": 51,
+      "end_line": 57
+    },
+    {
+      "unit_id": "tools/select_asset.py::lookup_scan_parameters",
+      "path": "tools/select_asset.py",
+      "symbol": "lookup_scan_parameters",
+      "start_line": 60,
+      "end_line": 62
+    },
+    {
+      "unit_id": "api/types.py::AssetSummary",
+      "path": "api/types.py",
+      "symbol": "AssetSummary",
+      "start_line": 7,
+      "end_line": 13
+    }
+  ]
+}
