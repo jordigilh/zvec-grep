@@ -108,12 +108,24 @@
     "rust-inventory-audit-v1": {
       "role": "holdout",
       "retrieval": {
-        "ndcg@10": 0.5579500349227331,
-        "mrr@10": 0.6770833333333334,
-        "recall@10": 0.7,
-        "precision@10": 0.2625
+        "ndcg@10": 0.49755814492958267,
+        "mrr@10": 0.6458333333333334,
+        "recall@10": 0.6645833333333333,
+        "precision@10": 0.25
       },
-      "fixture_snapshot_sha256": "2a2643f8da8a4d2fc153558755bf73d63ff99707d3fecb6db14aee02986d1630"
+      "fixture_snapshot_sha256": "2a2643f8da8a4d2fc153558755bf73d63ff99707d3fecb6db14aee02986d1630",
+      "floor_exception": {
+        "criterion": "cross-platform floor: ubuntu-24.04 CI measures this holdout below macOS on all four metrics (jina-embeddings-v2-base-code inference drift; run 45292279129, 2 repeats, deterministic, 0 unmatched)",
+        "decision": "pinned the lower ubuntu-24.04 measurement as the floor",
+        "reason": "same policy as the java-workflow-discovery-v1 floor exception approved on PR #67: pinning the higher macOS value would fail the checker on ubuntu-24.04, which is the Linux authority; the ubuntu floor passes on both. The macOS measurement is recorded here and passes the floor.",
+        "macos_measurement": {
+          "ndcg@10": 0.5579500349227331,
+          "mrr@10": 0.6770833333333334,
+          "recall@10": 0.7,
+          "precision@10": 0.2625
+        },
+        "approved_by": "maintainer jordigilh on PR #69"
+      }
     },
     "typescript-inventory-audit-v1": {
       "role": "holdout",
