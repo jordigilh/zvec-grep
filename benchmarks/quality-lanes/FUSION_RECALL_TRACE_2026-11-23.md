@@ -136,7 +136,13 @@ Baseline (shipped engine, model auto, two repeats, deterministic):
 
 These are pinned in `baselines-multilanguage.json` with `"role":
 "holdout"` and gated by `check_baselines_multilanguage.py` in CI, so any
-future fusion change is judged on 10 fixtures, not 6.
+future fusion change is judged on 10 fixtures, not 6. Two holdouts
+measured differently on the ubuntu-24.04 CI runner (inference drift, the
+same phenomenon PR #67 recorded for the java lane): rust-inventory-audit-v1
+measured below macOS on all four metrics and java-inventory-audit-v1 on
+MRR only, so those floors are pinned to the lower ubuntu values with the
+macOS measurements recorded in `floor_exception` notes — the same
+cross-platform-minimum policy the java lane floor already uses.
 
 ## Unknown 5: does the loss correlate with qrels density
 
