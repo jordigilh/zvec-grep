@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/Users/jgil</string>
+		<key>ZVEC_GREP_HOME</key>
+		<string>/Users/jgil/.local/zvec-grep-native/home</string>
+		<key>ZVEC_GREP_MODEL_CACHE</key>
+		<string>/Users/jgil/.engram/zvec-grep/model</string>
+	</dict>
+	<key>HardResourceLimits</key>
+	<dict>
+		<key>NumberOfFiles</key>
+		<integer>65536</integer>
+	</dict>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>Label</key>
+	<string>io.vectorize.zvec-grep-native</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/jgil/.local/zvec-grep-native/bin/zg</string>
+		<string>--server</string>
+		<string>run</string>
+		<string>--listen</string>
+		<string>127.0.0.1:7999</string>
+		<string>--mcp-toolset</string>
+		<string>full</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>SoftResourceLimits</key>
+	<dict>
+		<key>NumberOfFiles</key>
+		<integer>65536</integer>
+	</dict>
+	<key>StandardErrorPath</key>
+		<string>/Users/jgil/.local/zvec-grep-native/logs/server-stderr.log</string>
+	<key>StandardOutPath</key>
+		<string>/Users/jgil/.local/zvec-grep-native/logs/server-stdout.log</string>
+	<key>ThrottleInterval</key>
+		<integer>5</integer>
+</dict>
+</plist>
