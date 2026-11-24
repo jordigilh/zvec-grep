@@ -8,6 +8,29 @@ fn entry(reference: &str) -> LlamaCppConfig {
 }
 
 #[test]
+fn quant_labels_come_from_the_pinned_artifact_name() {
+    // Both catalog entries record the quantization of their pinned GGUF.
+    assert_eq!(llama_cpp_dtype(entry("local/embeddinggemma-300m")), "q8_0");
+    assert_eq!(llama_cpp_dtype(entry("local/qwen3-embedding-0.6b")), "q8_0");
+    // Known llama.cpp quant families are recognized anywhere in a name.
+    for (file_name, expected) in [
+        ("model-Q8_0.gguf", "q8_0"),
+        ("model-Q4.gguf", "q4"),
+        ("model-Q4_K_M.gguf", "q4_k_m"),
+        ("model-IQ4_XS.gguf", "iq4_xs"),
+        ("model-F16.gguf", "f16"),
+        ("model-BF16.gguf", "bf16"),
+        ("Qwen3-Embedding-0.6B-Q8_0.gguf", "q8_0"),
+        // A quant-less name must fall back, not match the model name.
+        ("Qwen3-Embedding-0.6B.gguf", "gguf"),
+        ("Falcon-7B.gguf", "gguf"),
+        ("model", "gguf"),
+    ] {
+        assert_eq!(gguf_quant_dtype(file_name), expected, "{file_name}");
+    }
+}
+
+#[test]
 fn formats_embeddinggemma_and_qwen_inputs_like_main() {
     assert_eq!(
         format_text("hello", EmbeddingPurpose::Query, "embeddinggemma"),

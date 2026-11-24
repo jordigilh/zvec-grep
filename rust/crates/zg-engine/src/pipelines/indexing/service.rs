@@ -2541,31 +2541,62 @@ mod tests {
         models.close();
     }
 
-    #[tokio::test]
-    async fn backend_identity_refuses_cross_backend_queries_until_rebuild() {
-        async fn run_query(
-            service: &WorkspaceIndexService,
-            models: &ModelRuntimeManager,
-            options: &crate::api::context::ContextOptions,
-        ) -> Result<(), crate::EngineError> {
-            crate::pipelines::indexed_search::service::context(
-                service, models, options, None, false,
-            )
+    async fn run_context_query(
+        service: &WorkspaceIndexService,
+        models: &ModelRuntimeManager,
+        options: &crate::api::context::ContextOptions,
+    ) -> Result<(), crate::EngineError> {
+        crate::pipelines::indexed_search::service::context(service, models, options, None, false)
             .await
             .map(|_| ())
-        }
-        let directory = tempdir().expect("workspace");
-        let root = std::fs::canonicalize(directory.path()).expect("root");
-        std::fs::write(root.join("notes.txt"), "orchard vines and orchard rows").expect("source");
-        let query_options = || crate::api::context::ContextOptions {
-            root: Some(root.clone()),
-            auto_update: false,
+    }
+
+    fn route_options(
+        root: &Path,
+        mode: crate::api::context::options::ContextRouteMode,
+        auto_update: bool,
+    ) -> crate::api::context::ContextOptions {
+        crate::api::context::ContextOptions {
+            root: Some(root.to_path_buf()),
+            auto_update,
             routes: vec![crate::api::context::options::ContextRoute {
-                mode: crate::api::context::options::ContextRouteMode::Vector,
+                mode,
                 query: "orchard".into(),
             }],
             ..crate::api::context::ContextOptions::default()
+        }
+    }
+
+    /// Simulate a generation recorded by a different (or older) embedding
+    /// runtime by rewriting the manifest's backend identity on disk.
+    fn rewrite_manifest_identity(
+        manifest: &super::WorkspaceManifest,
+        backend: Option<&str>,
+        dtype: Option<&str>,
+    ) {
+        let embedding = crate::domain::model::EmbeddingModelInfo {
+            backend: backend.map(str::to_owned),
+            dtype: dtype.map(str::to_owned),
+            ..manifest.embedding().expect("embedding").clone()
         };
+        let mut rewritten = manifest.clone();
+        rewritten.workspace.index =
+            IndexState::Enabled(crate::domain::IndexDescriptor::single(embedding));
+        let home = &manifest.path;
+        let _writer = crate::workspace::lock::acquire_home_lock(
+            home,
+            crate::workspace::lock::LockMode::Write,
+            "test.rewrite",
+        )
+        .expect("writer");
+        super::write_workspace_manifest(home, &rewritten).expect("rewrite manifest");
+    }
+
+    #[tokio::test]
+    async fn backend_identity_refuses_cross_backend_queries_until_rebuild() {
+        let directory = tempdir().expect("workspace");
+        let root = std::fs::canonicalize(directory.path()).expect("root");
+        std::fs::write(root.join("notes.txt"), "orchard vines and orchard rows").expect("source");
         let service = WorkspaceIndexService::with_test_registry();
         let models = ModelRuntimeManager::new();
         service
@@ -2581,38 +2612,39 @@ mod tests {
         assert_eq!(embedding.backend.as_deref(), Some("model2vec"));
         assert_eq!(embedding.dtype.as_deref(), Some("safetensors"));
 
+        let vector = || {
+            route_options(
+                &root,
+                crate::api::context::options::ContextRouteMode::Vector,
+                false,
+            )
+        };
+        let fts = || {
+            route_options(
+                &root,
+                crate::api::context::options::ContextRouteMode::Fts,
+                false,
+            )
+        };
         // Index-then-query on the same backend succeeds.
-        run_query(&service, &models, &query_options())
+        run_context_query(&service, &models, &vector())
             .await
             .expect("same backend serves the index");
 
-        let rewrite_manifest = |backend: Option<&str>, dtype: Option<&str>| {
-            let embedding = crate::domain::model::EmbeddingModelInfo {
-                backend: backend.map(str::to_owned),
-                dtype: dtype.map(str::to_owned),
-                ..manifest.embedding().expect("embedding").clone()
-            };
-            let mut rewritten = manifest.clone();
-            rewritten.workspace.index =
-                IndexState::Enabled(crate::domain::IndexDescriptor::single(embedding));
-            let _writer = crate::workspace::lock::acquire_home_lock(
-                &home,
-                crate::workspace::lock::LockMode::Write,
-                "test.rewrite",
-            )
-            .expect("writer");
-            super::write_workspace_manifest(&home, &rewritten).expect("rewrite manifest");
-        };
-
         // A generation recorded by a foreign runtime refuses vector queries.
-        rewrite_manifest(Some("onnx-cpu"), Some("q8"));
-        let error = run_query(&service, &models, &query_options())
+        rewrite_manifest_identity(&manifest, Some("onnx-cpu"), Some("q8"));
+        let error = run_context_query(&service, &models, &vector())
             .await
             .expect_err("cross-backend query must refuse");
         assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
         assert!(error.message().contains("onnx-cpu"), "{}", error.message());
         assert!(error.message().contains("model2vec"), "{}", error.message());
         assert!(error.message().contains("rebuild"), "{}", error.message());
+        // FTS-only queries never acquire an embedding model, so a mismatched
+        // generation keeps serving them instead of failing closed.
+        run_context_query(&service, &models, &fts())
+            .await
+            .expect("fts stays usable on a foreign generation");
         // Incremental indexing also refuses; only an explicit rebuild recovers.
         service
             .index(&models, empty_index_options(&root))
@@ -2620,8 +2652,8 @@ mod tests {
             .expect_err("incremental index must refuse a foreign generation");
 
         // A legacy generation without a recorded identity fails closed.
-        rewrite_manifest(None, None);
-        let error = run_query(&service, &models, &query_options())
+        rewrite_manifest_identity(&manifest, None, None);
+        let error = run_context_query(&service, &models, &vector())
             .await
             .expect_err("legacy identity must refuse");
         assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
@@ -2645,9 +2677,57 @@ mod tests {
             reindexed.embedding().expect("embedding").backend.as_deref(),
             Some("model2vec")
         );
-        run_query(&service, &models, &query_options())
+        run_context_query(&service, &models, &vector())
             .await
             .expect("query after rebuild recovers");
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn fts_only_auto_update_survives_an_incompatible_refresh() {
+        let directory = tempdir().expect("workspace");
+        let root = std::fs::canonicalize(directory.path()).expect("root");
+        std::fs::write(root.join("notes.txt"), "orchard vines and orchard rows").expect("source");
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&root))
+            .await
+            .expect("index");
+        let manifest = super::read_workspace_manifest(&root.join(".zvec-grep"))
+            .expect("manifest")
+            .expect("active");
+        rewrite_manifest_identity(&manifest, Some("onnx-cpu"), Some("q8"));
+        // A changed workspace makes an auto-update request attempt an
+        // incremental refresh of the incompatible generation.
+        std::fs::write(root.join("extra.txt"), "orchard rows extended").expect("changed source");
+        // FTS-only retrieval survives the failed refresh and serves the stored
+        // full-text results instead of failing the query.
+        run_context_query(
+            &service,
+            &models,
+            &route_options(
+                &root,
+                crate::api::context::options::ContextRouteMode::Fts,
+                true,
+            ),
+        )
+        .await
+        .expect("auto-update fts serves results despite the incompatible generation");
+        // Vector requests keep the hard refusal: they cannot mix embeddings
+        // across runtimes, even when an automatic refresh is requested.
+        let error = run_context_query(
+            &service,
+            &models,
+            &route_options(
+                &root,
+                crate::api::context::options::ContextRouteMode::Vector,
+                true,
+            ),
+        )
+        .await
+        .expect_err("auto-update vector query must still refuse");
+        assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
         models.close();
     }
 }

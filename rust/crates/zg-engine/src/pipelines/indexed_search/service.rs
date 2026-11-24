@@ -66,9 +66,18 @@ pub(crate) async fn context(
         })
         && indexing.workspace_needs_refresh(&location, &wait).await?
     {
-        indexing
+        let refresh = indexing
             .index(models, refresh_options(options, location.root.clone()))
-            .await?;
+            .await;
+        if let Err(error) = refresh {
+            // FTS-only retrieval never embeds, so a generation whose backend
+            // identity no longer matches this runtime can still serve its
+            // stored full-text results. Vector requests keep the hard refusal:
+            // they cannot mix embeddings across runtimes.
+            if uses_vectors(&request) || error.code() != EngineError::INDEX_BACKEND_MISMATCH {
+                return Err(error);
+            }
+        }
     }
     let allows_writer = options.refresh.map_or(!options.auto_update, |policy| {
         policy != crate::api::context::options::RefreshPolicy::Wait

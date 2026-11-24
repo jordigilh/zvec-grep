@@ -435,16 +435,30 @@ fn llama_cpp_dtype(entry: LlamaCppConfig) -> String {
         .artifacts
         .first()
         .map(|artifact| artifact.path)
-        .and_then(|path| {
-            let stem = path.rsplit_once('.').map_or(path, |(stem, _)| stem);
-            stem.rsplit('-').find(|part| {
-                let bytes = part.as_bytes();
-                matches!(bytes.first(), Some(b'Q' | b'I' | b'F' | b'B'))
-                    && bytes.len() > 1
-                    && bytes[1..]
-                        .iter()
-                        .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
-            })
+        .map_or_else(|| "gguf".to_owned(), gguf_quant_dtype)
+}
+
+/// Extract a quantization token from a pinned GGUF file name, lowercased.
+/// Matches the llama.cpp quant families (`Q8_0`, `Q4`, `Q4_K_M`, `IQ4_XS`,
+/// `F16`, `BF16`); a name without a quant token falls back to `gguf`. The
+/// second byte must be a digit (or the exact `F16`/`BF16` forms), so model
+/// names like `Qwen3` or `Falcon` are never mistaken for a quant label.
+fn gguf_quant_dtype(file_name: &str) -> String {
+    let stem = file_name
+        .rsplit_once('.')
+        .map_or(file_name, |(stem, _)| stem);
+    stem.rsplit('-')
+        .find(|part| {
+            let bytes = part.as_bytes();
+            match bytes.first() {
+                Some(b'Q') => bytes.get(1).is_some_and(u8::is_ascii_digit),
+                Some(b'I') => {
+                    part.starts_with("IQ") && bytes.get(2).is_some_and(u8::is_ascii_digit)
+                }
+                Some(b'F') => *part == "F16",
+                Some(b'B') => *part == "BF16",
+                _ => false,
+            }
         })
         .map_or_else(|| "gguf".to_owned(), str::to_ascii_lowercase)
 }
