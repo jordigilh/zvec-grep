@@ -30,9 +30,15 @@ Fidelity contract
   ties could in principle order differently.
 
 Usage:
-  python3 replay_fusion.py --fixture <fixture-dir> --binary <zg> \
-      --work-root <dir> --output <dir> [--model-cache <dir>] \
-      [--expected <normalized-runs.json>] [--variants baseline]
+  python3 replay_fusion.py --fixture <fixture-dir> \
+      (--binary <zg> --work-root <dir> | --traces-from <replay-out-dir>) \
+      --output <dir> [--model-cache <dir>] [--expected <normalized-runs.json>] \
+      [--variants baseline,norm:minmax,norm:zscore,norm:hybrid[:alpha],norm:capped[:ratio]] \
+      [--dump-traces]
+
+  --dump-traces persists the collected per-query candidates (with per-route
+  raw scores) so later runs can iterate on variants via --traces-from
+  without re-running the engine.
 """
 from __future__ import annotations
 
@@ -307,7 +313,265 @@ def collect_traces(
     return rows
 
 
+# --- Trace persistence --------------------------------------------------------
+
+
+def dump_traces(
+    path: Path,
+    rows: list[dict[str, Any]],
+    provenance: dict[str, Any],
+) -> None:
+    """Persist parsed per-query candidates (raw scores included).
+
+    Normalization variants calibrate on the candidate set, so iterating on
+    them must not re-run the engine: one collection pass dumps the traces,
+    later replay passes load them via ``--traces-from``.
+    """
+    path.write_text(
+        json.dumps(
+            {"schema": "quality-lane-fusion-traces-v1",
+             "provenance": provenance, "rows": rows},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def load_traces_payload(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema") != "quality-lane-fusion-traces-v1":
+        raise SystemExit(f"unsupported traces schema in {path}")
+    return payload
+
+
+def load_traces(path: Path) -> list[dict[str, Any]]:
+    return load_traces_payload(path)["rows"]
+
+
 # --- Scoring variants ---------------------------------------------------------
+
+
+# --- Per-route score normalization (issue #70) -------------------------------
+
+
+def best_route_entry(recall: list[dict[str, Any]]) -> tuple[float, int, str] | None:
+    """The best-ranked entry across all recall paths (test helper)."""
+    entries = route_entries(recall)
+    if not entries:
+        return None
+    return min(
+        entries.values(),
+        key=lambda entry: (entry[1] is None, entry[1]),
+    )
+
+
+def route_entries(
+    recall: list[dict[str, Any]],
+) -> dict[str, tuple[float, int | None, str]]:
+    """Per recall path, the (raw score, rank, route_id) entry to fuse.
+
+    The entry with the best rank wins per path — the route's own ordering
+    is its quality ground truth, and the two routes carry opposite score
+    polarity: fts holds a BM25 score (higher is better) while the vector
+    route holds the fp16 index' cosine *distance* (lower is better; see
+    ``Fragments::search_vector`` and ``route_score_stats``, which detects
+    the polarity from the rank/score covariance). Entries without a raw
+    score are ignored.
+    """
+    best: dict[str, tuple[float, int | None, str]] = {}
+    for trace in recall:
+        score = trace.get("score")
+        if score is None:
+            continue
+        path = trace["path"]
+        rank = trace.get("rank")
+        entry = (float(score), rank, trace["route_id"])
+        current = best.get(path)
+        if current is None or (
+            entry[1] is not None
+            and (current[1] is None or entry[1] < current[1])
+        ):
+            best[path] = entry
+    return best
+
+
+def route_score_stats(
+    candidates: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Per-path raw-score statistics over a candidate set, polarity included.
+
+    Normalization is per query: the calibration set is every fused
+    candidate's per-path entry. ``higher_is_better`` is derived from the
+    rank/score covariance over that set — a score that rises with rank
+    rewards worse hits (the vector route's cosine distance), so it is
+    inverted before any min-max or z-score normalization.
+    """
+    entries: dict[str, list[tuple[float, int | None]]] = {}
+    for candidate in candidates:
+        for path, (score, rank, _route_id) in route_entries(
+            candidate["recall"]
+        ).items():
+            entries.setdefault(path, []).append((score, rank))
+    stats: dict[str, dict[str, Any]] = {}
+    for path, pairs in entries.items():
+        values = [score for score, _rank in pairs]
+        count = len(values)
+        mean = sum(values) / count
+        variance = sum((value - mean) ** 2 for value in values) / count
+        ranked = [(score, rank) for score, rank in pairs if rank is not None]
+        higher_is_better = True
+        if len(ranked) >= 2:
+            # Center on the ranked subset: mixing in rank-less scores
+            # would shift the covariance's score mean and could flip the
+            # detected polarity.
+            ranked_mean = sum(score for score, _r in ranked) / len(ranked)
+            rank_mean = sum(rank for _s, rank in ranked) / len(ranked)
+            covariance = sum(
+                (rank - rank_mean) * (score - ranked_mean)
+                for score, rank in ranked
+            )
+            # A score that rises with rank rewards worse hits: flip it.
+            higher_is_better = covariance <= 0.0
+        stats[path] = {
+            "min": min(values),
+            "max": max(values),
+            "mean": mean,
+            "std": variance**0.5,
+            "higher_is_better": higher_is_better,
+        }
+    return stats
+
+
+def _oriented(score: float, stat: dict[str, Any]) -> float:
+    """Raw score flipped to higher-is-better when the route is a distance."""
+    return -score if not stat["higher_is_better"] else score
+
+
+def _minmax(score: float, stat: dict[str, Any]) -> float:
+    span = stat["max"] - stat["min"]
+    if span <= 0.0:
+        return 0.0
+    # Base is the oriented minimum of the range: ``min`` for a
+    # higher-is-better score, ``max`` for a distance (lower is better).
+    base = min(_oriented(stat["min"], stat), _oriented(stat["max"], stat))
+    return (_oriented(score, stat) - base) / span
+
+
+def _zscore_squash(score: float, stat: dict[str, Any]) -> float:
+    if stat["std"] <= 0.0:
+        return 0.5
+    z = (_oriented(score, stat) - _oriented(stat["mean"], stat)) / stat["std"]
+    return 0.5 + 0.5 * z / (1.0 + abs(z))
+
+
+def _rank_term(rank: int | None) -> float:
+    """Reciprocal-rank contribution rescaled to (0, 1]."""
+    if rank is None:
+        return 0.0
+    return (RRF_K + 1.0) / (RRF_K + float(rank))
+
+
+def normalized_fusion_score(
+    recall: list[dict[str, Any]],
+    limit: int,
+    weights: FusionWeights,
+    stats: dict[str, dict[str, Any]],
+    *,
+    mode: str,
+    alpha: float = 0.5,
+    cap_ratio: float = MAX_CORROBORATION_RATIO,
+) -> float:
+    """Fuse calibrated per-route scores instead of rank positions.
+
+    ``norm:minmax`` sums the per-route weight times the route's min-max
+    normalized raw score (an absent route contributes zero; a distance-type
+    score — the vector route's cosine distance — is inverted first, see
+    ``route_score_stats``). ``norm:zscore`` replaces the normalization with a squashed z-score in (0, 1) centered on
+    the route mean. ``norm:hybrid`` mixes the min-max raw score with the
+    reciprocal-rank term rescaled to (0, 1] (``alpha`` = raw share), so a
+    candidate present deep on a route still outranks one absent from it.
+    ``norm:capped`` scores like ``norm:minmax`` but takes the best per-route
+    weighted contribution as primary and adds the other routes as
+    corroboration capped at ``cap_ratio`` times the primary — the shipped
+    fusion's head protection without its rank-band tests. No variant
+    applies a rank-band test.
+    """
+    del limit  # rank bands are exactly what this family removes
+    contributions: dict[str, float] = {}
+    for path, (score, rank, route_id) in route_entries(recall).items():
+        stat = stats.get(path)
+        if stat is None:
+            continue
+        lexical, vector = weights.for_route(route_id)
+        weight = lexical if path == "fts" else vector
+        if mode in ("minmax", "capped"):
+            normalized = _minmax(score, stat)
+        elif mode == "zscore":
+            normalized = _zscore_squash(score, stat)
+        elif mode == "hybrid":
+            normalized = alpha * _minmax(
+                score, stat
+            ) + (1.0 - alpha) * _rank_term(rank)
+        else:  # pragma: no cover - guarded by make_query_variant
+            raise ValueError(f"unknown normalization mode: {mode}")
+        contributions[path] = weight * normalized
+    if mode == "capped":
+        if not contributions:
+            return 0.0
+        primary = max(contributions.values())
+        corroboration = sum(contributions.values()) - primary
+        return primary + min(corroboration, cap_ratio * primary)
+    return sum(contributions.values())
+
+
+def make_query_variant(
+    name: str,
+    stats: dict[str, dict[str, float]] | None,
+) -> Callable[[list[dict[str, Any]], int, FusionWeights], float]:
+    """Build a per-query scorer; normalization variants need ``stats``.
+
+    ``stats`` is ``route_score_stats`` over the query's candidate set. The
+    rank-band variants of the previous spike stay per-candidate and ignore
+    it; the normalization family refuses to be built without it.
+    """
+    if name.startswith("norm:"):
+        if stats is None:
+            raise ValueError(
+                f"variant {name} needs per-query route_score_stats"
+            )
+        spec = name[len("norm:"):]
+        alpha = 0.5
+        cap_ratio = MAX_CORROBORATION_RATIO
+        if ":" in spec:
+            spec, parameter = spec.split(":", 1)
+            if spec not in ("hybrid", "capped"):
+                raise SystemExit(
+                    f"unknown variant: {name} "
+                    f"(the parameter applies to hybrid/capped only)"
+                )
+            try:
+                value = float(parameter)
+            except ValueError:
+                raise SystemExit(f"invalid parameter in variant: {name}") from None
+            if spec == "hybrid":
+                alpha = value
+            else:
+                cap_ratio = value
+        if spec not in ("minmax", "zscore", "hybrid", "capped"):
+            raise SystemExit(f"unknown variant: {name}")
+
+        def normalized(
+            recall: list[dict[str, Any]], limit: int, w: FusionWeights
+        ) -> float:
+            return normalized_fusion_score(
+                recall, limit, w, stats, mode=spec, alpha=alpha,
+                cap_ratio=cap_ratio,
+            )
+
+        return normalized
+    # Rank-band variants of the previous spike stay per-candidate.
+    return make_variant(name)
 
 
 def make_variant(name: str) -> Callable[
@@ -361,11 +625,30 @@ def weights_for_query(query: str) -> FusionWeights:
     )
 
 
+def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Enforce the --traces-from / collection argument combinations."""
+    if args.traces_from is not None:
+        if args.binary is not None or args.work_root is not None:
+            parser.error(
+                "--traces-from cannot be combined with --binary/--work-root"
+            )
+        if args.dump_traces:
+            parser.error("--dump-traces requires collecting, not --traces-from")
+    elif args.binary is None or args.work_root is None:
+        parser.error("--binary and --work-root are required unless --traces-from")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixture", type=Path, required=True)
-    parser.add_argument("--binary", type=Path, required=True)
-    parser.add_argument("--work-root", type=Path, required=True)
+    parser.add_argument(
+        "--binary", type=Path, default=None,
+        help="zg binary; required unless --traces-from replays dumped traces",
+    )
+    parser.add_argument(
+        "--work-root", type=Path, default=None,
+        help="fresh work root for the index; required unless --traces-from",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--model-cache",
@@ -378,10 +661,19 @@ def main() -> None:
     parser.add_argument("--deep-limit", type=int, default=200)
     parser.add_argument("--variants", default="baseline")
     parser.add_argument("--expected", type=Path, default=None)
+    parser.add_argument(
+        "--traces-from", type=Path, default=None,
+        help="replay traces dumped by a previous run instead of running zg",
+    )
+    parser.add_argument(
+        "--dump-traces", action="store_true",
+        help="dump the collected per-query candidates (raw scores) for "
+             "later --traces-from replay",
+    )
     args = parser.parse_args()
+    validate_args(parser, args)
 
     fixture = args.fixture.resolve()
-    binary = args.binary.resolve()
     output = args.output
     if output.exists():
         raise SystemExit(f"output directory already exists: {output}")
@@ -392,19 +684,6 @@ def main() -> None:
     units = manifest["units"]
     queries = truth["queries"]
 
-    root = args.work_root.resolve()
-    copy_fixture_sources(fixture, manifest, root)
-    build_index(binary, root, args.model_cache, args.model)
-    warmup = [
-        str(binary), "--mode", "direct", "--refresh", "wait",
-        "--limit", "10", "--preview", "full",
-        "--model-cache", str(args.model_cache), "--device", "cpu",
-        "--hybrid", queries[0]["query"],
-    ]
-    subprocess.run(warmup, cwd=root, capture_output=True, text=True, check=False)
-
-    rows = collect_traces(binary, root, queries, args.model_cache, args.deep_limit)
-
     expected: dict[str, list[str]] | None = None
     if args.expected is not None:
         lane = json.loads(args.expected.read_text(encoding="utf-8"))
@@ -413,26 +692,75 @@ def main() -> None:
             for q in lane["runs"][0]["queries"]
         }
 
-    with binary.open("rb") as binary_file:
-        binary_sha256 = hashlib.file_digest(binary_file, "sha256").hexdigest()
+    if args.traces_from is not None:
+        traces_path = args.traces_from / "traces.json"
+        traces_payload = load_traces_payload(traces_path)
+        provenance = dict(traces_payload.get("provenance", {}))
+        if provenance.get("fixture_id") != manifest["fixture_id"]:
+            raise SystemExit(
+                f"traces in {traces_path} were collected on fixture "
+                f"{provenance.get('fixture_id')!r}, not "
+                f"{manifest['fixture_id']!r}"
+            )
+        rows = traces_payload["rows"]
+        expected_query_ids = [q["id"] for q in queries]
+        if [row["id"] for row in rows] != expected_query_ids:
+            raise SystemExit(
+                f"traces in {traces_path} do not cover this fixture's queries"
+            )
+        provenance["replayed_from"] = str(traces_path)
+    else:
+        binary = args.binary.resolve()
+        root = args.work_root.resolve()
+        copy_fixture_sources(fixture, manifest, root)
+        build_index(binary, root, args.model_cache, args.model)
+        warmup = [
+            str(binary), "--mode", "direct", "--refresh", "wait",
+            "--limit", "10", "--preview", "full",
+            "--model-cache", str(args.model_cache), "--device", "cpu",
+            "--hybrid", queries[0]["query"],
+        ]
+        subprocess.run(
+            warmup, cwd=root, capture_output=True, text=True, check=False
+        )
+        with binary.open("rb") as binary_file:
+            binary_sha256 = hashlib.file_digest(
+                binary_file, "sha256"
+            ).hexdigest()
+        collected = collect_traces(
+            binary, root, queries, args.model_cache, args.deep_limit
+        )
+        provenance = {
+            "fixture_id": manifest["fixture_id"],
+            "binary_sha256": binary_sha256,
+            "resolved_model": resolved_model(root),
+            "deep_limit": args.deep_limit,
+        }
+        rows = [{
+            "id": row["id"],
+            "query": row["query"],
+            "candidates": candidates_from_hits(
+                parse_trace_hits(row["stdout"]), units
+            ),
+        } for row in collected]
+        if args.dump_traces:
+            output.mkdir(parents=True, exist_ok=True)
+            dump_traces(output / "traces.json", rows, provenance)
 
     payload: dict[str, Any] = {
         "schema": "quality-lane-fusion-replay-v1",
         "fixture_id": manifest["fixture_id"],
-        "provenance": {
-            "binary_sha256": binary_sha256,
-            "resolved_model": resolved_model(root),
-            "deep_limit": args.deep_limit,
-        },
+        "provenance": provenance,
         "variants": {},
     }
     for name in args.variants.split(","):
-        scorer = make_variant(name)
         per_query = []
         baseline_matches: list[bool] = []
         for row in rows:
-            candidates = candidates_from_hits(parse_trace_hits(row["stdout"]), units)
+            candidates = row["candidates"]
             weights = weights_for_query(row["query"])
+            stats = route_score_stats(candidates)
+            scorer = make_query_variant(name, stats)
             ranked = replay_ranking(candidates, 10, weights, scorer)
             top10 = top10_units(ranked, 10)
             if expected is not None:
@@ -481,7 +809,7 @@ def main() -> None:
             ),
         }))
 
-    output.mkdir(parents=True)
+    output.mkdir(parents=True, exist_ok=True)
     (output / "fusion-replay.json").write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8"
     )
