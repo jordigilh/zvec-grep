@@ -100,11 +100,27 @@
       "role": "holdout",
       "retrieval": {
         "ndcg@10": 0.4141852457068991,
-        "mrr@10": 0.5491071428571429,
-        "recall@10": 0.6479166666666667,
-        "precision@10": 0.25
+        "mrr@10": 0.483333,
+        "recall@10": 0.595833,
+        "precision@10": 0.225
       },
-      "fixture_snapshot_sha256": "0657eec8b6c226b48411c5c3ee3e2268c72b6189648cdfe47f890f28eb24f2bb"
+      "fixture_snapshot_sha256": "0657eec8b6c226b48411c5c3ee3e2268c72b6189648cdfe47f890f28eb24f2bb",
+      "floor_exception": {
+        "criterion": "cross-platform floor: ubuntu-24.04 CI (run 45443430349) and the macOS release-binary measurement drift in opposite directions per metric on this fixture (e5 inference drift): ubuntu is higher on ndcg@10 (0.425967 vs 0.414185) and lower on mrr/recall/precision",
+        "decision": "pinned the per-metric minimum of the macOS (release binary, commit 5eb89ad) and ubuntu-24.04 measurements so the floor passes on both platforms; same policy as the rust-inventory-audit-v1 and java-workflow-discovery-v1 floor exceptions",
+        "macos_measurement": {
+          "ndcg@10": 0.4141852457068991,
+          "mrr@10": 0.5491071428571429,
+          "recall@10": 0.6479166666666667,
+          "precision@10": 0.25
+        },
+        "ubuntu_measurement": {
+          "ndcg@10": 0.425967,
+          "mrr@10": 0.483333,
+          "recall@10": 0.595833,
+          "precision@10": 0.225
+        }
+      }
     },
     "rust-inventory-audit-v1": {
       "role": "holdout",
