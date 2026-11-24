@@ -85,6 +85,10 @@ struct SessionPoolState {
 struct SessionSlot {
     busy: AtomicBool,
     session: StdMutex<Session>,
+    /// Intra-op threads this CPU session was created with (`None` for
+    /// non-CPU sessions). A session may only serve callers whose execution
+    /// limit implies at least this budget.
+    intra_threads: Option<usize>,
 }
 
 #[derive(Default)]
@@ -417,6 +421,11 @@ impl SessionPool {
                 sessions: vec![Arc::new(SessionSlot {
                     busy: AtomicBool::new(false),
                     session: StdMutex::new(session),
+                    intra_threads: if provider == TransformersExecutionProvider::Cpu {
+                        Some(intra_threads)
+                    } else {
+                        None
+                    },
                 })],
             }),
             changed: Condvar::new(),
@@ -433,6 +442,24 @@ impl SessionPool {
         let max_sessions = max_sessions.max(1);
         loop {
             let mut state = lock_std_mutex(&self.state);
+            if state.provider == TransformersExecutionProvider::Cpu {
+                // One cached runtime serves leases with different execution
+                // limits (indexing and queries), so sessions created for an
+                // earlier lease can outlive that lease's budget. Retire idle
+                // CPU sessions whose intra-op budget exceeds the budget this
+                // caller's limit implies: reusing them would oversubscribe
+                // cores. Undersized sessions stay reusable, which can only
+                // underutilize the machine, never exceed the budget.
+                let desired = cpu_intra_threads(max_sessions);
+                let before = state.sessions.len();
+                state.sessions.retain(|slot| {
+                    slot.busy.load(Ordering::Acquire)
+                        || cpu_session_within_budget(slot.intra_threads, desired)
+                });
+                if state.sessions.len() != before {
+                    self.changed.notify_all();
+                }
+            }
             if let Some(slot) = state.sessions.iter().find_map(|slot| {
                 slot.busy
                     .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -472,6 +499,7 @@ impl SessionPool {
                         state.sessions.push(Arc::new(SessionSlot {
                             busy: AtomicBool::new(false),
                             session: StdMutex::new(session),
+                            intra_threads,
                         }));
                         self.changed.notify_all();
                         continue;
@@ -642,6 +670,7 @@ impl SessionPool {
         state.sessions = vec![Arc::new(SessionSlot {
             busy: AtomicBool::new(false),
             session: StdMutex::new(session),
+            intra_threads: Some(self.intra_threads),
         })];
         self.changed.notify_all();
         Ok(true)
@@ -667,6 +696,18 @@ const fn physical_session_limit(
 fn cpu_intra_threads(execution_concurrency: usize) -> usize {
     let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     (cores / execution_concurrency.max(1)).max(1)
+}
+
+/// Whether a pooled CPU session created with `slot_threads` intra-op threads
+/// may serve a caller whose execution limit implies `desired` threads.
+/// Oversized sessions must be retired rather than reused so a lease with a
+/// smaller limit cannot run on threads a previous lease granted; undersized
+/// sessions stay reusable (within budget, at most underutilizing the machine).
+const fn cpu_session_within_budget(slot_threads: Option<usize>, desired: usize) -> bool {
+    match slot_threads {
+        Some(threads) => threads <= desired,
+        None => true,
+    }
 }
 
 impl TransformersExecutionProvider {

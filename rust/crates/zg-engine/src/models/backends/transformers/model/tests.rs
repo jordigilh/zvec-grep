@@ -620,6 +620,21 @@ fn cpu_intra_threads_divides_available_cores_and_never_reaches_zero() {
     assert!(cpu_intra_threads(3) >= 1);
 }
 
+#[test]
+fn pooled_cpu_sessions_never_exceed_the_callers_execution_budget() {
+    // A session created for a limit-1 lease (all cores) must not serve a
+    // limit-4 lease (cores/4): reusing it would oversubscribe cores.
+    assert!(!cpu_session_within_budget(Some(10), 2));
+    // Sessions at or below the caller's implied budget stay reusable, so a
+    // query after a concurrent index run reuses the smaller index sessions
+    // instead of forcing a rebuild (underutilization, never oversubscription).
+    assert!(cpu_session_within_budget(Some(2), 10));
+    assert!(cpu_session_within_budget(Some(4), 4));
+    assert!(cpu_session_within_budget(Some(1), 1));
+    // Non-CPU sessions carry no intra-op budget.
+    assert!(cpu_session_within_budget(None, 1));
+}
+
 fn sub_batch_result(call: usize, texts: &[String]) -> EmbeddingResult {
     #[allow(clippy::cast_precision_loss)]
     let vectors = texts
