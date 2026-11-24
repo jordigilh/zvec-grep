@@ -71,6 +71,19 @@ impl ServerStatusProvider for RuntimeStatusProvider {
     }
 }
 
+/// Build the MCP transport session manager and record the effective TTL.
+///
+/// Kept out of `run_server` so the lifecycle function stays readable and under
+/// the project's line-count lint.
+fn session_manager() -> Arc<crate::mcp_sessions::BoundedSessionManager> {
+    let sessions = crate::mcp_sessions::BoundedSessionManager::from_env();
+    info!(
+        idle_secs = sessions.idle().as_secs(),
+        "MCP session idle TTL"
+    );
+    Arc::new(sessions)
+}
+
 pub(crate) async fn run_server(
     config: ServerConfig,
     engine: Arc<ZvecGrep>,
@@ -128,14 +141,7 @@ pub(crate) async fn run_server(
         .with_max_request_body_bytes(1024 * 1024);
     let mcp_service = StreamableHttpService::new(
         move || Ok(mcp_server.clone()),
-        {
-            let sessions = crate::mcp_sessions::BoundedSessionManager::from_env();
-            info!(
-                idle_secs = sessions.idle().as_secs(),
-                "MCP session idle TTL"
-            );
-            Arc::new(sessions)
-        },
+        session_manager(),
         mcp_config,
     );
     let app = Router::new()
