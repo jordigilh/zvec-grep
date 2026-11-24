@@ -63,6 +63,7 @@ Generate the LaunchAgent plist from the template (launchd does not expand
 variables, so user-specific paths are substituted at install time):
 
 ```sh
+mkdir -p "$HOME/Library/LaunchAgents"
 sed -e "s|@HOME@|$HOME|g" -e "s|@PREFIX@|$PREFIX|g" \
     -e "s|@MODEL_CACHE@|$MODEL_CACHE|g" -e "s|@PORT@|7998|g" \
     container/native-macos-launchd.plist.template \
