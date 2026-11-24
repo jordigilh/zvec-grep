@@ -388,7 +388,7 @@ async fn cached_minilm_runs_real_onnx_inference() {
         crate::models::runtime::ModelComputeRuntime::shared(),
     );
     let loaded = model
-        .ensure_loaded(None, None)
+        .ensure_loaded(None, None, 1)
         .await
         .expect("download and load cached ONNX model");
     let prepared = prepare_batch(
@@ -565,4 +565,157 @@ async fn cached_minilm_routes_metal_to_cpu_with_warning() {
     let warnings = lock_std_mutex(&warnings);
     assert_eq!(warnings.len(), 1);
     assert!(warnings[0].contains("using ORT CPU instead"));
+}
+
+#[test]
+fn token_budget_packer_respects_batch_size_and_token_budget() {
+    let lengths = [200, 5, 100, 6, 1];
+    let batches = pack_token_budgeted_batches(&lengths, 2, 300);
+    // Longest-first packing: the 200-token input cannot share a batch (two
+    // padded rows would cost 400 tokens), the rest pair up by size.
+    assert_eq!(batches, vec![vec![0], vec![2, 3], vec![1, 4]]);
+    let mut covered = batches.concat();
+    covered.sort_unstable();
+    assert_eq!(covered, vec![0, 1, 2, 3, 4]);
+    for batch in &batches {
+        assert!(batch.len() <= 2);
+        if batch.len() > 1 {
+            let longest = batch
+                .iter()
+                .map(|&index| lengths[index])
+                .max()
+                .expect("non-empty batch");
+            assert!(batch.len() * longest <= 300);
+        }
+    }
+}
+
+#[test]
+fn token_budget_packer_handles_empty_single_and_oversized_inputs() {
+    assert!(pack_token_budgeted_batches(&[], 4, MAX_BATCH_TOKENS).is_empty());
+    assert_eq!(
+        pack_token_budgeted_batches(&[7], 4, MAX_BATCH_TOKENS),
+        vec![vec![0]]
+    );
+    // A single sequence longer than the budget still runs alone rather than
+    // being dropped or split mid-sequence.
+    assert_eq!(
+        pack_token_budgeted_batches(&[9000, 3], 4, 4096),
+        vec![vec![0], vec![1]]
+    );
+    // Zero-length inputs still occupy one padded position per batch.
+    assert_eq!(
+        pack_token_budgeted_batches(&[0, 0, 0, 0, 0], 2, 4096),
+        vec![vec![0, 1], vec![2, 3], vec![4]]
+    );
+}
+
+#[test]
+fn cpu_intra_threads_divides_available_cores_and_never_reaches_zero() {
+    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    assert_eq!(cpu_intra_threads(0), cores);
+    assert_eq!(cpu_intra_threads(1), cores);
+    assert_eq!(cpu_intra_threads(cores), 1);
+    assert_eq!(cpu_intra_threads(cores.saturating_mul(4)), 1);
+    assert!(cpu_intra_threads(3) >= 1);
+}
+
+fn sub_batch_result(call: usize, texts: &[String]) -> EmbeddingResult {
+    #[allow(clippy::cast_precision_loss)]
+    let vectors = texts
+        .iter()
+        .enumerate()
+        .map(|(local, _)| vec![call as f32, local as f32, 0.0])
+        .collect::<Vec<_>>();
+    EmbeddingResult {
+        vectors,
+        truncated: if call == 1 { vec![1] } else { Vec::new() },
+    }
+}
+
+#[test]
+fn cpu_sub_batches_reassemble_vectors_in_input_order() {
+    let entry = entry("mean", true);
+    let texts = (0..10)
+        .map(|index| format!("fragment {index}"))
+        .collect::<Vec<_>>();
+    // Mixed lengths so sorting reorders inputs across sub-batches
+    // (max_batch_size 4 -> three sub-batches of longest-first indexes).
+    let lengths = [10, 1, 9, 2, 8, 3, 7, 4, 6, 5];
+    let calls = StdMutex::new(Vec::new());
+    let result = embed_sub_batches(&texts, &lengths, entry, None, |sub_texts| {
+        let call = lock_std_mutex(&calls).len();
+        lock_std_mutex(&calls).push(sub_texts.to_vec());
+        Ok(sub_batch_result(call, sub_texts))
+    })
+    .expect("sub-batched embedding");
+    assert_eq!(
+        *lock_std_mutex(&calls),
+        vec![
+            vec![
+                texts[0].clone(),
+                texts[2].clone(),
+                texts[4].clone(),
+                texts[6].clone()
+            ],
+            vec![
+                texts[8].clone(),
+                texts[9].clone(),
+                texts[7].clone(),
+                texts[5].clone()
+            ],
+            vec![texts[3].clone(), texts[1].clone()],
+        ]
+    );
+    // Each vector lands at its original input index with its sub-batch
+    // coordinates [call, local], proving the reassembly order.
+    assert_eq!(result.vectors[0], vec![0.0, 0.0, 0.0]);
+    assert_eq!(result.vectors[1], vec![2.0, 1.0, 0.0]);
+    assert_eq!(result.vectors[2], vec![0.0, 1.0, 0.0]);
+    assert_eq!(result.vectors[3], vec![2.0, 0.0, 0.0]);
+    assert_eq!(result.vectors[4], vec![0.0, 2.0, 0.0]);
+    assert_eq!(result.vectors[5], vec![1.0, 3.0, 0.0]);
+    assert_eq!(result.vectors[6], vec![0.0, 3.0, 0.0]);
+    assert_eq!(result.vectors[7], vec![1.0, 2.0, 0.0]);
+    assert_eq!(result.vectors[8], vec![1.0, 0.0, 0.0]);
+    assert_eq!(result.vectors[9], vec![1.0, 1.0, 0.0]);
+    assert_eq!(result.vectors.len(), texts.len());
+    // Truncation is reported for original index 9 (local index 1 of batch 1).
+    assert_eq!(result.truncated, vec![9]);
+}
+
+#[test]
+fn cpu_sub_batches_check_cancellation_between_sub_batches() {
+    let entry = entry("mean", true);
+    let texts = (0..9)
+        .map(|index| format!("fragment {index}"))
+        .collect::<Vec<_>>();
+    let lengths = [1; 9];
+    let signal = CancellationToken::new();
+    let calls = StdMutex::new(0_usize);
+    let error = embed_sub_batches(&texts, &lengths, entry, Some(&signal), |sub_texts| {
+        let mut calls = lock_std_mutex(&calls);
+        *calls += 1;
+        if *calls == 1 {
+            signal.cancel();
+        }
+        Ok(EmbeddingResult {
+            vectors: vec![vec![0.0; 3]; sub_texts.len()],
+            truncated: Vec::new(),
+        })
+    })
+    .expect_err("cancelled between sub-batches");
+    assert_eq!(error.code(), crate::EngineError::CANCELLED);
+    // The first sub-batch ran; the remaining two were skipped.
+    assert_eq!(*lock_std_mutex(&calls), 1);
+}
+
+#[test]
+fn cpu_sub_batches_accept_empty_input() {
+    let result = embed_sub_batches(&[], &[], entry("mean", true), None, |_sub_texts| {
+        panic!("no sub-batches should run for empty input")
+    })
+    .expect("empty input");
+    assert!(result.vectors.is_empty());
+    assert!(result.truncated.is_empty());
 }

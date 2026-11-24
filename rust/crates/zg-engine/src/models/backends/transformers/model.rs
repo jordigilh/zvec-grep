@@ -66,6 +66,9 @@ struct PreparedTokenizers {
 struct SessionPool {
     model_path: PathBuf,
     prepacked_weights: PrepackedWeights,
+    /// Intra-op thread budget for CPU sessions created outside
+    /// [`SessionPool::run`], where the runtime execution budget is not known.
+    intra_threads: usize,
     state: StdMutex<SessionPoolState>,
     changed: Condvar,
     fallback: StdMutex<()>,
@@ -159,12 +162,16 @@ impl TransformersEmbeddingModel {
         &self,
         on_progress: Option<Arc<dyn Fn(ModelProgress) + Send + Sync>>,
         signal: Option<&CancellationToken>,
+        execution_concurrency: usize,
     ) -> Result<Arc<LoadedTransformersModel>, ModelError> {
         let mut state = self.state.lock().await;
         if let Some(loaded) = &*state {
             return Ok(Arc::clone(loaded));
         }
-        let loaded = Arc::new(self.load(on_progress, signal).await?);
+        let loaded = Arc::new(
+            self.load(on_progress, signal, execution_concurrency)
+                .await?,
+        );
         *state = Some(Arc::clone(&loaded));
         Ok(loaded)
     }
@@ -173,6 +180,7 @@ impl TransformersEmbeddingModel {
         &self,
         on_progress: Option<Arc<dyn Fn(ModelProgress) + Send + Sync>>,
         signal: Option<&CancellationToken>,
+        execution_concurrency: usize,
     ) -> Result<LoadedTransformersModel, ModelError> {
         let model_artifact = onnx_artifact(self.entry)?;
         let reporter = ModelDownloadProgressReporter::new(
@@ -240,7 +248,14 @@ impl TransformersEmbeddingModel {
         let reporter_for_session = reporter.clone();
         let sessions = self
             .compute_runtime
-            .run(move || SessionPool::load(model_path, device, &reporter_for_session))
+            .run(move || {
+                SessionPool::load(
+                    model_path,
+                    device,
+                    execution_concurrency,
+                    &reporter_for_session,
+                )
+            })
             .await??;
         reporter.finish();
         Ok(LoadedTransformersModel {
@@ -257,20 +272,24 @@ impl EmbeddingModel for TransformersEmbeddingModel {
     }
 
     async fn prepare(&self, options: EmbeddingPrepareOptions) -> Result<(), ModelError> {
-        self.ensure_loaded(options.on_progress, options.signal.as_ref())
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                error
-                    .wrap(
-                        "Transformers model preparation failed",
-                        Some(format!(
-                            "model={} repo={}",
-                            self.entry.reference, self.entry.repo
-                        )),
-                    )
-                    .shared()
-            })
+        self.ensure_loaded(
+            options.on_progress,
+            options.signal.as_ref(),
+            options.execution_concurrency,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| {
+            error
+                .wrap(
+                    "Transformers model preparation failed",
+                    Some(format!(
+                        "model={} repo={}",
+                        self.entry.reference, self.entry.repo
+                    )),
+                )
+                .shared()
+        })
     }
 
     async fn embed(
@@ -281,8 +300,13 @@ impl EmbeddingModel for TransformersEmbeddingModel {
         validate_inputs(&self.info, inputs, |content| {
             matches!(content, Content::Text(_))
         })?;
+        let execution_concurrency = options.execution_concurrency.max(1);
         let loaded = self
-            .ensure_loaded(options.on_progress.clone(), options.signal.as_ref())
+            .ensure_loaded(
+                options.on_progress.clone(),
+                options.signal.as_ref(),
+                execution_concurrency,
+            )
             .await
             .map_err(|error| {
                 error.wrap(
@@ -311,7 +335,6 @@ impl EmbeddingModel for TransformersEmbeddingModel {
         let entry = self.entry;
         let signal = options.signal;
         let on_progress = options.on_progress;
-        let execution_concurrency = options.execution_concurrency.max(1);
         let result = self
             .compute_runtime
             .run(move || {
@@ -334,9 +357,11 @@ impl SessionPool {
     fn load(
         model_path: PathBuf,
         device: Option<Device>,
+        execution_concurrency: usize,
         reporter: &ModelDownloadProgressReporter,
     ) -> Result<Self, ModelError> {
         let prepacked_weights = PrepackedWeights::new();
+        let intra_threads = cpu_intra_threads(execution_concurrency);
         let requested = resolve_execution_provider(device);
         if cfg!(target_os = "macos")
             && matches!(device, Some(Device::Metal))
@@ -349,11 +374,16 @@ impl SessionPool {
         }
         let (session, provider) = if requested == TransformersExecutionProvider::Cpu {
             (
-                load_session(&model_path, requested, &prepacked_weights)?,
+                load_session(
+                    &model_path,
+                    requested,
+                    &prepacked_weights,
+                    Some(intra_threads),
+                )?,
                 TransformersExecutionProvider::Cpu,
             )
         } else {
-            match load_session(&model_path, requested, &prepacked_weights) {
+            match load_session(&model_path, requested, &prepacked_weights, None) {
                 Ok(session) => (session, requested),
                 Err(error) => {
                     let warning = format!(
@@ -369,6 +399,7 @@ impl SessionPool {
                             &model_path,
                             TransformersExecutionProvider::Cpu,
                             &prepacked_weights,
+                            Some(intra_threads),
                         )?,
                         TransformersExecutionProvider::Cpu,
                     )
@@ -378,6 +409,7 @@ impl SessionPool {
         Ok(Self {
             model_path,
             prepacked_weights,
+            intra_threads,
             state: StdMutex::new(SessionPoolState {
                 provider,
                 generation: 0,
@@ -420,9 +452,19 @@ impl SessionPool {
             if state.sessions.len() + state.creating < max_sessions {
                 let provider = state.provider;
                 let generation = state.generation;
+                let intra_threads = if provider == TransformersExecutionProvider::Cpu {
+                    Some(cpu_intra_threads(max_sessions))
+                } else {
+                    None
+                };
                 state.creating += 1;
                 drop(state);
-                let created = load_session(&self.model_path, provider, &self.prepacked_weights);
+                let created = load_session(
+                    &self.model_path,
+                    provider,
+                    &self.prepacked_weights,
+                    intra_threads,
+                );
                 let mut state = lock_std_mutex(&self.state);
                 state.creating = state.creating.saturating_sub(1);
                 match created {
@@ -592,6 +634,7 @@ impl SessionPool {
             &self.model_path,
             TransformersExecutionProvider::Cpu,
             &self.prepacked_weights,
+            Some(self.intra_threads),
         )?;
         let mut state = lock_std_mutex(&self.state);
         state.provider = TransformersExecutionProvider::Cpu;
@@ -616,6 +659,14 @@ const fn physical_session_limit(
         | TransformersExecutionProvider::Cuda
         | TransformersExecutionProvider::DirectMl => requested,
     }
+}
+
+/// Intra-op threads per CPU session so `execution_concurrency` pooled sessions
+/// together stay within the machine's core budget. Matches the llama.cpp
+/// backend's `threads_per_context` policy.
+fn cpu_intra_threads(execution_concurrency: usize) -> usize {
+    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    (cores / execution_concurrency.max(1)).max(1)
 }
 
 impl TransformersExecutionProvider {
@@ -654,6 +705,7 @@ fn load_session(
     path: &Path,
     provider: TransformersExecutionProvider,
     prepacked_weights: &PrepackedWeights,
+    intra_threads: Option<usize>,
 ) -> Result<Session, ModelError> {
     let builder = Session::builder()
         .map_err(|error| {
@@ -663,6 +715,18 @@ fn load_session(
         .map_err(|error| {
             ModelError::internal("Unable to share ONNX prepacked weights").with_cause(error)
         })?;
+    let builder = if provider == TransformersExecutionProvider::Cpu {
+        // Without an explicit intra-op budget every pooled session defaults to
+        // one thread per core, so `execution_concurrency` concurrent sessions
+        // oversubscribe the machine. Mirror the llama.cpp backend and divide
+        // the available cores across the requested session count.
+        let threads = intra_threads.unwrap_or_else(|| cpu_intra_threads(1));
+        builder.with_intra_threads(threads).map_err(|error| {
+            ModelError::internal("Unable to configure ONNX embedding model").with_cause(error)
+        })?
+    } else {
+        builder
+    };
     let builder = configure_execution_provider(builder, provider)?;
     let mut builder = builder
         .with_optimization_level(GraphOptimizationLevel::All)
@@ -774,6 +838,13 @@ fn configure_directml(
     ))
 }
 
+/// Upper bound on padded tokens (`batch_size x longest sequence`) per CPU
+/// inference call. At 8192-token contexts an unbounded batch needs
+/// `N x 3.2 GB` of attention scores; this keeps per-call memory flat while
+/// still amortizing inference over many short fragments. A single sequence
+/// longer than the budget still runs alone.
+const MAX_BATCH_TOKENS: usize = 4096;
+
 fn embed_batch(
     loaded: &LoadedTransformersModel,
     texts: &[String],
@@ -783,9 +854,12 @@ fn embed_batch(
     on_progress: Option<&Arc<dyn Fn(ModelProgress) + Send + Sync>>,
 ) -> Result<EmbeddingResult, ModelError> {
     check_cancelled(signal)?;
+    let provider = loaded.sessions.provider();
+    if provider == TransformersExecutionProvider::Cpu {
+        return run_cpu_batched(loaded, texts, entry, execution_concurrency, signal);
+    }
     let prepared = prepare_batch(&loaded.tokenizers, texts, entry)?;
     check_cancelled(signal)?;
-    let provider = loaded.sessions.provider();
     let first = if provider == TransformersExecutionProvider::CoreMl {
         loaded
             .sessions
@@ -797,7 +871,7 @@ fn embed_batch(
     };
     match first {
         Ok(result) => Ok(result),
-        Err(error) if provider != TransformersExecutionProvider::Cpu => {
+        Err(error) => {
             let warning = format!(
                 "Transformers {} embedding inference failed ({}), falling back to CPU.",
                 provider.name(),
@@ -812,12 +886,123 @@ fn embed_batch(
                 tracing::warn!("{warning}");
             }
             loaded.sessions.fallback_to_cpu()?;
-            loaded.sessions.run(execution_concurrency, |session| {
-                run_session(session, &prepared, entry, signal)
-            })
+            run_cpu_batched(loaded, texts, entry, execution_concurrency, signal)
         }
-        Err(error) => Err(error),
     }
+}
+
+/// CPU inference split into token-budgeted sub-batches so one long fragment
+/// cannot stretch (or OOM) the whole batch. Vectors are reassembled in the
+/// original input order.
+fn run_cpu_batched(
+    loaded: &LoadedTransformersModel,
+    texts: &[String],
+    entry: TransformersConfig,
+    execution_concurrency: usize,
+    signal: Option<&CancellationToken>,
+) -> Result<EmbeddingResult, ModelError> {
+    let token_lengths = probe_token_lengths(&loaded.tokenizers, texts, entry)?;
+    embed_sub_batches(texts, &token_lengths, entry, signal, |sub_texts| {
+        let prepared = prepare_batch(&loaded.tokenizers, sub_texts, entry)?;
+        loaded.sessions.run(execution_concurrency, |session| {
+            run_session(session, &prepared, entry, signal)
+        })
+    })
+}
+
+/// Token lengths from the no-padding probe tokenizer, used only to pack
+/// sub-batches; each sub-batch is still tokenized by `prepare_batch`.
+fn probe_token_lengths(
+    tokenizers: &PreparedTokenizers,
+    texts: &[String],
+    entry: TransformersConfig,
+) -> Result<Vec<usize>, ModelError> {
+    let encodings = tokenizers
+        .probe
+        .encode_batch(texts.to_vec(), entry.add_special_tokens)
+        .map_err(|error| tokenization_error(entry, error))?;
+    Ok(encodings
+        .iter()
+        .map(|encoding| {
+            encoding
+                .get_attention_mask()
+                .iter()
+                .filter(|&&value| value != 0)
+                .count()
+        })
+        .collect())
+}
+
+/// Greedily pack input indexes into sub-batches constrained by both
+/// `max_batch_size` and `MAX_BATCH_TOKENS` (`batch_size x longest sequence`,
+/// padding included). Indexes are sorted by descending token length so short
+/// fragments batch together instead of being padded to the longest input.
+/// Every index appears in exactly one sub-batch; a single sequence longer
+/// than the token budget still forms its own sub-batch.
+fn pack_token_budgeted_batches(
+    token_lengths: &[usize],
+    max_batch_size: usize,
+    token_budget: usize,
+) -> Vec<Vec<usize>> {
+    let max_batch_size = max_batch_size.max(1);
+    let mut order = (0..token_lengths.len()).collect::<Vec<_>>();
+    order.sort_by(|&a, &b| token_lengths[b].cmp(&token_lengths[a]).then(a.cmp(&b)));
+    let mut batches = Vec::new();
+    let mut current: Vec<usize> = Vec::new();
+    let mut longest = 0_usize;
+    for index in order {
+        // An empty input still occupies one padded position in its batch.
+        let length = token_lengths[index].max(1);
+        if !current.is_empty()
+            && (current.len() >= max_batch_size
+                || current.len().saturating_add(1).saturating_mul(longest) > token_budget)
+        {
+            batches.push(std::mem::take(&mut current));
+            longest = 0;
+        }
+        longest = longest.max(length);
+        current.push(index);
+    }
+    if !current.is_empty() {
+        batches.push(current);
+    }
+    batches
+}
+
+/// Runs each packed sub-batch through `embed_sub_batch`, reassembling vectors
+/// and truncation indexes in the original input order. Cancellation is
+/// re-checked before every sub-batch.
+fn embed_sub_batches(
+    texts: &[String],
+    token_lengths: &[usize],
+    entry: TransformersConfig,
+    signal: Option<&CancellationToken>,
+    mut embed_sub_batch: impl FnMut(&[String]) -> Result<EmbeddingResult, ModelError>,
+) -> Result<EmbeddingResult, ModelError> {
+    let sub_batches =
+        pack_token_budgeted_batches(token_lengths, entry.max_batch_size, MAX_BATCH_TOKENS);
+    let mut vectors = (0..texts.len()).map(|_| Vec::new()).collect::<Vec<_>>();
+    let mut truncated = Vec::new();
+    for indexes in sub_batches {
+        check_cancelled(signal)?;
+        let sub_texts = indexes
+            .iter()
+            .map(|&index| texts[index].clone())
+            .collect::<Vec<_>>();
+        let result = embed_sub_batch(&sub_texts)?;
+        if result.vectors.len() != indexes.len() {
+            return Err(ModelError::internal(
+                "Transformers sub-batch returned an unexpected vector count",
+            ));
+        }
+        for (local_index, &original_index) in indexes.iter().enumerate() {
+            vectors[original_index].clone_from(&result.vectors[local_index]);
+            if result.truncated.contains(&local_index) {
+                truncated.push(original_index);
+            }
+        }
+    }
+    Ok(EmbeddingResult { vectors, truncated })
 }
 
 fn merge_prepared_batches(batches: &[&PreparedBatch]) -> Result<PreparedBatch, ModelError> {

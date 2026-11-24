@@ -16,12 +16,31 @@ const MAIN_CATALOG_SOURCE_REVISION: &str = "8d0d5e277f37d897e83749cdaa0e9c07f5e9
 
 #[test]
 fn catalog_matches_main_typescript_field_for_field() {
-    let expected: Value = serde_json::from_str(include_str!("fixtures/catalog-main-oracle.json"))
+    let mut expected: Value = serde_json::from_str(include_str!("fixtures/catalog-main-oracle.json"))
         .unwrap_or_else(|error| {
             panic!(
                 "TypeScript catalog oracle from {MAIN_CATALOG_SOURCE_REVISION} must be valid JSON: {error}"
             )
         });
+    // Deliberate divergence from the frozen TypeScript oracle (issue #73):
+    // the 8192-token transformer models are capped at 1024 because retrieval
+    // metrics measured identical on all five language fixtures while the
+    // longer context paid 64x attention memory.
+    for reference in [
+        "local/jina-embeddings-v2-base-code",
+        "local/gte-modernbert-base",
+    ] {
+        let entry = expected
+            .as_array_mut()
+            .expect("oracle array")
+            .iter_mut()
+            .find(|entry| entry.get("reference").and_then(Value::as_str) == Some(reference))
+            .unwrap_or_else(|| panic!("{reference} must be present in the oracle"));
+        entry
+            .as_object_mut()
+            .expect("oracle entry object")
+            .insert("maxInputTokens".to_owned(), json!(1_024));
+    }
     let actual = actual_catalog();
     assert_eq!(actual, expected);
 }
