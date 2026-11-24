@@ -204,6 +204,8 @@ mod tests {
             max_batch_size: 8,
             max_input_tokens: Some(512),
             max_image_bytes: image.then_some(1024),
+            backend: None,
+            dtype: None,
         }
     }
 

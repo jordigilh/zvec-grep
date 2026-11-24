@@ -100,6 +100,7 @@ impl EngineError {
     pub const PERMISSION_DENIED: &str = "ZG.ENGINE.PERMISSION_DENIED";
     pub const RESOURCE_BUSY: &str = "ZG.ENGINE.RESOURCE_BUSY";
     pub const RESOURCE_CLOSED: &str = "ZG.ENGINE.RESOURCE_CLOSED";
+    pub const INDEX_BACKEND_MISMATCH: &str = "ZG.ENGINE.INDEX_BACKEND_MISMATCH";
     pub const STORAGE_FAILURE: &str = "ZG.ENGINE.STORAGE_FAILURE";
     pub const CANCELLED: &str = "ZG.ENGINE.CANCELLED";
     pub const DEADLINE_EXCEEDED: &str = "ZG.ENGINE.DEADLINE_EXCEEDED";
@@ -141,6 +142,14 @@ impl EngineError {
     #[must_use]
     pub fn resource_closed(message: impl Into<String>) -> Self {
         Self::new(Self::RESOURCE_CLOSED, message)
+    }
+
+    /// The serving embedding runtime differs from the one that built the index.
+    /// Terminal: recovery requires rebuilding the index, never a retry.
+    #[track_caller]
+    #[must_use]
+    pub fn index_backend_mismatch(message: impl Into<String>) -> Self {
+        Self::new(Self::INDEX_BACKEND_MISMATCH, message)
     }
 
     #[track_caller]

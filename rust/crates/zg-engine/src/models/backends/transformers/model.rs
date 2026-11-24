@@ -133,6 +133,10 @@ impl TransformersEmbeddingModel {
             .cache_dir
             .or_else(|| env::var_os("ZVEC_GREP_MODEL_CACHE").map(PathBuf::from))
             .unwrap_or_else(default_model_cache_dir);
+        // Record the execution path this binary will actually use. The provider
+        // is resolved from the requested device and this build's capabilities,
+        // so an index generation identifies its producing ONNX runtime.
+        let execution_provider = resolve_execution_provider(options.device);
         Self {
             entry,
             info: EmbeddingModelInfo {
@@ -146,6 +150,8 @@ impl TransformersEmbeddingModel {
                 max_batch_size: entry.max_batch_size,
                 max_input_tokens: Some(entry.max_input_tokens),
                 max_image_bytes: None,
+                backend: Some(format!("onnx-{}", execution_provider.name())),
+                dtype: Some(entry.dtype.to_owned()),
             },
             model_cache_dir,
             device: options.device,

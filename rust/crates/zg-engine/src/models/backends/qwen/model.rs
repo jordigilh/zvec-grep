@@ -74,6 +74,9 @@ impl QwenEmbeddingModel {
                 max_batch_size: entry.max_batch_size,
                 max_input_tokens: Some(entry.max_input_tokens),
                 max_image_bytes: entry.max_image_bytes,
+                // Remote API embeddings have no local runtime identity to record.
+                backend: None,
+                dtype: None,
             },
             api_key,
             endpoint,

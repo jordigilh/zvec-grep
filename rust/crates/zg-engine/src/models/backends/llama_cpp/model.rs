@@ -142,6 +142,8 @@ impl LlamaCppEmbeddingModel {
                 max_batch_size: entry.max_batch_size,
                 max_input_tokens: Some(entry.context_size),
                 max_image_bytes: None,
+                backend: Some("llama-cpp".to_owned()),
+                dtype: Some(llama_cpp_dtype(entry)),
             },
             model_cache_dir,
             device: options.device,
@@ -422,6 +424,29 @@ const fn requested_device_name(device: Option<Device>) -> &'static str {
         Some(Device::Cuda) => "cuda",
         None | Some(Device::Cpu) => "cpu",
     }
+}
+
+/// Quantization label of the pinned GGUF artifact, e.g. `Q8_0` -> `q8_0`.
+/// The artifact is content-pinned by the catalog, so its file name is a stable
+/// part of the backend identity recorded for a generation.
+fn llama_cpp_dtype(entry: LlamaCppConfig) -> String {
+    entry
+        .download
+        .artifacts
+        .first()
+        .map(|artifact| artifact.path)
+        .and_then(|path| {
+            let stem = path.rsplit_once('.').map_or(path, |(stem, _)| stem);
+            stem.rsplit('-').find(|part| {
+                let bytes = part.as_bytes();
+                matches!(bytes.first(), Some(b'Q' | b'I' | b'F' | b'B'))
+                    && bytes.len() > 1
+                    && bytes[1..]
+                        .iter()
+                        .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+            })
+        })
+        .map_or_else(|| "gguf".to_owned(), str::to_ascii_lowercase)
 }
 
 fn report_warning(

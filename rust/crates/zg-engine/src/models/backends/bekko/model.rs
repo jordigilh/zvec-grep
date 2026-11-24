@@ -65,6 +65,8 @@ impl BekkoEmbeddingModel {
                 max_batch_size: entry.max_batch_size,
                 max_input_tokens: Some(entry.max_input_tokens),
                 max_image_bytes: None,
+                backend: Some("bekko".to_owned()),
+                dtype: Some("int8".to_owned()),
             },
             cache: options
                 .cache_dir

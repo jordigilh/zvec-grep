@@ -2540,4 +2540,114 @@ mod tests {
         assert!(!super::IndexStore::exists(&rebuilt.storage_home()).expect("storage was deleted"));
         models.close();
     }
+
+    #[tokio::test]
+    async fn backend_identity_refuses_cross_backend_queries_until_rebuild() {
+        async fn run_query(
+            service: &WorkspaceIndexService,
+            models: &ModelRuntimeManager,
+            options: &crate::api::context::ContextOptions,
+        ) -> Result<(), crate::EngineError> {
+            crate::pipelines::indexed_search::service::context(
+                service, models, options, None, false,
+            )
+            .await
+            .map(|_| ())
+        }
+        let directory = tempdir().expect("workspace");
+        let root = std::fs::canonicalize(directory.path()).expect("root");
+        std::fs::write(root.join("notes.txt"), "orchard vines and orchard rows").expect("source");
+        let query_options = || crate::api::context::ContextOptions {
+            root: Some(root.clone()),
+            auto_update: false,
+            routes: vec![crate::api::context::options::ContextRoute {
+                mode: crate::api::context::options::ContextRouteMode::Vector,
+                query: "orchard".into(),
+            }],
+            ..crate::api::context::ContextOptions::default()
+        };
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&root))
+            .await
+            .expect("index");
+        let home = root.join(".zvec-grep");
+        let manifest = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("active");
+        // The generation records the identity of the runtime that built it.
+        let embedding = manifest.embedding().expect("embedding");
+        assert_eq!(embedding.backend.as_deref(), Some("model2vec"));
+        assert_eq!(embedding.dtype.as_deref(), Some("safetensors"));
+
+        // Index-then-query on the same backend succeeds.
+        run_query(&service, &models, &query_options())
+            .await
+            .expect("same backend serves the index");
+
+        let rewrite_manifest = |backend: Option<&str>, dtype: Option<&str>| {
+            let embedding = crate::domain::model::EmbeddingModelInfo {
+                backend: backend.map(str::to_owned),
+                dtype: dtype.map(str::to_owned),
+                ..manifest.embedding().expect("embedding").clone()
+            };
+            let mut rewritten = manifest.clone();
+            rewritten.workspace.index =
+                IndexState::Enabled(crate::domain::IndexDescriptor::single(embedding));
+            let _writer = crate::workspace::lock::acquire_home_lock(
+                &home,
+                crate::workspace::lock::LockMode::Write,
+                "test.rewrite",
+            )
+            .expect("writer");
+            super::write_workspace_manifest(&home, &rewritten).expect("rewrite manifest");
+        };
+
+        // A generation recorded by a foreign runtime refuses vector queries.
+        rewrite_manifest(Some("onnx-cpu"), Some("q8"));
+        let error = run_query(&service, &models, &query_options())
+            .await
+            .expect_err("cross-backend query must refuse");
+        assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
+        assert!(error.message().contains("onnx-cpu"), "{}", error.message());
+        assert!(error.message().contains("model2vec"), "{}", error.message());
+        assert!(error.message().contains("rebuild"), "{}", error.message());
+        // Incremental indexing also refuses; only an explicit rebuild recovers.
+        service
+            .index(&models, empty_index_options(&root))
+            .await
+            .expect_err("incremental index must refuse a foreign generation");
+
+        // A legacy generation without a recorded identity fails closed.
+        rewrite_manifest(None, None);
+        let error = run_query(&service, &models, &query_options())
+            .await
+            .expect_err("legacy identity must refuse");
+        assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
+        assert!(
+            error.message().contains("built before backend recording"),
+            "{}",
+            error.message()
+        );
+
+        // Rebuilding on this runtime records its identity and serves queries.
+        let mut rebuild = empty_index_options(&root);
+        rebuild.rebuild = true;
+        service
+            .index(&models, rebuild)
+            .await
+            .expect("rebuild on this runtime");
+        let reindexed = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("rebuilt index");
+        assert_eq!(
+            reindexed.embedding().expect("embedding").backend.as_deref(),
+            Some("model2vec")
+        );
+        run_query(&service, &models, &query_options())
+            .await
+            .expect("query after rebuild recovers");
+        models.close();
+    }
 }

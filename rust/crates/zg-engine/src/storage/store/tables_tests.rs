@@ -23,6 +23,8 @@ fn model() -> EmbeddingModelInfo {
         max_batch_size: 32,
         max_input_tokens: None,
         max_image_bytes: None,
+        backend: None,
+        dtype: None,
     }
 }
 
@@ -377,6 +379,8 @@ fn entity_content_is_canonical_and_fragments_have_one_model() {
         max_batch_size: 32,
         max_input_tokens: None,
         max_image_bytes: None,
+        backend: None,
+        dtype: None,
     };
     let mut other = text.clone();
     other.model.name = "other".into();
@@ -450,6 +454,8 @@ fn fragment_ids_cannot_be_reused_by_another_file_in_a_different_model_table() {
         max_batch_size: 32,
         max_input_tokens: None,
         max_image_bytes: None,
+        backend: None,
+        dtype: None,
     };
     let mut second = first.clone();
     second.model.name = "other".into();

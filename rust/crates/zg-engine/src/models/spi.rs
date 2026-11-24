@@ -463,6 +463,8 @@ mod tests {
             max_batch_size: 2,
             max_input_tokens: None,
             max_image_bytes: Some(3),
+            backend: None,
+            dtype: None,
         }
     }
 

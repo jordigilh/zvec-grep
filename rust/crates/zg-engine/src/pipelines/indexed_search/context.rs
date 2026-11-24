@@ -914,6 +914,8 @@ mod tests {
                 max_batch_size: 32,
                 max_input_tokens: None,
                 max_image_bytes: None,
+                backend: None,
+                dtype: None,
             })),
             created_epoch_ms: 0,
             updated_epoch_ms: 0,
