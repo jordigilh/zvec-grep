@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: substitute @HOME@ and @PREFIX@ before installing (see
+     rust/NATIVE_MACOS.md). launchd does not expand variables, so the
+     installed plist must contain absolute paths for the installing user. -->
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>@HOME@</string>
+		<key>ZVEC_GREP_HOME</key>
+		<string>@PREFIX@/home</string>
+		<key>ZVEC_GREP_MODEL_CACHE</key>
+		<string>@MODEL_CACHE@</string>
+	</dict>
+	<key>HardResourceLimits</key>
+	<dict>
+		<key>NumberOfFiles</key>
+		<integer>65536</integer>
+	</dict>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>Label</key>
+	<string>io.vectorize.zvec-grep-native</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@PREFIX@/bin/zg</string>
+		<string>--server</string>
+		<string>run</string>
+		<string>--listen</string>
+		<string>127.0.0.1:@PORT@</string>
+		<string>--mcp-toolset</string>
+		<string>full</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>SoftResourceLimits</key>
+	<dict>
+		<key>NumberOfFiles</key>
+		<integer>65536</integer>
+	</dict>
+	<key>StandardErrorPath</key>
+		<string>@PREFIX@/logs/server-stderr.log</string>
+		<key>StandardOutPath</key>
+		<string>@PREFIX@/logs/server-stdout.log</string>
+	<key>ThrottleInterval</key>
+		<integer>5</integer>
+</dict>
+</plist>
