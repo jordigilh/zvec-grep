@@ -29,41 +29,74 @@ env -u DEVELOPER_DIR SDKROOT=$S CPATH=$S/usr/include \
 ```
 
 ~3 min on Apple silicon. ONNX Runtime is statically linked (ort crate
-`download-binaries`), so the release artifact needs no `libonnxruntime.dylib`;
-swap to `load-dynamic` if a shared ORT is ever required.
+`download-binaries`), so this deployment needs no `libonnxruntime.dylib`. The
+release-artifact tarball (#75 scope item 1) still ships one if the
+`load-dynamic` linkage is ever adopted; that packaging decision is tracked in
+#75 and not part of this change.
 
-## Prefix layout
+## Install
 
-```
-<prefix>/bin/zg                          # carries @executable_path/../lib rpaths
-<prefix>/lib/libzvec_c_api.dylib
-<prefix>/lib/data/jieba_dict/{jieba.dict.utf8,hmm_model.utf8}
-<prefix>/home/                           # ZVEC_GREP_HOME (daemon state)
-<prefix>/logs/                           # launchd stdout/stderr
-```
-
-The jieba dictionaries are copied from the `zvec-rust-sys` build output
-(`target/release/build/zvec-rust-sys-*/out/zvec-prebuilt/data/jieba_dict/`).
-The FTS tokenizer resolves them relative to the binary; a missing dict changes
-tokenization silently, so the layout check is part of verification below.
-
-The model cache is shared read-only with the previous deployment
-(`ZVEC_GREP_MODEL_CACHE=~/.engram/zvec-grep/model`).
-
-## launchd
-
-Template: [`native-macos-launchd.plist`](../container/native-macos-launchd.plist).
-Install:
+Set the prefix and model cache for your user (the examples below assume
+`PREFIX=$HOME/.local/zvec-grep-native` and a shared model cache at
+`$HOME/.engram/zvec-grep/model`; adjust to taste):
 
 ```sh
-cp container/native-macos-launchd.plist ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist
-# edit prefix paths if not ~/.local/zvec-grep-native
+PREFIX=$HOME/.local/zvec-grep-native
+MODEL_CACHE=$HOME/.engram/zvec-grep/model   # must contain the per-language models
+```
+
+Create the prefix layout and populate it from the build output:
+
+```sh
+mkdir -p "$PREFIX/bin" "$PREFIX/lib/data/jieba_dict" "$PREFIX/home" "$PREFIX/logs"
+cp rust/target/release/zg "$PREFIX/bin/"
+cp rust/target/release/libzvec_c_api.dylib "$PREFIX/lib/"
+D=$(find rust/target/release/build -path '*zvec-prebuilt/data/jieba_dict' | head -1)
+cp "$D"/* "$PREFIX/lib/data/jieba_dict/"
+```
+
+The binary carries `@executable_path/../lib` rpaths, so it finds the dylib at
+this layout. The jieba dictionaries are mandatory: the FTS tokenizer resolves
+them relative to the binary, and a missing dict changes tokenization silently.
+
+Generate the LaunchAgent plist from the template (launchd does not expand
+variables, so user-specific paths are substituted at install time):
+
+```sh
+sed -e "s|@HOME@|$HOME|g" -e "s|@PREFIX@|$PREFIX|g" \
+    -e "s|@MODEL_CACHE@|$MODEL_CACHE|g" -e "s|@PORT@|7998|g" \
+    container/native-macos-launchd.plist.template \
+    > ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist
 ```
 
-Runs `zg --server run --listen 127.0.0.1:7999 --mcp-toolset full` — the same
-endpoint and toolset as the container, so the Engram gateway and OpenCode
-plugin need no change. The loopback-proxy socat container is no longer needed.
+## Migration from the container deployment (staged)
+
+Do **not** point the native service at port 7999 while the container still
+serves it — the bind would fail (or, if the container is momentarily down, the
+still-installed container unit could answer verification requests and conceal
+a failed migration). Stage on 7998 first, as above (`@PORT@` → 7998).
+
+1. Verify the staged native service (next section) on **7998**.
+2. Stop the container deployment:
+   ```sh
+   launchctl bootout gui/$(id -u)/io.vectorize.zvec-grep   # container LaunchAgent
+   podman stop engram-zvec-grep engram-zvec-grep-proxy 2>/dev/null || true
+   curl -s -m 3 http://127.0.0.1:7999/healthz || echo "7999 free"
+   ```
+3. Switch the native service to 7999:
+   ```sh
+   launchctl bootout gui/$(id -u)/io.vectorize.zvec-grep-native
+   sed -i '' 's|127.0.0.1:7998|127.0.0.1:7999|' \
+     ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist
+   ```
+4. Re-run the verification below against 7999.
+5. Re-index active workspaces (see "Index compatibility" — storage written by
+   the container build does not open natively).
+
+The container LaunchAgent plist and images are kept for rollback. The socat
+loopback-proxy container is retired.
 
 ## Install verification
 
@@ -76,15 +109,26 @@ plugin need no change. The loopback-proxy socat container is no longer needed.
 
 ## Upgrade
 
-1. Build, stage a new prefix (or replace `bin/zg` in place)
-2. `launchctl bootout gui/$(id -u)/io.vectorize.zvec-grep-native`
-3. `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist`
-4. Re-run install verification. If the ORT build changed, expect ranking drift
-   (see below) and force-reindex active workspaces.
+1. Build the new release and stage it in a **new** prefix (or replace the
+   contents of the existing one while the service is stopped — do not
+   overwrite a running binary).
+2. Stop the service:
+   ```sh
+   launchctl bootout gui/$(id -u)/io.vectorize.zvec-grep-native
+   ```
+3. If you staged a new prefix, point the plist at it — update the
+   `ProgramArguments` executable, `ZVEC_GREP_HOME`, and log paths (regenerate
+   the plist from the template with the new `PREFIX`). Keep `ZVEC_GREP_HOME`
+   pointing at the same state directory across upgrades unless you intend a
+   fresh start.
+4. Start the service:
+   ```sh
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist
+   ```
+5. Re-run install verification. If the ORT build changed, expect ranking drift
+   (see below) and re-index active workspaces.
 
 ## Rollback to the container
-
-The container LaunchAgent plist and images are kept. Rollback:
 
 ```sh
 launchctl bootout gui/$(id -u)/io.vectorize.zvec-grep-native
@@ -92,9 +136,29 @@ podman machine start   # if the VM is down
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.vectorize.zvec-grep.plist
 ```
 
-Note: container-built `.zvec-grep` indexes fail to open in the native build
-(and vice versa), so after any direction switch, active workspaces must be
-re-indexed (`zvec_grep_index` with `rebuild: true`).
+## Index compatibility across runtimes
+
+Index storage written by the container build (Linux zvec) failed to open in
+the native build during migration — observed as
+`ZG.ENGINE.STORAGE_FAILURE: zvec open collection … Failed to open index` on
+every container-built workspace. **This is an empirical observation about
+cross-platform storage, not a backend-identity guarantee**: the index load
+path checks the index version, model, and route, none of which identify the
+embedding runtime. Two builds that share an index version could open each
+other's storage and mix embeddings from different ORT builds without an
+error. Until #75 scope item 3 (record `backend` + `dtype` per generation and
+refuse mismatches at query time) lands, treat every runtime switch as
+requiring a re-index:
+
+```sh
+# per workspace; if rebuild fails to open the old storage, clear it first
+rm -rf <root>/.zvec-grep
+# then index via MCP zvec_grep_index {"root": <root>} or `zg --index <root>`
+```
+
+`zvec_grep_index` with `rebuild: true` does not recover from unreadable
+cross-build storage on its own — it fails with `STORAGE_FAILURE`; clearing
+`.zvec-grep` and indexing fresh is the documented recovery.
 
 ## Cross-runtime embedding drift (important)
 
@@ -112,18 +176,21 @@ Consequences, applied in this change:
   `benchmarks/quality-lanes/baselines-multilanguage.json` provenance). This is
   the reviewed re-pin the lane policy requires; the old floors referenced a
   binary that no longer exists.
-- Every runtime switch must be followed by a rebuild of active workspace
-  indexes (the native server refuses to open container-built storage, which
-  enforces this rather than silently mixing).
-- Tracking issue: record `backend` + `dtype` per generation in the manifest and
-  refuse cross-backend queries (#75 scope item 3). Until that lands, backend
-  identity is implied by which binary built the index.
+- Every runtime switch must be followed by a re-index of active workspaces
+  (see "Index compatibility" above).
 
-## Open items
+## Open items (explicitly out of scope for this change)
 
+- Release artifact `zg-<version>-macos-arm64.tar.gz` + `SHA256SUMS` on
+  `zg-v*` tags, including the `libonnxruntime.dylib` / `load-dynamic`
+  packaging decision and codesign/notarization or the documented
+  `xattr -d com.apple.quarantine` alternative (#75 scope item 1).
+- Manifest `backend` + `dtype` identity per generation with a query-time
+  refusal and tests for the refusal path (#75 scope item 3).
 - Engine-level workspace-roots allowlist: the container wrapper enforced
   `ZVEC_GREP_WORKSPACE_ROOTS`; the native server trusts loopback callers the
-  same way the container's MCP endpoint did. Needs an engine-level guard before
-  any non-loopback exposure (#75 scope item 4).
+  same way the container's MCP endpoint did. Needs an engine-level guard
+  before any non-loopback exposure, or an explicit decision to trust
+  localhost only (#75 scope item 4).
 - GPU indexing backend (#74), batching/thread fixes (#73), worktree index
   seeding (#72).
