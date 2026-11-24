@@ -77,22 +77,29 @@ serves it — the bind would fail (or, if the container is momentarily down, the
 still-installed container unit could answer verification requests and conceal
 a failed migration). Stage on 7998 first, as above (`@PORT@` → 7998).
 
-1. Verify the staged native service (next section) on **7998**.
+1. Verify the staged native service (see "Install verification") on **7998**.
 2. Stop the container deployment:
    ```sh
    launchctl bootout gui/$(id -u)/io.vectorize.zvec-grep   # container LaunchAgent
    podman stop engram-zvec-grep engram-zvec-grep-proxy 2>/dev/null || true
-   curl -s -m 3 http://127.0.0.1:7999/healthz || echo "7999 free"
    ```
-3. Switch the native service to 7999:
+3. Gate the switch on the port actually being free. A TCP **listener** check
+   blocks the switch if anything still serves 7999 — unlike a `curl` timeout,
+   which can silently report "free":
+   ```sh
+   if lsof -nP -iTCP:7999 -sTCP:LISTEN >/dev/null 2>&1; then
+     echo "7999 is still held by a listener; aborting the switch" >&2
+     exit 1
+   fi
+   ```
+4. Switch the native service to 7999:
    ```sh
    launchctl bootout gui/$(id -u)/io.vectorize.zvec-grep-native
    sed -i '' 's|127.0.0.1:7998|127.0.0.1:7999|' \
      ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist
    ```
-4. Re-run the verification below against 7999.
-5. Re-index active workspaces (see "Index compatibility" — storage written by
+4. Re-run the verification below against 7999.5. Re-index active workspaces (see "Index compatibility" — storage written by
    the container build does not open natively).
 
 The container LaunchAgent plist and images are kept for rollback. The socat
@@ -100,11 +107,21 @@ loopback-proxy container is retired.
 
 ## Install verification
 
-1. `curl http://127.0.0.1:7999/healthz` → `{"status":"ok"}`
-2. MCP `tools/list` → 16 tools, identical names to the container `full` toolset
-3. One FTS search (proves jieba dict resolution; a CJK query exercises the
+Run these against the port the service is **currently** listening on — during
+staged migration that is 7998, after the switch 7999:
+
+```sh
+PORT=7998   # or 7999 once the native service owns the endpoint
+curl -sf "http://127.0.0.1:$PORT/healthz" | grep -q '"status":"ok"' \
+  || { echo "health check failed on $PORT"; exit 1; }
+```
+
+Then, over MCP on the same port:
+
+1. MCP `tools/list` → 16 tools, identical names to the container `full` toolset
+2. One FTS search (proves jieba dict resolution; a CJK query exercises the
    segmenter) and one vector-route search (proves the ORT embedding path)
-4. Quality lanes: all nine fixtures pass `check_baselines_multilanguage.py`
+3. Quality lanes: all nine fixtures pass `check_baselines_multilanguage.py`
    against the floors pinned from the release binary
 
 ## Upgrade
@@ -116,17 +133,36 @@ loopback-proxy container is retired.
    ```sh
    launchctl bootout gui/$(id -u)/io.vectorize.zvec-grep-native
    ```
-3. If you staged a new prefix, point the plist at it — update the
-   `ProgramArguments` executable, `ZVEC_GREP_HOME`, and log paths (regenerate
-   the plist from the template with the new `PREFIX`). Keep `ZVEC_GREP_HOME`
-   pointing at the same state directory across upgrades unless you intend a
-   fresh start.
+3. Point the service at the staged release **without moving state**. The
+   state directory (`ZVEC_GREP_HOME`), model cache, and port must survive the
+   upgrade. Either edit the installed plist in place — change only the
+   executable path in `ProgramArguments` — or, if regenerating from the
+   template, pass the **existing** values explicitly:
+   ```sh
+   # carry these over from the installed plist; do not derive them from the
+   # new prefix:
+   STATE=$HOME/.local/zvec-grep-native/home     # previous ZVEC_GREP_HOME
+   MODEL_CACHE=$HOME/.engram/zvec-grep/model    # previous model cache
+   PORT=7999                                    # the service port in production
+   NEW_PREFIX=$HOME/.local/zvec-grep-native-<version>
+
+   sed -e "s|@HOME@|$HOME|g" -e "s|@PREFIX@|$NEW_PREFIX|g" \
+       -e "s|@MODEL_CACHE@|$MODEL_CACHE|g" -e "s|@PORT@|$PORT|g" \
+       container/native-macos-launchd.plist.template \
+       > ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist
+   # then edit ZVEC_GREP_HOME in the generated plist to $STATE:
+   sed -i '' "s|<string>$NEW_PREFIX/home</string>|<string>$STATE</string>|" \
+       ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist
+   ```
+   Note the template's `@PREFIX@/home` default is wrong for upgrades — the
+   state directory is always the previous install's `ZVEC_GREP_HOME`, unless
+   you deliberately want a fresh start.
 4. Start the service:
    ```sh
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist
    ```
-5. Re-run install verification. If the ORT build changed, expect ranking drift
-   (see below) and re-index active workspaces.
+5. Re-run install verification (against `$PORT` above). If the ORT build
+   changed, expect ranking drift (see below) and re-index active workspaces.
 
 ## Rollback to the container
 
