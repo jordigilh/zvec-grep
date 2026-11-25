@@ -1,0 +1,273 @@
+#![allow(clippy::cast_precision_loss)]
+
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+
+use super::{MlxForward, MlxWorker, TokenBatch};
+use crate::models::spi::ModelError;
+
+/// Deterministic stand-in for the numerics layer: the first token of each row
+/// becomes the row's vector, so replies can be matched back to inputs.
+struct EchoForward {
+    calls: Arc<std::sync::Mutex<Vec<Vec<u32>>>>,
+}
+
+impl EchoForward {
+    fn new() -> (Self, Arc<std::sync::Mutex<Vec<Vec<u32>>>>) {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        (
+            Self {
+                calls: Arc::clone(&calls),
+            },
+            calls,
+        )
+    }
+
+    fn first_tokens(batch: &TokenBatch) -> Vec<Vec<f32>> {
+        (0..batch.batch_size)
+            .map(|row| {
+                let offset = row * batch.sequence_length;
+                vec![batch.input_ids[offset] as f32]
+            })
+            .collect()
+    }
+}
+
+impl MlxForward for EchoForward {
+    fn forward(&mut self, batch: &TokenBatch) -> Result<Vec<Vec<f32>>, ModelError> {
+        self.calls
+            .lock()
+            .expect("call log")
+            .push(batch.input_ids.clone());
+        Ok(Self::first_tokens(batch))
+    }
+}
+
+/// Cancels the request inside the first sub-batch, after it has been recorded.
+struct CancellingForward {
+    signal: CancellationToken,
+    calls: Arc<std::sync::Mutex<usize>>,
+}
+
+impl MlxForward for CancellingForward {
+    fn forward(&mut self, batch: &TokenBatch) -> Result<Vec<Vec<f32>>, ModelError> {
+        *self.calls.lock().expect("call count") += 1;
+        self.signal.cancel();
+        Ok(EchoForward::first_tokens(batch))
+    }
+}
+
+/// Panics when it sees token `13`, otherwise behaves like `EchoForward`.
+struct PanickingForward;
+
+impl MlxForward for PanickingForward {
+    fn forward(&mut self, batch: &TokenBatch) -> Result<Vec<Vec<f32>>, ModelError> {
+        assert!(!batch.input_ids.contains(&13), "injected forward panic");
+        Ok(EchoForward::first_tokens(batch))
+    }
+}
+
+fn spawn_echo(max_batch_size: usize) -> MlxWorker {
+    MlxWorker::spawn(|_| Ok(EchoForward::new().0), max_batch_size)
+}
+
+#[tokio::test]
+async fn prepare_is_idempotent_and_loads_once() {
+    let loads = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&loads);
+    let worker = MlxWorker::spawn(
+        move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(EchoForward::new().0)
+        },
+        2,
+    );
+    worker.prepare(None).await.expect("first prepare");
+    worker.prepare(None).await.expect("second prepare");
+    assert_eq!(loads.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn prepare_retries_after_a_structured_load_failure() {
+    let loads = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&loads);
+    let worker = MlxWorker::spawn(
+        move |_| {
+            let attempt = counter.fetch_add(1, Ordering::SeqCst);
+            if attempt == 0 {
+                Err(ModelError::storage_failure("malformed weights"))
+            } else {
+                Ok(EchoForward::new().0)
+            }
+        },
+        2,
+    );
+    let error = worker.prepare(None).await.expect_err("first load fails");
+    assert_eq!(error.code(), crate::EngineError::STORAGE_FAILURE);
+    worker.prepare(None).await.expect("retry succeeds");
+    assert_eq!(loads.load(Ordering::SeqCst), 2);
+    // The recovered worker actually runs.
+    assert_eq!(
+        worker.embed(vec![vec![7]], None).await.expect("embed"),
+        vec![vec![7.0]]
+    );
+}
+
+#[tokio::test]
+async fn cancelled_prepare_does_not_touch_the_loader() {
+    let loads = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&loads);
+    let worker = MlxWorker::spawn(
+        move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(EchoForward::new().0)
+        },
+        2,
+    );
+    let signal = CancellationToken::new();
+    signal.cancel();
+    let error = worker
+        .prepare(Some(signal))
+        .await
+        .expect_err("cancelled prepare");
+    assert_eq!(error.code(), crate::EngineError::CANCELLED);
+    assert_eq!(loads.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn cancellation_during_prepare_reports_cancelled() {
+    let (started_tx, mut started_rx) = mpsc::unbounded_channel();
+    let worker = MlxWorker::spawn(
+        move |signal| {
+            started_tx.send(()).expect("signal load start");
+            while !signal.is_cancelled() {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Ok(EchoForward::new().0)
+        },
+        2,
+    );
+    let signal = CancellationToken::new();
+    let task = tokio::spawn({
+        let signal = signal.clone();
+        async move { worker.prepare(Some(signal)).await }
+    });
+    started_rx.recv().await.expect("loader started");
+    signal.cancel();
+    let error = task.await.expect("join").expect_err("cancelled");
+    assert_eq!(error.code(), crate::EngineError::CANCELLED);
+}
+
+#[tokio::test]
+async fn sub_batches_run_in_order_and_reassemble_one_to_one() {
+    let worker = spawn_echo(2);
+    worker.prepare(None).await.expect("prepare");
+    let result = worker
+        .embed(vec![vec![10], vec![11], vec![12], vec![13], vec![14]], None)
+        .await
+        .expect("embed");
+    assert_eq!(
+        result,
+        vec![vec![10.0], vec![11.0], vec![12.0], vec![13.0], vec![14.0]]
+    );
+}
+
+#[tokio::test]
+async fn concurrent_callers_receive_their_own_ordered_replies() {
+    let worker = Arc::new(spawn_echo(1));
+    worker.prepare(None).await.expect("prepare");
+    let mut tasks = Vec::new();
+    for value in 0..16_u32 {
+        let worker = Arc::clone(&worker);
+        tasks.push(tokio::spawn(async move {
+            let result = worker
+                .embed(vec![vec![value], vec![value + 100]], None)
+                .await
+                .expect("embed");
+            (value, result)
+        }));
+    }
+    for task in tasks {
+        let (value, result) = task.await.expect("join");
+        assert_eq!(result, vec![vec![value as f32], vec![value as f32 + 100.0]]);
+    }
+}
+
+#[tokio::test]
+async fn cancellation_is_checked_between_sub_batches() {
+    let signal = CancellationToken::new();
+    let calls = Arc::new(std::sync::Mutex::new(0_usize));
+    let signal_for_loader = signal.clone();
+    let calls_for_forward = Arc::clone(&calls);
+    let worker = MlxWorker::spawn(
+        move |_| {
+            Ok(CancellingForward {
+                signal: signal_for_loader.clone(),
+                calls: Arc::clone(&calls_for_forward),
+            })
+        },
+        2,
+    );
+    worker.prepare(None).await.expect("prepare");
+    let error = worker
+        .embed(
+            vec![vec![1], vec![2], vec![3], vec![4], vec![5]],
+            Some(signal),
+        )
+        .await
+        .expect_err("cancelled between sub-batches");
+    assert_eq!(error.code(), crate::EngineError::CANCELLED);
+    assert_eq!(*calls.lock().expect("call count"), 1);
+}
+
+#[tokio::test]
+async fn a_panicking_forward_does_not_kill_the_worker() {
+    let loads = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&loads);
+    let worker = MlxWorker::spawn(
+        move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(PanickingForward)
+        },
+        2,
+    );
+    worker.prepare(None).await.expect("prepare");
+    let error = worker
+        .embed(vec![vec![13]], None)
+        .await
+        .expect_err("panic is isolated");
+    assert_eq!(error.code(), crate::EngineError::INTERNAL);
+    // Same worker, same loaded forward, next job succeeds.
+    assert_eq!(
+        worker.embed(vec![vec![3]], None).await.expect("embed"),
+        vec![vec![3.0]]
+    );
+    assert_eq!(loads.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn embed_before_prepare_is_a_structured_error() {
+    let worker = spawn_echo(2);
+    let error = worker
+        .embed(vec![vec![1]], None)
+        .await
+        .expect_err("not prepared");
+    assert_eq!(error.code(), crate::EngineError::INTERNAL);
+}
+
+#[test]
+fn padding_derives_the_attention_mask_from_real_lengths() {
+    let batch = TokenBatch::pad(&[vec![1, 2, 3], vec![4]]);
+    assert_eq!(batch.batch_size, 2);
+    assert_eq!(batch.sequence_length, 3);
+    assert_eq!(batch.input_ids, vec![1, 2, 3, 4, 0, 0]);
+    assert_eq!(batch.attention_mask, vec![1.0, 1.0, 1.0, 1.0, 0.0, 0.0]);
+}

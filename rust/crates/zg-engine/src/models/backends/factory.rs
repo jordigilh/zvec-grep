@@ -59,7 +59,11 @@ pub fn create_embedding_model(
             compute_runtime,
         )?)),
         #[cfg(feature = "mlx")]
-        EmbeddingCatalogEntry::Mlx(config) => Ok(Arc::new(MlxEmbeddingModel::new(config, options))),
+        EmbeddingCatalogEntry::Mlx(config) => Ok(Arc::new(MlxEmbeddingModel::new(
+            config,
+            options,
+            compute_runtime,
+        ))),
     }
 }
 

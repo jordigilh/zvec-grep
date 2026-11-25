@@ -26,6 +26,7 @@ without the in-process ONNX reference sessions).
 """
 import argparse
 import glob
+import json
 import os
 import resource
 import sys
@@ -167,7 +168,19 @@ def dump_fixtures(w, tokenizer, onnx_path, out_dir):
              ids=np.array([e.ids for e in enc], dtype=np.int64),
              attention_mask=np.array([e.attention_mask for e in enc], dtype=np.int64),
              reference=ref, mlx=ours)
-    print(f"fixtures written to {out_dir}/jina_mlx_numerics.npz")
+    # JSON sidecar for the Rust `cached_jina_mlx` gate test: the npz is the
+    # canonical dump, but parsing zip/npy in Rust is not worth a dependency.
+    with open(os.path.join(out_dir, "jina_mlx_numerics.json"), "w",
+              encoding="utf-8") as f:
+        json.dump({
+            "policy": "fp16-weights/fp32-ln-scores",
+            "ids": [list(map(int, e.ids)) for e in enc],
+            "attention_mask": [list(map(int, e.attention_mask)) for e in enc],
+            "reference": np.asarray(ref, dtype=np.float32).tolist(),
+            "mlx": ours.tolist(),
+        }, f)
+    print(f"fixtures written to {out_dir}/jina_mlx_numerics.npz"
+          f" (+ .json sidecar)")
 
 
 def numerics_check(w, tokenizer, onnx_path):

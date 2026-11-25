@@ -1,0 +1,234 @@
+//! Dedicated execution thread for the MLX backend.
+//!
+//! `mlx_rs::Array` is `!Send`, so every array must be created, used, and
+//! evaluated on the thread that owns MLX. [`MlxWorker`] owns exactly such a
+//! thread: callers move plain token ids in and receive plain vectors out, and
+//! the worker serializes jobs in submission order. It is a single execution
+//! thread, not a scheduler: the runtime still owns admission and the execution
+//! budget, and concurrent callers queue here rather than forking a second pool.
+//!
+//! The thread survives a panicking forward pass (`catch_unwind`) so one bad
+//! batch cannot poison the cached runtime, and it re-checks the caller's
+//! [`CancellationToken`] between sub-batches for cooperative cancellation.
+
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    thread::{self, JoinHandle},
+};
+
+use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
+
+use crate::models::spi::ModelError;
+
+/// Padded, mask-complete sub-batch handed to the numerics layer.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct TokenBatch {
+    pub(super) input_ids: Vec<u32>,
+    pub(super) attention_mask: Vec<f32>,
+    pub(super) batch_size: usize,
+    pub(super) sequence_length: usize,
+}
+
+impl TokenBatch {
+    /// Pads right with token id 0 and derives the attention mask from the real
+    /// lengths. Every sequence must be non-empty (the SPI rejects empty input).
+    fn pad(sequences: &[Vec<u32>]) -> Self {
+        let sequence_length = sequences.iter().map(Vec::len).max().unwrap_or(0).max(1);
+        let mut input_ids = Vec::with_capacity(sequences.len() * sequence_length);
+        let mut attention_mask = Vec::with_capacity(sequences.len() * sequence_length);
+        for sequence in sequences {
+            input_ids.extend(sequence.iter().copied());
+            input_ids.resize(input_ids.len() + sequence_length - sequence.len(), 0);
+            attention_mask.extend(std::iter::repeat_n(1.0_f32, sequence.len()));
+            attention_mask.resize(attention_mask.len() + sequence_length - sequence.len(), 0.0);
+        }
+        Self {
+            input_ids,
+            attention_mask,
+            batch_size: sequences.len(),
+            sequence_length,
+        }
+    }
+}
+
+/// Numerics layer evaluated on the worker thread (`F` never leaves it).
+pub(super) trait MlxForward: 'static {
+    fn forward(&mut self, batch: &TokenBatch) -> Result<Vec<Vec<f32>>, ModelError>;
+}
+
+enum Command {
+    Prepare {
+        signal: Option<CancellationToken>,
+        reply: oneshot::Sender<Result<(), ModelError>>,
+    },
+    Embed {
+        ids: Vec<Vec<u32>>,
+        signal: Option<CancellationToken>,
+        reply: oneshot::Sender<Result<Vec<Vec<f32>>, ModelError>>,
+    },
+    Shutdown,
+}
+
+/// Handle to the model-owning thread.
+pub(super) struct MlxWorker {
+    commands: mpsc::UnboundedSender<Command>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl MlxWorker {
+    /// Spawns the worker. `loader` runs on the worker thread on the first
+    /// successful [`prepare`](Self::prepare); it is retried on a later prepare
+    /// if it fails, so a transient load failure leaves the backend usable.
+    pub(super) fn spawn<F>(
+        loader: impl Fn(&CancellationToken) -> Result<F, ModelError> + Send + 'static,
+        max_batch_size: usize,
+    ) -> Self
+    where
+        F: MlxForward,
+    {
+        let (commands, mut receiver) = mpsc::unbounded_channel();
+        let thread = thread::Builder::new()
+            .name("zg-mlx-embed".to_owned())
+            .spawn(move || {
+                let mut forward: Option<F> = None;
+                let max_batch_size = max_batch_size.max(1);
+                while let Some(command) = receiver.blocking_recv() {
+                    match command {
+                        Command::Prepare { signal, reply } => {
+                            if forward.is_some() {
+                                let _ = reply.send(Ok(()));
+                                continue;
+                            }
+                            // The loader runs here, on the array-owning thread,
+                            // so weights and compiled graphs never cross a
+                            // thread boundary. A failed or cancelled load stays
+                            // retryable: `forward` is only replaced on success.
+                            match load(&loader, signal.as_ref()) {
+                                Ok(prepared) => {
+                                    forward = Some(prepared);
+                                    let _ = reply.send(Ok(()));
+                                }
+                                Err(error) => {
+                                    let _ = reply.send(Err(error));
+                                }
+                            }
+                        }
+                        Command::Embed { ids, signal, reply } => {
+                            let result = match forward.as_mut() {
+                                Some(forward) => {
+                                    embed(forward, &ids, signal.as_ref(), max_batch_size)
+                                }
+                                None => {
+                                    Err(ModelError::internal("MLX embedding model is not prepared"))
+                                }
+                            };
+                            let _ = reply.send(result);
+                        }
+                        Command::Shutdown => break,
+                    }
+                }
+            })
+            .expect("MLX worker thread spawns");
+        Self {
+            commands,
+            thread: Some(thread),
+        }
+    }
+
+    pub(super) async fn prepare(
+        &self,
+        signal: Option<CancellationToken>,
+    ) -> Result<(), ModelError> {
+        let (reply, receiver) = oneshot::channel();
+        self.send(Command::Prepare { signal, reply })?;
+        receiver
+            .await
+            .map_err(|error| ModelError::internal("MLX worker stopped").with_cause(error))?
+    }
+
+    pub(super) async fn embed(
+        &self,
+        ids: Vec<Vec<u32>>,
+        signal: Option<CancellationToken>,
+    ) -> Result<Vec<Vec<f32>>, ModelError> {
+        let (reply, receiver) = oneshot::channel();
+        self.send(Command::Embed { ids, signal, reply })?;
+        receiver
+            .await
+            .map_err(|error| ModelError::internal("MLX worker stopped").with_cause(error))?
+    }
+
+    fn send(&self, command: Command) -> Result<(), ModelError> {
+        self.commands
+            .send(command)
+            .map_err(|_| ModelError::internal("MLX worker has stopped"))
+    }
+}
+
+impl Drop for MlxWorker {
+    fn drop(&mut self) {
+        let _ = self.commands.send(Command::Shutdown);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn load<F>(
+    loader: &impl Fn(&CancellationToken) -> Result<F, ModelError>,
+    signal: Option<&CancellationToken>,
+) -> Result<F, ModelError> {
+    check_cancelled(signal)?;
+    let signal = signal.cloned().unwrap_or_default();
+    let result =
+        catch_unwind(AssertUnwindSafe(|| loader(&signal))).map_err(|panic| panic_error(&*panic))?;
+    result.and_then(|forward| {
+        check_cancelled(Some(&signal))?;
+        Ok(forward)
+    })
+}
+
+fn embed<F: MlxForward>(
+    forward: &mut F,
+    ids: &[Vec<u32>],
+    signal: Option<&CancellationToken>,
+    max_batch_size: usize,
+) -> Result<Vec<Vec<f32>>, ModelError> {
+    let mut vectors = Vec::with_capacity(ids.len());
+    for sequences in ids.chunks(max_batch_size) {
+        check_cancelled(signal)?;
+        let batch = TokenBatch::pad(sequences);
+        let result = catch_unwind(AssertUnwindSafe(|| forward.forward(&batch)))
+            .map_err(|panic| panic_error(&*panic))?;
+        let sub_vectors = result?;
+        if sub_vectors.len() != sequences.len() {
+            return Err(ModelError::internal(format!(
+                "MLX forward returned {} vectors for {} inputs",
+                sub_vectors.len(),
+                sequences.len()
+            )));
+        }
+        vectors.extend(sub_vectors);
+    }
+    Ok(vectors)
+}
+
+fn check_cancelled(signal: Option<&CancellationToken>) -> Result<(), ModelError> {
+    if signal.is_some_and(CancellationToken::is_cancelled) {
+        return Err(ModelError::cancelled("MLX embedding was cancelled"));
+    }
+    Ok(())
+}
+
+fn panic_error(panic: &(dyn std::any::Any + Send)) -> ModelError {
+    let message = panic
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_owned())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "non-string panic payload".to_owned());
+    ModelError::internal("MLX forward pass panicked").with_cause(message)
+}
+
+#[cfg(test)]
+mod tests;
