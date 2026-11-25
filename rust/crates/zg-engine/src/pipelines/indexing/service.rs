@@ -243,6 +243,7 @@ impl WorkspaceIndexService {
             &mut descriptor,
             &acquired,
             options.signal.clone(),
+            options.on_progress.clone(),
         )
         .await?;
         let mut manifest = index_manifest(
@@ -349,24 +350,33 @@ impl WorkspaceIndexService {
             ));
         }
         let now = epoch_millis();
-        record_runtime_backend_identity(&mut manifest, runtime_identity.clone());
-        // The storage schema was written before the models loaded; if the
-        // live identity moved (an accelerated provider fell back to CPU),
-        // correct the schema so it never disagrees with the published
-        // manifest. Storage handles are closed and the home write lock is
-        // still held.
         let opened_identity = opened_embeddings
             .first()
             .and_then(crate::domain::model::EmbeddingModelInfo::backend_identity);
-        if opened_identity != runtime_identity {
-            IndexStore::rewrite_schema(&manifest.storage_home(), manifest.embeddings())?;
-        }
         if let Some(mut build) = build {
-            // The published target must carry the same runtime identity the
-            // local manifest just recorded.
+            // A fresh build may relabel itself: the storage schema was
+            // written before the models loaded, so an accelerated provider
+            // that fell back to CPU while embedding is corrected here, before
+            // the generation is published. Storage handles are closed and
+            // the home write lock is still held.
+            record_runtime_backend_identity(&mut manifest, runtime_identity.clone());
+            if opened_identity != runtime_identity {
+                IndexStore::rewrite_schema(&manifest.storage_home(), manifest.embeddings())?;
+            }
             build.target = manifest.clone();
             publish_build(build, now)?;
         } else {
+            // An incremental update appends to the live generation in place.
+            // If the runtime's identity moved after the storage opened (the
+            // provider fell back mid-run), the generation now holds vectors
+            // from two runtimes; relabeling it would publish the mixture
+            // under a single identity, so the update fails closed instead.
+            if opened_identity != runtime_identity {
+                return Err(mid_build_identity_mismatch(
+                    opened_identity.as_ref(),
+                    runtime_identity.as_ref(),
+                ));
+            }
             manifest.record_update(now);
             write_workspace_manifest(&manifest.path, &manifest)?;
         }
@@ -543,6 +553,7 @@ async fn check_incremental_identity(
     descriptor: &mut crate::domain::IndexDescriptor,
     acquired: &[ModelRuntimeLease],
     signal: Option<tokio_util::sync::CancellationToken>,
+    on_progress: Option<crate::api::index::progress::IndexProgressReporter>,
 ) -> Result<(), EngineError> {
     if rebuilding {
         return Ok(());
@@ -562,7 +573,7 @@ async fn check_incremental_identity(
                     signal,
                     on_progress: None,
                 },
-                None,
+                on_progress.map(super::model_progress::for_index),
             )
             .await
             .map_err(ModelError::into_engine_error)?;
@@ -576,6 +587,26 @@ async fn check_incremental_identity(
         return previous.ensure_index_compatible(descriptor);
     }
     Ok(())
+}
+
+/// Refusal for an incremental update whose runtime changed identity after
+/// the storage opened. The live generation already holds vectors from both
+/// runtimes; it keeps its recorded identity, and the structured error names
+/// both so the caller can rebuild.
+fn mid_build_identity_mismatch(
+    opened: Option<&crate::domain::model::BackendIdentity>,
+    runtime: Option<&crate::domain::model::BackendIdentity>,
+) -> EngineError {
+    let describe = |identity: Option<&crate::domain::model::BackendIdentity>| {
+        identity.map_or_else(|| "no recorded identity".to_owned(), ToString::to_string)
+    };
+    EngineError::index_backend_mismatch(format!(
+        "workspace index embedding backend identity changed while indexing: \
+         the storage opened with {}, but the runtime produced vectors with {}; \
+         rebuild the index with `zg --index --rebuild`",
+        describe(opened),
+        describe(runtime)
+    ))
 }
 
 /// Record the identity of the runtime that actually produced this build's
@@ -3021,5 +3052,136 @@ mod tests {
         .await
         .expect("query served by the fallback runtime");
         models.close();
+    }
+
+    /// A runtime that starts on its accelerated provider and falls back part
+    /// way through a build, controlled by the test.
+    struct MidRunFallbackStub {
+        info: crate::domain::model::EmbeddingModelInfo,
+        embeds: std::sync::Arc<std::sync::atomic::AtomicU32>,
+        fallback_after: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::models::EmbeddingModel for MidRunFallbackStub {
+        fn info(&self) -> &crate::domain::model::EmbeddingModelInfo {
+            &self.info
+        }
+
+        fn backend_identity(&self) -> Option<crate::domain::model::BackendIdentity> {
+            let fallen_back = self.embeds.load(std::sync::atomic::Ordering::Acquire)
+                > self
+                    .fallback_after
+                    .load(std::sync::atomic::Ordering::Acquire);
+            Some(crate::domain::model::BackendIdentity {
+                backend: if fallen_back { "stub-cpu" } else { "stub-gpu" }.to_owned(),
+                dtype: "q8".to_owned(),
+            })
+        }
+
+        async fn prepare(
+            &self,
+            _options: crate::models::EmbeddingPrepareOptions,
+        ) -> Result<(), crate::models::ModelError> {
+            Ok(())
+        }
+
+        async fn embed(
+            &self,
+            inputs: &[Vec<crate::domain::Content>],
+            _options: crate::models::EmbeddingOptions,
+        ) -> Result<crate::domain::model::EmbeddingResult, crate::models::ModelError> {
+            self.embeds
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            Ok(crate::domain::model::EmbeddingResult {
+                vectors: inputs
+                    .iter()
+                    .map(|_| vec![0.25; self.info.dimension])
+                    .collect(),
+                truncated: Vec::new(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn an_incremental_mid_run_fallback_refuses_instead_of_relabeling() {
+        let directory = tempdir().expect("workspace");
+        let root = std::fs::canonicalize(directory.path()).expect("root");
+        std::fs::write(root.join("notes.txt"), "orchard vines and orchard rows").expect("source");
+        let embeds = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let fallback_after = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(u32::MAX));
+        let manager = {
+            let embeds = std::sync::Arc::clone(&embeds);
+            let fallback_after = std::sync::Arc::clone(&fallback_after);
+            ModelRuntimeManager::with_factory(move |_reference, _options, _compute| {
+                Ok(std::sync::Arc::new(MidRunFallbackStub {
+                    info: crate::domain::model::EmbeddingModelInfo {
+                        model: crate::domain::model::ModelInfo {
+                            provider: "local".into(),
+                            name: "potion-code-16m-v2".into(),
+                            endpoint: None,
+                        },
+                        dimension: 8,
+                        metric: crate::domain::model::Metric::Cosine,
+                        max_batch_size: 32,
+                        max_input_tokens: Some(64),
+                        max_image_bytes: None,
+                        backend: Some("stub-gpu".into()),
+                        dtype: Some("q8".into()),
+                    },
+                    embeds: std::sync::Arc::clone(&embeds),
+                    fallback_after: std::sync::Arc::clone(&fallback_after),
+                }))
+            })
+        };
+        let service = WorkspaceIndexService::with_test_registry();
+        service
+            .index(&manager, empty_index_options(&root))
+            .await
+            .expect("initial gpu index");
+        let home = root.join(".zvec-grep");
+        let manifest = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("active");
+        assert_eq!(
+            manifest.embedding().expect("embedding").backend.as_deref(),
+            Some("stub-gpu")
+        );
+
+        // The provider falls back from the next embedded batch onward.
+        fallback_after.store(
+            embeds.load(std::sync::atomic::Ordering::Acquire),
+            std::sync::atomic::Ordering::Release,
+        );
+        std::fs::write(root.join("extra.txt"), "orchard rows extended").expect("changed source");
+        let error = service
+            .index(&manager, empty_index_options(&root))
+            .await
+            .expect_err("incremental mid-run fallback must refuse");
+        assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
+        assert!(
+            error.message().contains("changed while indexing"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("stub-gpu") && error.message().contains("stub-cpu"),
+            "{}",
+            error.message()
+        );
+        // The live generation keeps its recorded identity instead of being
+        // relabeled over vectors from both runtimes.
+        let unchanged = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("active");
+        assert_eq!(
+            unchanged.embedding().expect("embedding").backend.as_deref(),
+            Some("stub-gpu")
+        );
+        let schema = std::fs::read_to_string(unchanged.storage_home().join("storage/schema.json"))
+            .expect("schema");
+        assert!(schema.contains("stub-gpu"), "{schema}");
+        assert!(!schema.contains("stub-cpu"), "{schema}");
+        manager.close();
     }
 }

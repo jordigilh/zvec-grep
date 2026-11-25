@@ -225,10 +225,18 @@ async fn query_models(
         options,
         root,
     )?;
-    // Load the runtime before checking compatibility: the live identity must
-    // reflect the provider that will actually embed, so a session that fell
-    // back to CPU serves only generations recorded under CPU. Preparation
-    // stays lazy — it only runs for vector requests, which embed immediately
+    // Cheap constructor-identity refusal first, so capsule mismatches and
+    // other non-identity errors fail without a model load.
+    if let Err(error) = assert_embedding_compatible(Some(manifest), &model)
+        && error.code() != EngineError::INDEX_BACKEND_MISMATCH
+    {
+        return Err(error);
+    }
+    // Load the runtime and re-check against the live identity: a session
+    // that fell back at load must not serve a generation recorded under its
+    // accelerated provider, while a persistently falling-back runtime serves
+    // the generation it published under its live identity. Preparation stays
+    // lazy — it only runs for vector requests, which embed immediately
     // after, and is idempotent for an already-loaded runtime.
     model
         .prepare(
