@@ -194,10 +194,10 @@ rm -rf <root>/.zvec-grep
 
 Beyond that hard failure, the index load path now identifies the embedding
 runtime: every generation records a `backend` + `dtype` identity in its
-manifest, and a serving runtime that cannot prove it produced the stored
-vectors refuses (see the next section). Storage that *does* open is therefore
-no longer an implicit compatibility guarantee — the identity check is the
-guarantee.
+manifest, and a serving runtime reporting a different pair refuses (see the
+next section). Storage that *does* open is no longer an implicit
+compatibility guarantee — the identity check is the guarantee, and it is
+only as fine-grained as the recorded pair.
 
 ## One-time fleet reindex after backend identity (issue #85)
 
@@ -316,9 +316,12 @@ Consequences, applied in this change:
   the reviewed re-pin the lane policy requires; the old floors referenced a
   binary that no longer exists.
 - Every runtime switch must be followed by a re-index of active workspaces
-  (see "Index compatibility" above) — now enforced, not just advised, by the
-  backend-identity refusal (see "One-time fleet reindex after backend
-  identity").
+  (see "Index compatibility" above). The backend-identity refusal (see
+  "One-time fleet reindex after backend identity") catches only switches
+  that change the recorded `backend` or `dtype` labels; a switch that can
+  change embeddings while reporting the same pair (e.g. a different ORT
+  build serving `onnx-cpu` / `q8`) still passes the check, so the manual
+  re-index rule remains in force for it.
 
 ## Open items (explicitly out of scope for this change)
 
