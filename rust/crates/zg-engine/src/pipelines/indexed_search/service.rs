@@ -74,7 +74,7 @@ pub(crate) async fn context(
             // identity no longer matches this runtime can still serve its
             // stored full-text results. Vector requests keep the hard refusal:
             // they cannot mix embeddings across runtimes.
-            if uses_vectors(&request) || error.code() != EngineError::INDEX_BACKEND_MISMATCH {
+            if request.uses_vectors() || error.code() != EngineError::INDEX_BACKEND_MISMATCH {
                 return Err(error);
             }
             tracing::warn!(
@@ -168,7 +168,7 @@ async fn try_writer_context(
         options.embedding_concurrency,
         options,
         &location.root,
-        uses_vectors(request),
+        request.uses_vectors(),
     )?;
     if !writer
         .session
@@ -180,7 +180,7 @@ async fn try_writer_context(
     }
     // Use the exact configuration that passed the writer-key check, including
     // authorization, rather than resolving mutable configuration a second time.
-    let acquired = if uses_vectors(request) {
+    let acquired = if request.uses_vectors() {
         let model = models
             .acquire(model_request)
             .map_err(ModelError::into_engine_error)?;
@@ -218,13 +218,6 @@ async fn try_writer_context(
     .map(Some)
 }
 
-fn uses_vectors(request: &super::context::NormalizedContextRequest) -> bool {
-    request
-        .routes
-        .iter()
-        .any(|route| route.mode == crate::api::context::options::ContextRouteMode::Vector)
-}
-
 async fn query_models(
     models: &ModelRuntimeManager,
     manifest: &WorkspaceManifest,
@@ -232,7 +225,7 @@ async fn query_models(
     root: &Path,
     request: &super::context::NormalizedContextRequest,
 ) -> Result<Vec<ModelRuntimeLease>, EngineError> {
-    if !uses_vectors(request) {
+    if !request.uses_vectors() {
         return Ok(Vec::new());
     }
     let model = acquire_search_model(

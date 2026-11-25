@@ -3,6 +3,26 @@
 pub use options::ContextOptions;
 pub use result::ContextResult;
 
+/// Whether a context request embeds query vectors once normalized.
+///
+/// A primary query always runs full-text and vector routes side by side, so
+/// only requests whose supplemental routes are all full-text never embed.
+/// Full-text-only retrieval can serve the stored results of a generation
+/// whose embedding backend identity no longer matches this runtime, because
+/// it never embeds; callers that gate a hard refusal on embedding should
+/// map a normalization failure to `true` so an unusable request fails closed
+/// with the refresh error instead of being served.
+///
+/// # Errors
+///
+/// Returns the query-normalization error for requests that fail it.
+pub fn uses_vectors(options: &ContextOptions) -> Result<bool, crate::EngineError> {
+    Ok(
+        crate::pipelines::indexed_search::context::normalize_context_request(options)?
+            .uses_vectors(),
+    )
+}
+
 /// Options accepted by [`crate::ZvecGrep::context`].
 pub mod options {
     pub use crate::domain::{FileCategory, FileFormat, GlobRule, SymbolType};
@@ -645,7 +665,48 @@ mod tests {
 
     use crate::domain::{ByteRange, Range, TextRange};
 
-    use super::result;
+    use super::{options::ContextRoute, options::ContextRouteMode, result};
+
+    #[test]
+    fn public_route_usage_mirrors_query_normalization() {
+        let options = |routes| super::ContextOptions {
+            routes,
+            ..super::ContextOptions::default()
+        };
+        let route = |mode: ContextRouteMode, query: &str| ContextRoute {
+            mode,
+            query: query.to_owned(),
+        };
+        // A primary query always adds a vector route next to the full-text one.
+        let primary = super::ContextOptions {
+            query: Some("needle".to_owned()),
+            ..super::ContextOptions::default()
+        };
+        assert!(super::uses_vectors(&primary).expect("primary uses vectors"));
+        assert!(
+            super::uses_vectors(&options(vec![route(ContextRouteMode::Vector, "n")]))
+                .expect("vector route uses vectors")
+        );
+        assert!(
+            !super::uses_vectors(&options(vec![route(ContextRouteMode::Fts, "n")]))
+                .expect("fts-only route never embeds")
+        );
+        assert!(
+            !super::uses_vectors(&options(vec![
+                route(ContextRouteMode::Fts, "a"),
+                route(ContextRouteMode::Fts, "b"),
+            ]))
+            .expect("several fts routes never embed")
+        );
+        assert!(
+            super::uses_vectors(&options(vec![
+                route(ContextRouteMode::Fts, "a"),
+                route(ContextRouteMode::Vector, "b"),
+            ]))
+            .expect("any vector route embeds")
+        );
+        assert!(super::uses_vectors(&options(Vec::new())).is_err());
+    }
 
     #[test]
     fn source_line_bounds_respect_half_open_and_empty_ranges() {
