@@ -8,20 +8,39 @@ it does **not** run the #80 context-cap experiment.
 
 ## Result
 
-**MLX clears the issue's ≥3× decision rule at the engine level, and the
-numerics port is exact — but the Rust backend cannot be built on this host.**
-`mlx-sys` compiles MLX from source through CMake, and MLX's Metal backend
-requires the `metal` shader compiler, which is an Xcode component (Xcode 26+
-downloadable "Metal Toolchain"); it is not part of CommandLineTools and cannot
-be installed with CLT alone (ml-explore/mlx#103, ml-explore/mlx-swift#500).
-A CPU-only `mlx-sys` build (`default-features = false`, which sets
-`MLX_BUILD_METAL=OFF`) does compile on this host, but a CPU-only MLX backend
-has no acceleration story over ORT CPU, so the GPU path is the blocked one.
-The Python MLX wheels ship a prebuilt `libmlx` + `mlx.metallib`, which is why
-the spike below runs on a CLT-only machine while the Metal-enabled
-`cargo build` of `mlx-rs` cannot. The implementation plan at the bottom is
-therefore gated on Metal toolchain availability (full Xcode or a
-prebuilt-metallib `mlx-sys` path, neither of which exists today).
+**MLX clears the issue's ≥3× decision rule at the engine level, the numerics
+port is exact, and the Rust backend now builds and runs on Metal on this
+host.** The blocker recorded earlier — `mlx-sys` compiles MLX from source
+through CMake, and MLX's Metal backend needs the `metal` shader compiler, an
+Xcode component absent from CommandLineTools (ml-explore/mlx#103,
+ml-explore/mlx-swift#500) — was cleared on 2026-11-25 with Xcode 27.2 plus the
+separate **Metal Toolchain 27B47** (`xcodebuild -downloadComponent
+MetalToolchain`, 839 MB). Note that `xcrun -f metal` resolving proves nothing:
+it returns a shim that only works once the component exists. The real check is
+`xcrun -sdk macosx metal --version`.
+
+A CPU-only `mlx-sys` build (`default-features = false`, `MLX_BUILD_METAL=OFF`)
+also compiles, and is the basis for the Ubuntu CI lane. The Python MLX wheels
+ship a prebuilt `libmlx` + `mlx.metallib`, which is how the spike below
+measured the GPU ceiling on a CLT-only machine before Xcode was installed.
+
+## Local build verification (2026-11-25, after the Metal Toolchain install)
+
+```
+$ xcode-select -p
+/Applications/Xcode.app/Contents/Developer
+$ xcrun -sdk macosx metal --version
+Apple metal version 32023.922 (metalfe-32023.922.4)  Target: air64-apple-darwin27.2.0
+$ cargo build          # mlx-rs 0.34 / mlx-sys 0.7, Metal enabled, cold debug
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 2m 28s
+$ cargo run
+default device = Device(gpu, 0)
+matmul = [7.0, 10.0, 15.0, 22.0]      # [[1,2],[3,4]]^2
+softmax = [0.047425877, 0.95257413, 0.000911051, 0.999089]
+```
+
+The Metal-enabled build and GPU execution are therefore reproducible on this
+host; the implementation plan below is no longer environment-gated.
 
 ## Measurements (2026-11-25, 12-core Apple Silicon, CLT-only host)
 
@@ -130,10 +149,9 @@ slopes = -(2^-1..2^-8, 2^-0.5, 2^-1.5, 2^-2.5, 2^-3.5)      # 12 heads
 attention) was not ported in this spike; it needs its own forward spec and
 numerics pair before any cap conclusions (#80 plan).
 
-## Implementation plan (gated on Metal toolchain availability)
+## Implementation plan
 
-TDD plan for when the blocker lifts (full Xcode with Metal toolchain, or a
-prebuilt-MLX `mlx-sys` path). Estimated 3-4 days for the jina slice.
+TDD plan for the jina slice. Estimated 3-4 days.
 
 1. **Feature scaffold (test-first).** `zg-engine` optional cargo feature
    `mlx`; `backends/mlx/mod.rs` declarative; new catalog entry
@@ -228,6 +246,9 @@ Local-only verification does not satisfy this.
 is exposed, so the compiled 3.7-5.2x is the target). Deductions: `Array
 !Send` forces the worker-thread design; the precision policy adds a
 correctness surface (fp32 LN/scores are mandatory, measured); single-maintainer
-crate; the toolchain blocker adds environment risk and gates the whole plan.
+crate; the Ubuntu CPU-only `mlx-sys` build the CI baseline depends on is
+unverified on Linux; and hosted macOS runners have not been shown to allocate
+an MLX Metal device (upstream MLX uses self-hosted runners for exactly this
+reason). The toolchain risk that dominated the earlier estimate is gone.
 Numerics risk is low (spec validated here); scheduling/identity risk is low
 (runtime rules already established in #73/#77).
