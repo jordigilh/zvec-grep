@@ -32,6 +32,8 @@ hyper.workspace = true
 hyper-util = { workspace = true, features = ["client-legacy", "client-proxy"] }
 llama-cpp-2 = { version = "0.1.154", default-features = false }
 # Fork pin: the ONNX dynamic-link remediation requires this exact ort runtime.
+# Shared with zg-ort-version so both crates link (and report the version of)
+# the same ORT build; keep the two declarations in sync.
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["api-27", "copy-dylibs", "download-binaries", "std", "tls-rustls"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "stream"] }
 rayon = "1.11.0"
@@ -41,6 +43,9 @@ sha2.workspace = true
 sysinfo.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+# Quarantines the unsafe ORT C call that reports the linked runtime version,
+# which joins the transformers backend identity.
+zg-ort-version = { path = "../zg-ort-version" }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tokenizers = { version = "0.23.1", default-features = false, features = ["fancy-regex"] }

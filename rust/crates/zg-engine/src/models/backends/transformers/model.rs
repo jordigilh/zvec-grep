@@ -159,8 +159,11 @@ impl TransformersEmbeddingModel {
         // device; the label is fixed at construction, then re-read from the
         // loaded session pool so CPU fallbacks publish the truth (see
         // `backend_identity`).
-        let identity =
-            transformers_backend_identity(resolve_execution_provider(options.device), entry.dtype);
+        let identity = transformers_backend_identity(
+            resolve_execution_provider(options.device),
+            entry.dtype,
+            onnx_runtime_version(),
+        );
         let provider_code = Arc::new(AtomicU8::new(
             resolve_execution_provider(options.device).code(),
         ));
@@ -315,7 +318,11 @@ impl EmbeddingModel for TransformersEmbeddingModel {
                 .load(std::sync::atomic::Ordering::Acquire),
         )
         .unwrap_or_else(|| resolve_execution_provider(self.device));
-        Some(transformers_backend_identity(provider, self.entry.dtype))
+        Some(transformers_backend_identity(
+            provider,
+            self.entry.dtype,
+            onnx_runtime_version(),
+        ))
     }
 
     async fn prepare(&self, options: EmbeddingPrepareOptions) -> Result<(), ModelError> {
@@ -941,17 +948,28 @@ impl TransformersExecutionProvider {
     }
 }
 
-/// Backend identity for the provider that produces this model's vectors.
-/// A session pool that fell back to CPU reports `Cpu`, so its generations
-/// record `onnx-cpu` instead of the provider its device requested.
+/// Backend identity for the provider that produces this model's vectors,
+/// including the ONNX Runtime version that produced them. A session pool that
+/// fell back to CPU reports `Cpu`, so its generations record `onnx-cpu`
+/// instead of the provider its device requested, and the version records
+/// which ORT build produced the vectors (e.g. `onnx-cpu/ort-1.22.0`): two
+/// runtimes with the same provider and dtype but different ORT builds must
+/// not serve each other's indexes.
 fn transformers_backend_identity(
     provider: TransformersExecutionProvider,
     dtype: &str,
+    ort_version: &str,
 ) -> BackendIdentity {
     BackendIdentity {
-        backend: format!("onnx-{}", provider.name()),
+        backend: format!("onnx-{}/ort-{ort_version}", provider.name()),
         dtype: dtype.to_owned(),
     }
+}
+
+/// Version of the ONNX Runtime linked into this binary (e.g. `1.22.0`),
+/// reported by the quarantined FFI crate and cached for the process.
+fn onnx_runtime_version() -> &'static str {
+    zg_ort_version::onnx_runtime_version()
 }
 
 const fn requested_device_name(device: Option<Device>) -> &'static str {

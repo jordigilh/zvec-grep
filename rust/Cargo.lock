@@ -4296,6 +4296,7 @@ dependencies = [
  "zg-codegraph",
  "zg-engine-macros",
  "zg-host-native",
+ "zg-ort-version",
  "zg-zvec-fp16",
  "zvec-rust",
 ]
@@ -4337,6 +4338,14 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "zg-ort-version"
+version = "0.0.1"
+dependencies = [
+ "ort",
  "tracing",
 ]
 

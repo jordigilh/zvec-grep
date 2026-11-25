@@ -1,0 +1,30 @@
+[package]
+name = "zg-ort-version"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Linked ONNX Runtime version reporting for backend identity"
+
+[dependencies]
+# Fork pin, kept in sync with zg-engine's ort entry: the version this crate
+# reports must be the version of the ORT that runs the embedding sessions.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["api-27", "copy-dylibs", "download-binaries", "std", "tls-rustls"] }
+tracing.workspace = true
+
+# Copied from the workspace so this crate can allow the ORT C calls below.
+# `ort` wraps `OrtGetApiBase().GetVersionString` privately, and the version of
+# the linked ONNX Runtime is part of zvec-grep's embedding backend identity.
+# Every other crate keeps the workspace `unsafe_code = "forbid"`.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
