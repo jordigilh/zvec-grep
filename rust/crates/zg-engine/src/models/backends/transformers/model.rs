@@ -80,6 +80,7 @@ struct SessionPoolState {
     generation: u64,
     creating: usize,
     sessions: Vec<Arc<SessionSlot>>,
+    thread_budget: CpuThreadBudget,
 }
 
 struct SessionSlot {
@@ -418,6 +419,7 @@ impl SessionPool {
                 provider,
                 generation: 0,
                 creating: 0,
+                thread_budget: CpuThreadBudget::new(available_cores()),
                 sessions: vec![Arc::new(SessionSlot {
                     busy: AtomicBool::new(false),
                     session: StdMutex::new(session),
@@ -469,12 +471,14 @@ impl SessionPool {
             }
             if let Some(slot) = state.sessions.iter().find_map(|slot| {
                 (cpu_session_claimable(slot.intra_threads, desired_budget)
+                    && state.thread_budget.fits(slot.intra_threads)
                     && slot
                         .busy
                         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
                         .is_ok())
                 .then(|| Arc::clone(slot))
             }) {
+                state.thread_budget.acquire(slot.intra_threads);
                 drop(state);
                 let mut session = lock_session(&slot.session);
                 let result = inference(&mut session);
@@ -486,10 +490,13 @@ impl SessionPool {
                     // unlocked clear could land in that window and its
                     // `notify_one` (not buffered) would be lost, leaving the
                     // waiter asleep while the slot sits idle.
-                    let _state = lock_std_mutex(&self.state);
+                    let mut state = lock_std_mutex(&self.state);
+                    state.thread_budget.release(slot.intra_threads);
                     slot.busy.store(false, Ordering::Release);
                 }
-                self.changed.notify_one();
+                // Waiters can be blocked on the aggregate thread budget, not
+                // only on slot availability, so wake them all.
+                self.changed.notify_all();
                 return result;
             }
 
@@ -708,12 +715,57 @@ const fn physical_session_limit(
     }
 }
 
+/// Aggregate intra-op thread accounting for one session pool: the sum of
+/// intra-op threads over busy CPU sessions never exceeds the machine's core
+/// budget. Per-session budget checks bound each session against its own
+/// caller's execution limit, but leases with different limits can overlap on
+/// one cached runtime (a limit-1 query lease and a limit-4 index wave), and
+/// only this aggregate gate keeps their combined thread usage within the
+/// machine: an acquisition that would exceed the budget queues until a
+/// busy session completes.
+#[derive(Debug)]
+struct CpuThreadBudget {
+    active: usize,
+    cores: usize,
+}
+
+impl CpuThreadBudget {
+    fn new(cores: usize) -> Self {
+        Self { active: 0, cores }
+    }
+
+    /// Whether a session with `threads` intra-op threads may start now.
+    /// Non-CPU sessions carry no thread budget and always fit.
+    const fn fits(&self, threads: Option<usize>) -> bool {
+        match threads {
+            Some(threads) => self.active.saturating_add(threads) <= self.cores,
+            None => true,
+        }
+    }
+
+    fn acquire(&mut self, threads: Option<usize>) {
+        if let Some(threads) = threads {
+            self.active = self.active.saturating_add(threads);
+        }
+    }
+
+    fn release(&mut self, threads: Option<usize>) {
+        if let Some(threads) = threads {
+            self.active = self.active.saturating_sub(threads);
+        }
+    }
+}
+
 /// Intra-op threads per CPU session so `execution_concurrency` pooled sessions
 /// together stay within the machine's core budget. Matches the llama.cpp
 /// backend's `threads_per_context` policy.
 fn cpu_intra_threads(execution_concurrency: usize) -> usize {
-    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let cores = available_cores();
     (cores / execution_concurrency.max(1)).max(1)
+}
+
+fn available_cores() -> usize {
+    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
 }
 
 /// Whether a pooled CPU session created with `slot_threads` intra-op threads

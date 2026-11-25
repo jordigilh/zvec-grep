@@ -611,6 +611,35 @@ fn token_budget_packer_handles_empty_single_and_oversized_inputs() {
 }
 
 #[test]
+fn overlapping_leases_queue_on_the_aggregate_thread_budget() {
+    let mut budget = CpuThreadBudget::new(8);
+    // A limit-1 lease claims its all-cores session.
+    assert!(budget.fits(Some(8)));
+    budget.acquire(Some(8));
+    // A concurrent limit-4 lease's cores/4 session cannot start while the
+    // machine is fully subscribed: it queues instead of oversubscribing,
+    // which is the exact interleaving the per-session checks alone missed.
+    assert!(!budget.fits(Some(2)));
+    // Non-CPU sessions carry no thread budget.
+    assert!(budget.fits(None));
+    budget.acquire(None);
+    // When the limit-1 lease completes, the smaller session fits again.
+    budget.release(Some(8));
+    assert!(budget.fits(Some(2)));
+    // Four limit-4 sessions saturate the budget; a fifth queues.
+    for _ in 0..4 {
+        assert!(budget.fits(Some(2)));
+        budget.acquire(Some(2));
+    }
+    assert!(!budget.fits(Some(2)));
+    // Release is matched to acquire in practice; it clamps rather than
+    // underflowing.
+    budget.release(Some(100));
+    assert_eq!(budget.active, 0);
+    assert!(budget.fits(Some(8)));
+}
+
+#[test]
 fn cpu_intra_threads_divides_available_cores_and_never_reaches_zero() {
     let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     assert_eq!(cpu_intra_threads(0), cores);
