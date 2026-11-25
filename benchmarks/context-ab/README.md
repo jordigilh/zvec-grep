@@ -112,23 +112,38 @@ Go function).
 The point of the frozen sample. When the MLX backend makes larger caps
 affordable, run the cap as the only variable:
 
-1. Build four binaries that differ **only** in the catalog
-   `max_input_tokens` for the model under test (1024, 2048, 4096, 8192) —
-   one commit per cap or a build-time override, nothing else changed.
-2. For each corpus × cap: `pair.sh` with the 1024 binary as side A
-   (the landed baseline) and the cap binary as side B, same model, same
-   queries. Keep the qwen3 control pair to prove binary invariance.
-3. Record per cap: top-10 overlap (span and file) vs the 1024 baseline,
+1. Build five post-#74 binaries that differ **only** in the catalog
+   `max_input_tokens` for the model under test (1024, 2048, 4096, 8192 —
+   plus the shipped pre-#74 1024 binary kept aside) — one commit per cap
+   or a build-time override, nothing else changed.
+2. **Isolate the backend variable first**: #74 changes the inference
+   backend (CPU/ORT -> MLX), so a pre-#74 baseline vs a post-#74 cap arm
+   would mix cap and backend in every delta. Run a same-cap invariance
+   pair — gte and jina at 1024, pre-#74 binary vs post-#74 1024 binary —
+   and require ordered-equal or near-identical rankings before any cap
+   arm is interpreted. The qwen3 control only proves the llama-cpp path;
+   it says nothing about MLX numerics for gte/jina. Then use the
+   **post-#74 1024 binary** as side A for every cap arm.
+3. For each corpus × cap: `pair.sh` with the post-#74 1024 binary as
+   side A and the cap binary as side B, same model, same queries. Keep
+   the qwen3 control pair to prove harness invariance.
+4. Record per cap: top-10 overlap (span and file) vs the 1024 baseline,
    index wall time, peak RSS, and **hits-per-file in top-10** (the chunk
    flooding metric — add it to `compare-pair.py` output).
-4. Inspect the same worst divergences at each cap; the interesting
+5. Inspect the same worst divergences at each cap; the interesting
    comparisons are 2048 vs 1024 (does flooding shrink without losing the
    specificity win?) and 4096 vs 8192 (does dilution begin, or is 4096
    strictly better?).
-5. Decision rule: a cap raise is justified only if inspected quality is
+6. Decision rule: a cap raise is justified only if inspected quality is
    not worse AND the flooding metric does not regress AND the graded
    `quality-lanes` floors still pass at the new cap (they must be re-run;
    chunk boundaries change, so floors may need a reviewed re-pin).
+   Operationalized: "inspected quality not worse" means the five queries
+   with the largest overlap drop per corpus are inspected and none is
+   judged clearly worse; "flooding does not regress" means mean
+   max-hits-per-file in the top-10 stays at or below the 1024 baseline
+   (target for H1: at most half the 1024 value on the ts corpus, i.e.
+   from 7/10 down to <=4).
 
 ### Spike arms (added 2026-11-24): adaptive chunking vs query-time merging
 
@@ -140,11 +155,12 @@ of attention scores (the OOM class PR #77 removed), and `max_input_tokens`
 is part of model identity, so per-file variability needs a new index
 identity scheme.
 
-- **Arm C — adaptive chunk target (2048).** Chunk budget
-  `min(file tokens, 2048)` instead of a flat 1024: medium files stay one
-  chunk, giant files still split. Implement as a plain 2048 catalog cap
-  (arm 2 above), which is exactly this behavior — no new code. Measures
-  whether the flooding shrink from 2048 outweighs any dilution loss.
+- **Arm C — flat 2048 chunk budget.** A plain 2048 catalog cap (arm 2
+  above), which approximates `min(file tokens, 2048)` chunking — the
+  budget is char-estimated (185 or 100 chars per 100 tokens, per-file
+  token-dense detection) with 15% overlap, so files just under 2048
+  tokens may still split. No new code. Measures whether the flooding
+  shrink from 2048 outweighs any dilution loss.
 - **Arm M — query-time chunk merging.** Keep the flat 1024 cap (sharp
   chunk vectors, unchanged model identity) and merge adjacent chunks of
   the same file into one hit at ranking time, presenting whole-file
