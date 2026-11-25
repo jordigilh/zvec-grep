@@ -100,7 +100,8 @@ a failed migration). Stage on 7998 first, as above (`@PORT@` → 7998).
      ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.vectorize.zvec-grep-native.plist
    ```
-4. Re-run the verification below against 7999.5. Re-index active workspaces (see "Index compatibility" — storage written by
+5. Re-run the verification below against 7999.
+6. Re-index active workspaces (see "Index compatibility" — storage written by
    the container build does not open natively).
 
 The container LaunchAgent plist and images are kept for rollback. The socat
@@ -179,13 +180,11 @@ Index storage written by the container build (Linux zvec) failed to open in
 the native build during migration — observed as
 `ZG.ENGINE.STORAGE_FAILURE: zvec open collection … Failed to open index` on
 every container-built workspace. **This is an empirical observation about
-cross-platform storage, not a backend-identity guarantee**: the index load
-path checks the index version, model, and route, none of which identify the
-embedding runtime. Two builds that share an index version could open each
-other's storage and mix embeddings from different ORT builds without an
-error. Until #75 scope item 3 (record `backend` + `dtype` per generation and
-refuse mismatches at query time) lands, treat every runtime switch as
-requiring a re-index:
+cross-platform storage, not a backend-identity guarantee**: it can leave
+storage that no runtime can open, and `zvec_grep_index` with `rebuild: true`
+does not recover from unreadable cross-build storage on its own — it fails
+with `STORAGE_FAILURE`; clearing `.zvec-grep` and indexing fresh is the
+documented recovery:
 
 ```sh
 # per workspace; if rebuild fails to open the old storage, clear it first
@@ -193,9 +192,112 @@ rm -rf <root>/.zvec-grep
 # then index via MCP zvec_grep_index {"root": <root>} or `zg --index <root>`
 ```
 
-`zvec_grep_index` with `rebuild: true` does not recover from unreadable
-cross-build storage on its own — it fails with `STORAGE_FAILURE`; clearing
-`.zvec-grep` and indexing fresh is the documented recovery.
+Beyond that hard failure, the index load path now identifies the embedding
+runtime: every generation records a `backend` + `dtype` identity in its
+manifest, and a serving runtime that cannot prove it produced the stored
+vectors refuses (see the next section). Storage that *does* open is therefore
+no longer an implicit compatibility guarantee — the identity check is the
+guarantee.
+
+## One-time fleet reindex after backend identity (issue #85)
+
+Since #78 (merged `72943ce`) + #81 (merged `89ab30a`), every index generation
+records the
+identity of the embedding runtime that produced its vectors (`backend` +
+`dtype`, e.g. `onnx-cpu` / `q8`), and vector search plus incremental indexing
+fail closed when the serving runtime's identity does not match. Indexes built
+before this recording have no identity, and **every such index was by
+definition built by a runtime older than the current binary** — so after
+upgrading the daemon, all pre-existing **local-model** workspaces refuse
+vector search and incremental indexing until they are rebuilt once. Remote-model
+(e.g. qwen) indexes are unaffected: remote backends record no identity, and
+"no identity" on both sides matches.
+
+The refusal is terminal, not retryable: over MCP the error renders as
+`ZG.ENGINE.INDEX_BACKEND_MISMATCH` with `retryable: false`, naming both
+identities and the recovery. Two message shapes exist (same code, same
+remedy); both share the prefix "workspace index embedding backend identity
+does not match this runtime", which is the reliable grep anchor:
+
+- at open time: "workspace index embedding backend identity does not match
+  this runtime: index has no recorded identity (built before backend
+  recording), this runtime has backend=… dtype=…; rebuild the index with
+  `zg --index --rebuild`"
+- mid-run: "… the storage opened with …, but the runtime produced vectors
+  with …; rebuild the index with `zg --index --rebuild`"
+
+### Runbook
+
+1. **Restart the daemon** onto the new binary (see "Upgrade" above). Until
+   restarted it keeps serving the old behavior — there is no rolling restart.
+   Verify with the install-verification block against the service port.
+2. **Enumerate registered workspaces** from the registry,
+   `~/.zvec-grep/workspaces.json`:
+
+   ```sh
+   jq -r '.workspaces[] | "\(.name)\t\(.root)"' ~/.zvec-grep/workspaces.json
+   ```
+
+   The registry is `{version, workspaces: [{name, root}]}`. Read it only —
+   both structs are `deny_unknown_fields`, so hand-editing it (e.g. adding a
+   comment field) makes it unreadable. Identify local-model workspaces by
+   checking each manifest's embedding `provider == "local"`. Note that
+   `zg status` / `zvec_grep_status` will **not** flag these workspaces ahead
+   of time: their `rebuild_required` state comes from index-version mismatch
+   or manifest decode failure only, and a legacy identity-less manifest is
+   version 3 and decodes cleanly — it reports Ready until the first vector
+   query or incremental update refuses. The manifest provider check (or the
+   first refusal message itself) is the discovery mechanism.
+3. **Rebuild each affected workspace**:
+
+   ```sh
+   zg --index <root> --rebuild
+   ```
+
+   If the rebuild fails with `STORAGE_FAILURE` (unreadable cross-build
+   storage), clear `<root>/.zvec-grep` first and index fresh. For a
+   user-owned rather than centrally managed fleet, no enumeration is needed:
+   the refusal message itself points each user at `zg --index --rebuild`.
+   Note the rebuild records the **live** runtime identity (actual execution
+   path, not the configured device): a rebuild that fell back to CPU relabels
+   the generation accordingly, and a later machine that does get the
+   accelerated provider will be refused again, by design, and needs its own
+   rebuild.
+4. **During the window, FTS keeps working.** The outage is vector-search-only
+   per workspace: non-vector requests never acquire an embedding model, so
+   they never hit the identity check, and a failed auto-refresh whose error
+   is `INDEX_BACKEND_MISMATCH` still serves the stored full-text results
+   (warn-logged). No action is needed to keep exact/FTS routes alive.
+
+### Release-notes wording (proposed)
+
+> This release records the embedding-runtime identity (`backend` + `dtype`)
+> of every index generation and refuses to serve vectors across runtimes. The
+> first vector search (or index update) on a pre-existing **local-model**
+> workspace fails once with `ZG.ENGINE.INDEX_BACKEND_MISMATCH` and a message
+> naming the mismatch; run `zg --index --rebuild <root>` to recover. Full-text
+> search is unaffected throughout. Remote-model (qwen) workspaces are
+> unaffected.
+
+### Rollback (verified against the pre-feature code)
+
+A pre-feature binary (before #78) **can** read a manifest rebuilt by the new
+runtime — its `EmbeddingModelInfo` has no `backend`/`dtype` fields and no
+`deny_unknown_fields`, so the new keys are dropped on decode — and it serves
+the vectors **without any identity check**. Rolling back therefore restores
+service without an error, but it silently reintroduces exactly the
+cross-runtime embedding drift this feature exists to refuse: vectors rebuilt
+by the new runtime get queried with the old runtime's embeddings. Treat
+rollback as emergency-only, acceptable for FTS traffic and as a brief
+stopgap for vector traffic, not as a steady state.
+
+One hard caveat: an old binary's **incremental refresh re-serializes the
+manifest from its own identity-stripped struct**, erasing the recorded
+`backend`/`dtype`. If any rebuilt workspace is incrementally refreshed during
+the rollback window (including auto-update), the re-upgraded binary sees it
+as identity-less again and refuses until it is rebuilt a second time. Disable
+auto-update on rebuilt workspaces for the rollback window, or budget for a
+second rebuild pass after re-upgrading.
 
 ## Cross-runtime embedding drift (important)
 
@@ -214,7 +316,9 @@ Consequences, applied in this change:
   the reviewed re-pin the lane policy requires; the old floors referenced a
   binary that no longer exists.
 - Every runtime switch must be followed by a re-index of active workspaces
-  (see "Index compatibility" above).
+  (see "Index compatibility" above) — now enforced, not just advised, by the
+  backend-identity refusal (see "One-time fleet reindex after backend
+  identity").
 
 ## Open items (explicitly out of scope for this change)
 
@@ -222,8 +326,6 @@ Consequences, applied in this change:
   `zg-v*` tags, including the `libonnxruntime.dylib` / `load-dynamic`
   packaging decision and codesign/notarization or the documented
   `xattr -d com.apple.quarantine` alternative (#75 scope item 1).
-- Manifest `backend` + `dtype` identity per generation with a query-time
-  refusal and tests for the refusal path (#75 scope item 3).
 - Engine-level workspace-roots allowlist: the container wrapper enforced
   `ZVEC_GREP_WORKSPACE_ROOTS`; the native server trusts loopback callers the
   same way the container's MCP endpoint did. Needs an engine-level guard
