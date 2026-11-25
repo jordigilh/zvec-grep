@@ -15,7 +15,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{debug, warn};
 use zg_engine::{
     EngineError, ErrorSite, ZvecGrep,
     api::{
@@ -1120,7 +1120,7 @@ impl IndexOperationProvider for WorkspaceRuntimeManager {
         // identity no longer matches this runtime can still serve its stored
         // full-text results after a failed refresh. An unusable request
         // normalizes as vector-capable, so the refresh failure propagates.
-        let fts_only = !zg_engine::api::context::uses_vectors(&request).unwrap_or(true);
+        let fts_only = wait_search_fts_only(&request);
         let served_despite_failed_refresh = Box::pin(wait_for_search_refresh(&request, async {
             wait_for_search_admission(&request, async {
                 if known_runtime {
@@ -1232,6 +1232,24 @@ fn wait_search_reply(
     reply
 }
 
+/// Whether a wait-for-fresh search request never embeds query vectors, so a
+/// tolerated refresh failure can still serve its stored full-text results.
+/// An unusable request normalizes as vector-capable, so its refresh failure
+/// propagates instead of being served.
+fn wait_search_fts_only(request: &ContextOptions) -> bool {
+    match zg_engine::api::context::uses_vectors(request) {
+        Ok(uses_vectors) => !uses_vectors,
+        Err(error) => {
+            debug!(
+                code = error.code(),
+                "wait search request failed normalization: {}",
+                error.message()
+            );
+            false
+        }
+    }
+}
+
 async fn wait_for_search_refresh<T>(
     request: &ContextOptions,
     work: impl std::future::Future<Output = Result<T, EngineError>>,
@@ -1274,9 +1292,10 @@ fn ensure_refresh_succeeded(job: &IndexJobSnapshot) -> Result<(), EngineError> {
 }
 
 /// Whether a failed synchronous search refresh may be downgraded to a warning
-/// so the stored full-text results are still served. Only the terminal
-/// backend-identity mismatch is swallowable, and only for FTS-only requests;
-/// every other failure must reach the caller.
+/// so the stored full-text results are still served. Only the backend-mismatch
+/// error code is swallowable — mirroring the engine's automatic-refresh
+/// condition — and only for FTS-only requests; every other failure must reach
+/// the caller.
 fn is_swallowable_wait_refresh_error(fts_only: bool, error: &EngineError) -> bool {
     fts_only && error.code() == EngineError::INDEX_BACKEND_MISMATCH
 }
@@ -2707,6 +2726,12 @@ mod tests {
             Some("served_from_current_index")
         );
         assert_eq!(result.background_refresh.as_deref(), Some("failed"));
+        // The first wait search activated the resident watcher, so the calls
+        // below deterministically take the known-runtime arm.
+        assert!(
+            manager.runtime_snapshot(&root).watcher_active,
+            "the first wait search activates the resident watcher"
+        );
         // Vector requests keep the hard refusal: they cannot mix embeddings
         // across runtimes, even when a fresh refresh is requested.
         let error = wait_search(ContextRouteMode::Vector)
