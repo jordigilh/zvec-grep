@@ -184,6 +184,23 @@ async fn try_writer_context(
         let model = models
             .acquire(model_request)
             .map_err(ModelError::into_engine_error)?;
+        // The writer's model may not be loaded yet (a freshly registered
+        // incremental writer that has embedded nothing); prepare before the
+        // compatibility check so a load-time CPU fallback is detected here
+        // too, exactly like the read path.
+        model
+            .prepare(
+                crate::models::EmbeddingPrepareOptions {
+                    signal: options.signal.clone(),
+                    on_progress: None,
+                },
+                options
+                    .on_progress
+                    .clone()
+                    .map(crate::pipelines::indexing::model_progress::for_index),
+            )
+            .await
+            .map_err(ModelError::into_engine_error)?;
         assert_embedding_compatible(Some(manifest), &model)?;
         vec![model]
     } else {
@@ -227,9 +244,11 @@ async fn query_models(
     )?;
     // Cheap constructor-identity refusal first, so capsule mismatches and
     // other non-identity errors fail without a model load.
-    if let Err(error) = assert_embedding_compatible(Some(manifest), &model)
-        && error.code() != EngineError::INDEX_BACKEND_MISMATCH
-    {
+    let cheap = assert_embedding_compatible(Some(manifest), &model);
+    let cheap_is_mismatch = cheap
+        .as_ref()
+        .is_err_and(|error| error.code() == EngineError::INDEX_BACKEND_MISMATCH);
+    if !cheap_is_mismatch && let Err(error) = cheap {
         return Err(error);
     }
     // Load the runtime and re-check against the live identity: a session
@@ -238,7 +257,7 @@ async fn query_models(
     // the generation it published under its live identity. Preparation stays
     // lazy — it only runs for vector requests, which embed immediately
     // after, and is idempotent for an already-loaded runtime.
-    model
+    let prepared = model
         .prepare(
             crate::models::EmbeddingPrepareOptions {
                 signal: options.signal.clone(),
@@ -249,8 +268,16 @@ async fn query_models(
                 .clone()
                 .map(crate::pipelines::indexing::model_progress::for_index),
         )
-        .await
-        .map_err(ModelError::into_engine_error)?;
+        .await;
+    if let Err(prepare_error) = prepared {
+        // The identity mismatch — with its rebuild hint and both identities —
+        // must not hide behind a model download or initialization failure.
+        return Err(if cheap_is_mismatch {
+            cheap.expect_err("checked mismatch")
+        } else {
+            ModelError::into_engine_error(prepare_error)
+        });
+    }
     assert_embedding_compatible(Some(manifest), &model)?;
     Ok(vec![model])
 }

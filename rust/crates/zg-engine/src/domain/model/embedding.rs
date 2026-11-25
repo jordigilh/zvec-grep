@@ -150,6 +150,25 @@ impl EmbeddingModelInfo {
     }
 }
 
+/// Refusal for an update whose runtime identity differs from the identity
+/// the storage was opened with. Worded neutrally: the difference may predate
+/// the run (an already-fallen-back cached runtime) or appear mid-run.
+pub(crate) fn mid_run_backend_mismatch(
+    opened: Option<&BackendIdentity>,
+    runtime: Option<&BackendIdentity>,
+) -> EngineError {
+    let describe = |identity: Option<&BackendIdentity>| {
+        identity.map_or_else(|| "no recorded identity".to_owned(), ToString::to_string)
+    };
+    EngineError::index_backend_mismatch(format!(
+        "workspace index embedding backend identity does not match this runtime: \
+         the storage opened with {}, but the runtime produced vectors with {}; \
+         rebuild the index with `zg --index --rebuild`",
+        describe(opened),
+        describe(runtime)
+    ))
+}
+
 /// Structured refusal when the serving runtime differs from the stored one.
 ///
 /// Indexes built before backend recording have no identity; every such index

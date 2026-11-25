@@ -316,6 +316,17 @@ impl WorkspaceIndexService {
             on_progress: options.on_progress,
             signal: options.signal.clone(),
             changes: &options.changes,
+            // An incremental update appends to a live generation and must not
+            // mix runtimes, so the pipeline enforces the recorded identity
+            // per batch before committing. A fresh build accepts its starting
+            // identity and relabels its staging generation at publication.
+            expected_backend_identity: if build.is_some() {
+                None
+            } else {
+                opened_embeddings
+                    .first()
+                    .and_then(crate::domain::model::EmbeddingModelInfo::backend_identity)
+            },
         })
         .await;
         #[cfg(test)]
@@ -367,12 +378,12 @@ impl WorkspaceIndexService {
             publish_build(build, now)?;
         } else {
             // An incremental update appends to the live generation in place.
-            // If the runtime's identity moved after the storage opened (the
-            // provider fell back mid-run), the generation now holds vectors
-            // from two runtimes; relabeling it would publish the mixture
-            // under a single identity, so the update fails closed instead.
+            // The pipeline already refused any batch whose runtime identity
+            // deviated before committing it; this end-of-run check is a
+            // backstop for drift that bypassed the batches (for example a
+            // sticky fallen-back snapshot on a run that embedded nothing).
             if opened_identity != runtime_identity {
-                return Err(mid_build_identity_mismatch(
+                return Err(crate::domain::model::mid_run_backend_mismatch(
                     opened_identity.as_ref(),
                     runtime_identity.as_ref(),
                 ));
@@ -593,22 +604,6 @@ async fn check_incremental_identity(
 /// the storage opened. The live generation already holds vectors from both
 /// runtimes; it keeps its recorded identity, and the structured error names
 /// both so the caller can rebuild.
-fn mid_build_identity_mismatch(
-    opened: Option<&crate::domain::model::BackendIdentity>,
-    runtime: Option<&crate::domain::model::BackendIdentity>,
-) -> EngineError {
-    let describe = |identity: Option<&crate::domain::model::BackendIdentity>| {
-        identity.map_or_else(|| "no recorded identity".to_owned(), ToString::to_string)
-    };
-    EngineError::index_backend_mismatch(format!(
-        "workspace index embedding backend identity changed while indexing: \
-         the storage opened with {}, but the runtime produced vectors with {}; \
-         rebuild the index with `zg --index --rebuild`",
-        describe(opened),
-        describe(runtime)
-    ))
-}
-
 /// Record the identity of the runtime that actually produced this build's
 /// vectors before the generation is published. A session that fell back to
 /// CPU after the manifest target was created must not publish its
@@ -3103,7 +3098,32 @@ mod tests {
         }
     }
 
+    /// Whether the named file exists in the generation and is recorded as
+    /// fully indexed. `None` means the file has no record at all.
+    fn indexed_file_state(storage_home: &Path, suffix: &str) -> Option<bool> {
+        let storage = super::IndexStore::open(super::WorkspaceIndexStorageOptions::ReadOnly {
+            storage_path: storage_home.to_path_buf(),
+        })
+        .expect("read storage");
+        let files = storage.list_files().expect("file records");
+        let state = files
+            .iter()
+            .find(|file| file.relative_path.to_path_buf().ends_with(suffix))
+            .map(|file| {
+                matches!(
+                    file.index_status,
+                    crate::domain::FileIndexStatus::Indexed { .. }
+                )
+            });
+        storage.close().expect("close storage");
+        state
+    }
+
     #[tokio::test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one scenario spans build, refused incremental, and recovery"
+    )]
     async fn an_incremental_mid_run_fallback_refuses_instead_of_relabeling() {
         let directory = tempdir().expect("workspace");
         let root = std::fs::canonicalize(directory.path()).expect("root");
@@ -3160,7 +3180,8 @@ mod tests {
             .expect_err("incremental mid-run fallback must refuse");
         assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
         assert!(
-            error.message().contains("changed while indexing"),
+            error.message().contains("the storage opened with")
+                && error.message().contains("produced vectors with"),
             "{}",
             error.message()
         );
@@ -3182,6 +3203,39 @@ mod tests {
             .expect("schema");
         assert!(schema.contains("stub-gpu"), "{schema}");
         assert!(!schema.contains("stub-cpu"), "{schema}");
+        // The refusal fired before the flipped batch was committed: the
+        // changed file is absent or unfinished, so no fallback-runtime
+        // vectors entered the generation.
+        assert_ne!(
+            indexed_file_state(&unchanged.storage_home(), "extra.txt"),
+            Some(true),
+            "the refused batch must not leave indexed fallback vectors"
+        );
+        // Once the provider recovers, the same file is re-embedded and
+        // published on the recorded identity - there is nothing to launder,
+        // because no fallback vectors were committed.
+        let embeds_before_recovery = embeds.load(std::sync::atomic::Ordering::Acquire);
+        fallback_after.store(u32::MAX, std::sync::atomic::Ordering::Release);
+        service
+            .index(&manager, empty_index_options(&root))
+            .await
+            .expect("recovered runtime completes the incremental update");
+        assert!(
+            embeds.load(std::sync::atomic::Ordering::Acquire) > embeds_before_recovery,
+            "the changed file is re-embedded by the recovered runtime"
+        );
+        let recovered = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("recovered");
+        assert_eq!(
+            recovered.embedding().expect("embedding").backend.as_deref(),
+            Some("stub-gpu")
+        );
+        assert_eq!(
+            indexed_file_state(&recovered.storage_home(), "extra.txt"),
+            Some(true),
+            "the recovered run commits the changed file on the gpu identity"
+        );
         manager.close();
     }
 }
