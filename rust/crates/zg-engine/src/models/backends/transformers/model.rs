@@ -133,6 +133,13 @@ impl TransformersEmbeddingModel {
             .cache_dir
             .or_else(|| env::var_os("ZVEC_GREP_MODEL_CACHE").map(PathBuf::from))
             .unwrap_or_else(default_model_cache_dir);
+        // Record the execution path this binary resolves for the requested
+        // device. The label is fixed at construction: a mid-run CPU error
+        // fallback (SessionPool::fallback_to_cpu) is a degraded mode that is
+        // deliberately not re-recorded, because a mutated identity could never
+        // be matched again by a fresh process resolving the same device, which
+        // would turn a transient fallback into a permanent rebuild loop.
+        let execution_provider = resolve_execution_provider(options.device);
         Self {
             entry,
             info: EmbeddingModelInfo {
@@ -146,6 +153,8 @@ impl TransformersEmbeddingModel {
                 max_batch_size: entry.max_batch_size,
                 max_input_tokens: Some(entry.max_input_tokens),
                 max_image_bytes: None,
+                backend: Some(format!("onnx-{}", execution_provider.name())),
+                dtype: Some(entry.dtype.to_owned()),
             },
             model_cache_dir,
             device: options.device,

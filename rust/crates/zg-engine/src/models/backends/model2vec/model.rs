@@ -92,6 +92,8 @@ impl Model2VecEmbeddingModel {
                 max_batch_size: entry.max_batch_size,
                 max_input_tokens: Some(entry.max_input_tokens),
                 max_image_bytes: None,
+                backend: Some("model2vec".to_owned()),
+                dtype: Some("safetensors".to_owned()),
             },
             model_cache_dir,
             compute_runtime,

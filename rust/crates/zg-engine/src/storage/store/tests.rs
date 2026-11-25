@@ -371,6 +371,8 @@ fn schema() -> EmbeddingModelInfo {
         max_batch_size: 32,
         max_input_tokens: None,
         max_image_bytes: None,
+        backend: None,
+        dtype: None,
     }
 }
 
@@ -551,6 +553,63 @@ fn open(path: &Path, read_only: bool) -> IndexStore {
         }
     };
     IndexStore::open(options).expect("open real zvec storage")
+}
+
+#[test]
+fn stored_schema_round_trips_backend_identity_and_refuses_foreign_runtimes() {
+    fn open_with(path: &Path, embeddings: Vec<EmbeddingModelInfo>) -> EngineResult<IndexStore> {
+        IndexStore::open(WorkspaceIndexStorageOptions::ReadWrite {
+            storage_path: path.to_owned(),
+            embeddings,
+        })
+    }
+
+    let directory = tempfile::tempdir().expect("workspace");
+    let recorded = EmbeddingModelInfo {
+        backend: Some("onnx-cpu".into()),
+        dtype: Some("q8".into()),
+        ..schema()
+    };
+    let storage = open_with(directory.path(), vec![recorded.clone()]).expect("record schema");
+    storage.close().expect("checkpoint");
+    let schema_path = directory.path().join("storage/schema.json");
+    let text = std::fs::read_to_string(&schema_path).expect("schema text");
+    assert!(text.contains("\"backend\":\"onnx-cpu\""));
+    assert!(text.contains("\"dtype\":\"q8\""));
+
+    // The same identity reopens the stored generation.
+    open_with(directory.path(), vec![recorded.clone()]).expect("same backend reopens");
+    // A different backend or dtype refuses with a structured error.
+    for (backend, dtype) in [("onnx-coreml", "q8"), ("onnx-cpu", "fp32")] {
+        let foreign = EmbeddingModelInfo {
+            backend: Some(backend.into()),
+            dtype: Some(dtype.into()),
+            ..schema()
+        };
+        let error = open_with(directory.path(), vec![foreign])
+            .err()
+            .expect("foreign runtime must refuse");
+        assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
+        assert!(error.message().contains(backend), "{}", error.message());
+        assert!(error.message().contains(dtype), "{}", error.message());
+        assert!(error.message().contains("onnx-cpu"), "{}", error.message());
+        assert!(error.message().contains("rebuild"), "{}", error.message());
+    }
+    // A schema recorded before backend identities fails closed as well.
+    let error = open_with(directory.path(), vec![schema()])
+        .err()
+        .expect("unknown stored identity must refuse");
+    assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
+    // A legacy schema written without the fields still reads back unchanged.
+    let mut legacy = serde_json::from_str::<serde_json::Value>(&text).expect("schema json");
+    let embedding = legacy["embeddings"][0].as_object_mut().expect("embedding");
+    embedding.remove("backend");
+    embedding.remove("dtype");
+    std::fs::write(&schema_path, legacy.to_string()).expect("legacy schema");
+    let error = open_with(directory.path(), vec![recorded])
+        .err()
+        .expect("legacy schema must refuse the recording runtime");
+    assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
 }
 
 fn fixture(

@@ -1040,6 +1040,8 @@ mod tests {
                     max_batch_size: 8,
                     max_input_tokens: None,
                     max_image_bytes: None,
+                    backend: None,
+                    dtype: None,
                 },
                 calls: Arc::new(Mutex::new(Vec::new())),
             }

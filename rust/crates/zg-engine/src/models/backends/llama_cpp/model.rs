@@ -142,6 +142,8 @@ impl LlamaCppEmbeddingModel {
                 max_batch_size: entry.max_batch_size,
                 max_input_tokens: Some(entry.context_size),
                 max_image_bytes: None,
+                backend: Some("llama-cpp".to_owned()),
+                dtype: Some(llama_cpp_dtype(entry)),
             },
             model_cache_dir,
             device: options.device,
@@ -422,6 +424,43 @@ const fn requested_device_name(device: Option<Device>) -> &'static str {
         Some(Device::Cuda) => "cuda",
         None | Some(Device::Cpu) => "cpu",
     }
+}
+
+/// Quantization label of the pinned GGUF artifact, e.g. `Q8_0` -> `q8_0`.
+/// The artifact is content-pinned by the catalog, so its file name is a stable
+/// part of the backend identity recorded for a generation.
+fn llama_cpp_dtype(entry: LlamaCppConfig) -> String {
+    entry
+        .download
+        .artifacts
+        .first()
+        .map(|artifact| artifact.path)
+        .map_or_else(|| "gguf".to_owned(), gguf_quant_dtype)
+}
+
+/// Extract a quantization token from a pinned GGUF file name, lowercased.
+/// Matches the llama.cpp quant families (`Q8_0`, `Q4`, `Q4_K_M`, `IQ4_XS`,
+/// `F16`, `BF16`); a name without a quant token falls back to `gguf`. The
+/// second byte must be a digit (or the exact `F16`/`BF16` forms), so model
+/// names like `Qwen3` or `Falcon` are never mistaken for a quant label.
+fn gguf_quant_dtype(file_name: &str) -> String {
+    let stem = file_name
+        .rsplit_once('.')
+        .map_or(file_name, |(stem, _)| stem);
+    stem.rsplit('-')
+        .find(|part| {
+            let bytes = part.as_bytes();
+            match bytes.first() {
+                Some(b'Q') => bytes.get(1).is_some_and(u8::is_ascii_digit),
+                Some(b'I') => {
+                    part.starts_with("IQ") && bytes.get(2).is_some_and(u8::is_ascii_digit)
+                }
+                Some(b'F') => *part == "F16",
+                Some(b'B') => *part == "BF16",
+                _ => false,
+            }
+        })
+        .map_or_else(|| "gguf".to_owned(), str::to_ascii_lowercase)
 }
 
 fn report_warning(
