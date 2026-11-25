@@ -504,23 +504,29 @@ fn llama_cpp_dtype(entry: LlamaCppConfig) -> Result<String, ModelError> {
 
 /// Extract a quantization token from a pinned GGUF file name, lowercased.
 /// Matches the llama.cpp quant families (`Q8_0`, `Q4`, `Q4_K_M`, `IQ4_XS`,
-/// `F16`, `BF16`); a name without a quant token yields `None`. The second
-/// byte must be a digit (or the exact `F16`/`BF16` forms), so model names
-/// like `Qwen3` or `Falcon` are never mistaken for a quant label.
+/// `F16`, `BF16`) in any separator-delimited segment of the stem — `-`, `.`,
+/// or any other non-alphanumeric boundary — and accepts lowercase tokens
+/// (`model.q8_0.gguf`). `_` stays inside a token so `Q4_K_M` keeps its
+/// shape. A name without a quant token yields `None`. A segment must begin
+/// with a llama.cpp quant form (second byte a digit, or the exact `F16`/
+/// `BF16` shapes), so model names like `Qwen3` or `Falcon` are never
+/// mistaken for a quant label.
 fn gguf_quant_dtype(file_name: &str) -> Option<String> {
     let stem = file_name
         .rsplit_once('.')
         .map_or(file_name, |(stem, _)| stem);
-    stem.rsplit('-')
+    stem.rsplit(|character: char| !character.is_ascii_alphanumeric() && character != '_')
         .find(|part| {
             let bytes = part.as_bytes();
             match bytes.first() {
-                Some(b'Q') => bytes.get(1).is_some_and(u8::is_ascii_digit),
-                Some(b'I') => {
-                    part.starts_with("IQ") && bytes.get(2).is_some_and(u8::is_ascii_digit)
+                Some(b'Q' | b'q') => bytes.get(1).is_some_and(u8::is_ascii_digit),
+                Some(b'I' | b'i') => {
+                    part.get(..2)
+                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("iq"))
+                        && bytes.get(2).is_some_and(u8::is_ascii_digit)
                 }
-                Some(b'F') => *part == "F16",
-                Some(b'B') => *part == "BF16",
+                Some(b'F' | b'f') => part.eq_ignore_ascii_case("F16"),
+                Some(b'B' | b'b') => part.eq_ignore_ascii_case("BF16"),
                 _ => false,
             }
         })

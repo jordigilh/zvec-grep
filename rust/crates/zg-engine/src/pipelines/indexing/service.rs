@@ -2761,7 +2761,7 @@ mod tests {
         // The generation records the identity of the runtime that built it.
         let embedding = manifest.embedding().expect("embedding");
         assert_eq!(embedding.backend.as_deref(), Some("model2vec"));
-        assert_eq!(embedding.dtype.as_deref(), Some("safetensors"));
+        assert_eq!(embedding.dtype.as_deref(), Some("f16"));
 
         let vector = || {
             route_options(

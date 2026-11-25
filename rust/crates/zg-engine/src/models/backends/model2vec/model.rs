@@ -93,7 +93,7 @@ impl Model2VecEmbeddingModel {
                 max_input_tokens: Some(entry.max_input_tokens),
                 max_image_bytes: None,
                 backend: Some("model2vec".to_owned()),
-                dtype: Some("safetensors".to_owned()),
+                dtype: Some(entry.dtype.label().to_owned()),
             },
             model_cache_dir,
             compute_runtime,
@@ -166,6 +166,20 @@ impl Model2VecEmbeddingModel {
                 self.entry.dimension,
             )
             .await?;
+        // The identity label must describe the pinned artifact, not just the
+        // catalog: a drifted catalog entry fails the load instead of
+        // silently recording a wrong dtype for every generation.
+        if table.dtype != self.entry.dtype {
+            return Err(ModelError::internal(format!(
+                "Model2Vec catalog dtype {} does not match the pinned artifact tensor dtype {} (model={})",
+                self.entry.dtype.label(),
+                table.dtype.label(),
+                self.entry.reference
+            ))
+            // A catalog/artifact drift is terminal for every input, not a
+            // per-file content failure, so the embed path must fail fast.
+            .shared());
+        }
         let tokenizer = self.dependencies.load_tokenizer(&tokenizer_source).await?;
         reporter.finish();
         Ok(LoadedModel { tokenizer, table })

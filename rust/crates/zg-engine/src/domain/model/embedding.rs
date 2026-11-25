@@ -296,7 +296,8 @@ mod tests {
         for (stored_backend, stored_dtype, current_backend, current_dtype) in [
             ("onnx-cpu", "q8", "onnx-coreml", "q8"),
             ("onnx-cpu", "q8", "onnx-cpu", "fp32"),
-            ("model2vec", "safetensors", "onnx-cpu", "q8"),
+            ("model2vec", "f16", "onnx-cpu", "q8"),
+            ("model2vec", "f16", "model2vec", "f32"),
         ] {
             let stored = with_identity(fixture(), stored_backend, stored_dtype);
             let current = with_identity(fixture(), current_backend, current_dtype);

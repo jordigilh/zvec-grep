@@ -373,6 +373,88 @@ async fn rejects_cancelled_embeddings_without_corrupting_the_loaded_runtime() {
     assert_eq!(dependencies.table_loads.load(Ordering::Relaxed), 1);
 }
 
+#[test]
+fn dtype_labels_the_pinned_artifact_tensor_format() {
+    // The dtype identity is the numeric format of the pinned safetensors
+    // tensor, not the container format: every model2vec generation shares
+    // one value, so a container label would contribute no discrimination.
+    let model = Model2VecEmbeddingModel::with_dependencies(
+        fixture_entry(),
+        ModelConfig::default(),
+        Arc::new(FixtureDependencies::new(FixtureTokenizerMode::Oracle)),
+        crate::models::runtime::ModelComputeRuntime::shared(),
+    );
+    assert_eq!(model.info().dtype.as_deref(), Some("f16"));
+    let identity = model.info().backend_identity().expect("identity");
+    assert_eq!(identity.backend, "model2vec");
+    assert_eq!(identity.dtype, "f16");
+    // The pinned potion artifacts store F16 tensors.
+    for reference in [
+        "local/potion-retrieval-32m",
+        "local/potion-multilingual-128m",
+        "local/potion-code-16m-v2",
+    ] {
+        let entry = crate::models::catalog::get_embedding_model_catalog_entry(reference)
+            .and_then(crate::models::catalog::EmbeddingCatalogEntry::model2vec_config)
+            .expect("model2vec catalog entry");
+        assert_eq!(
+            entry.dtype,
+            crate::models::catalog::Model2VecDtype::F16,
+            "{reference}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn catalog_dtype_drift_fails_the_load_instead_of_mislabeling_the_identity() {
+    let root = TempDir::new().expect("temporary directory should be created");
+    let mut entry = fixture_entry();
+    // The fixture artifact stores an F16 tensor; a catalog claiming F32
+    // must not record an identity the artifact cannot back.
+    entry.dtype = crate::models::catalog::Model2VecDtype::F32;
+    let model = Model2VecEmbeddingModel::with_dependencies(
+        entry,
+        ModelConfig {
+            cache_dir: Some(root.path().to_path_buf()),
+            ..ModelConfig::default()
+        },
+        Arc::new(FixtureDependencies::new(FixtureTokenizerMode::Oracle)),
+        crate::models::runtime::ModelComputeRuntime::shared(),
+    );
+    let error = model
+        .prepare(EmbeddingPrepareOptions::default())
+        .await
+        .expect_err("dtype drift must fail the load");
+    assert_eq!(error.code(), crate::EngineError::INTERNAL);
+    assert!(
+        error.to_string().contains("f32") && error.to_string().contains("f16"),
+        "{error}"
+    );
+    // The embed path returns load errors without the prepare wrapper, so
+    // the drift must already carry the shared (fail-fast) disposition.
+    assert!(!error.is_retryable());
+    let mut entry = fixture_entry();
+    entry.dtype = crate::models::catalog::Model2VecDtype::F32;
+    let model = Model2VecEmbeddingModel::with_dependencies(
+        entry,
+        ModelConfig {
+            cache_dir: Some(root.path().to_path_buf()),
+            ..ModelConfig::default()
+        },
+        Arc::new(FixtureDependencies::new(FixtureTokenizerMode::Oracle)),
+        crate::models::runtime::ModelComputeRuntime::shared(),
+    );
+    let error = model
+        .embed(
+            &[vec![Content::Text("drifted".to_owned())]],
+            EmbeddingOptions::default(),
+        )
+        .await
+        .expect_err("dtype drift must fail the embed path");
+    assert_eq!(error.code(), crate::EngineError::INTERNAL);
+    assert!(!error.is_retryable());
+}
+
 fn fixture_entry() -> Model2VecConfig {
     let download =
         crate::models::catalog::get_embedding_model_catalog_entry("local/potion-code-16m-v2")
@@ -386,6 +468,7 @@ fn fixture_entry() -> Model2VecConfig {
         repo: "test/potion",
         revision: "0123456789abcdef",
         download,
+        dtype: crate::models::catalog::Model2VecDtype::F16,
         model_file: "model.safetensors",
         embedding_tensor: "embeddings",
         tokenizer_file: "tokenizer.json",
@@ -556,6 +639,7 @@ impl Model2VecDependencies for FixtureDependencies {
             values: vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 2.0],
             dimension: 3,
             rows: 3,
+            dtype: crate::models::catalog::Model2VecDtype::F16,
         })
     }
 }

@@ -1,6 +1,6 @@
 use super::types::{
-    BekkoConfig, EmbeddingCatalogEntry, LlamaCppConfig, Model2VecConfig, QwenConfig,
-    TransformersConfig,
+    BekkoConfig, EmbeddingCatalogEntry, LlamaCppConfig, Model2VecConfig, Model2VecDtype,
+    QwenConfig, TransformersConfig,
 };
 use crate::domain::model::Metric;
 use crate::models::artifacts::{ArtifactConfig, ArtifactDownloadConfig, ArtifactSourceConfig};
@@ -378,6 +378,7 @@ const CATALOG: [EmbeddingCatalogEntry; 15] = [
             }),
             artifacts: POTION_RETRIEVAL_ARTIFACTS,
         },
+        dtype: Model2VecDtype::F16,
         model_file: "model.safetensors",
         embedding_tensor: "embeddings",
         tokenizer_file: "tokenizer.json",
@@ -407,6 +408,7 @@ const CATALOG: [EmbeddingCatalogEntry; 15] = [
             }),
             artifacts: POTION_MULTILINGUAL_ARTIFACTS,
         },
+        dtype: Model2VecDtype::F16,
         model_file: "model.safetensors",
         embedding_tensor: "embeddings",
         tokenizer_file: "tokenizer.json",
@@ -436,6 +438,7 @@ const CATALOG: [EmbeddingCatalogEntry; 15] = [
             }),
             artifacts: POTION_CODE_ARTIFACTS,
         },
+        dtype: Model2VecDtype::F16,
         model_file: "model.safetensors",
         embedding_tensor: "embeddings",
         tokenizer_file: "tokenizer.json",
