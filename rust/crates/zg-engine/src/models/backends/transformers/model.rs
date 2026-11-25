@@ -444,13 +444,12 @@ impl SessionPool {
             let mut state = lock_std_mutex(&self.state);
             // One cached runtime serves leases with different execution limits
             // (indexing and queries), so sessions created for an earlier lease
-            // can outlive that lease's budget. The desired budget and both the
-            // retirement sweep and the claim below run under this lock, but a
-            // completing caller clears `busy` without it, so a slot that was
-            // busy during the sweep can be idle by the claim. The claim
-            // therefore re-checks the budget itself: an oversized session is
-            // never handed out, it is retired by a later sweep instead.
-            // Reusing an oversized session would oversubscribe cores;
+            // can outlive that lease's budget. The retirement sweep and the
+            // claim below run under this lock, and completions clear `busy`
+            // under it too, so a session's budget is evaluated consistently.
+            // The claim re-checks the budget itself as defense in depth: an
+            // oversized session is never handed out; a later sweep retires
+            // it. Reusing an oversized session would oversubscribe cores;
             // undersized sessions stay reusable, which can only underutilize
             // the machine, never exceed the budget.
             let desired_budget = if state.provider == TransformersExecutionProvider::Cpu {
@@ -480,7 +479,16 @@ impl SessionPool {
                 let mut session = lock_session(&slot.session);
                 let result = inference(&mut session);
                 drop(session);
-                slot.busy.store(false, Ordering::Release);
+                {
+                    // Serialize the busy-to-idle transition with the pool
+                    // lock: a caller holds this lock from its retention sweep
+                    // and claim scan until `Condvar::wait` releases it, so an
+                    // unlocked clear could land in that window and its
+                    // `notify_one` (not buffered) would be lost, leaving the
+                    // waiter asleep while the slot sits idle.
+                    let _state = lock_std_mutex(&self.state);
+                    slot.busy.store(false, Ordering::Release);
+                }
                 self.changed.notify_one();
                 return result;
             }

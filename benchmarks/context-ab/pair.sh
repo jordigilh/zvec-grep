@@ -38,9 +38,9 @@ for side in a b; do
   then
     echo "label=$NAME-$side exit=0 wall=$(( $(date +%s) - START ))s"
   else
-    status=$?
-    echo "label=$NAME-$side exit=$status wall=$(( $(date +%s) - START ))s (see $BASE/$NAME-$side.index.log)"
-    exit $status
+    index_status=$?
+    echo "label=$NAME-$side exit=$index_status wall=$(( $(date +%s) - START ))s (see $BASE/$NAME-$side.index.log)"
+    exit $index_status
   fi
 done
 echo "PAIR_DONE $NAME"
