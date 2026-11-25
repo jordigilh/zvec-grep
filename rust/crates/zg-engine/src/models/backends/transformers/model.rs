@@ -480,23 +480,19 @@ impl SessionPool {
             }) {
                 state.thread_budget.acquire(slot.intra_threads);
                 drop(state);
+                // The lease releases the aggregate thread budget and clears
+                // `busy` in Drop, so a panic inside the inference closure
+                // cannot leak either: a leaked budget amounting to the whole
+                // core count would block every later CPU caller with no
+                // future release to wake it.
+                let lease = SessionLease {
+                    pool: self,
+                    slot: Arc::clone(&slot),
+                };
                 let mut session = lock_session(&slot.session);
                 let result = inference(&mut session);
                 drop(session);
-                {
-                    // Serialize the busy-to-idle transition with the pool
-                    // lock: a caller holds this lock from its retention sweep
-                    // and claim scan until `Condvar::wait` releases it, so an
-                    // unlocked clear could land in that window and its
-                    // `notify_one` (not buffered) would be lost, leaving the
-                    // waiter asleep while the slot sits idle.
-                    let mut state = lock_std_mutex(&self.state);
-                    state.thread_budget.release(slot.intra_threads);
-                    slot.busy.store(false, Ordering::Release);
-                }
-                // Waiters can be blocked on the aggregate thread budget, not
-                // only on slot availability, so wake them all.
-                self.changed.notify_all();
+                drop(lease);
                 return result;
             }
 
@@ -699,6 +695,37 @@ impl SessionPool {
         })];
         self.changed.notify_all();
         Ok(true)
+    }
+}
+
+/// RAII lease over one claimed pool session. Drop releases the aggregate CPU
+/// thread budget and clears the slot's busy flag under the pool lock, then
+/// wakes all waiters — including on panic unwind, so inference closures
+/// cannot leak the thread budget (a leaked cores-sized amount would deadlock
+/// every later CPU caller) or the slot.
+struct SessionLease<'a> {
+    pool: &'a SessionPool,
+    slot: Arc<SessionSlot>,
+}
+
+impl Drop for SessionLease<'_> {
+    fn drop(&mut self) {
+        {
+            // Serialize the busy-to-idle transition with the pool lock: a
+            // caller holds that lock from its retention sweep and claim scan
+            // until `Condvar::wait` releases it, so an unlocked clear could
+            // land in that window and its unbuffered notify would be lost,
+            // leaving the waiter asleep while the slot sits idle. Releasing
+            // the thread budget under the same lock also keeps the accounting
+            // exact for sessions a concurrent `fallback_to_cpu` removed from
+            // the pool while they were still running.
+            let mut state = lock_std_mutex(&self.pool.state);
+            state.thread_budget.release(self.slot.intra_threads);
+            self.slot.busy.store(false, Ordering::Release);
+        }
+        // Waiters can be blocked on the aggregate thread budget, not only on
+        // slot availability, so wake them all.
+        self.pool.changed.notify_all();
     }
 }
 

@@ -494,6 +494,90 @@ async fn cached_minilm_runs_real_onnx_inference() {
         assert!((actual - expected).abs() < 1e-5);
     }
 
+    let cores = available_cores();
+
+    // Overlapping leases queue on the aggregate thread budget: while one
+    // lease holds the machine-wide session, a claim that cannot fit the
+    // remaining budget waits until it releases. The holder parks on a condvar
+    // so its budget stays claimed deterministically; the waiter's progress is
+    // counted with an atomic, never a clock. This runs before the pooled
+    // run(2) phase below so the pool still holds its initial all-cores
+    // session, making the waiter's block a budget block rather than a slot
+    // availability block: it creates its own session, which fits only once
+    // the holder releases.
+    {
+        let holder_entered = Arc::new((StdMutex::new(false), Condvar::new()));
+        let release_holder = Arc::new((StdMutex::new(false), Condvar::new()));
+        let holder_entered_for_closure = Arc::clone(&holder_entered);
+        let release_holder_for_closure = Arc::clone(&release_holder);
+        let holder_loaded = Arc::clone(&loaded);
+        let holder = thread::spawn(move || {
+            holder_loaded
+                .sessions
+                .run(1, move |_session| -> Result<(), ModelError> {
+                    let (lock, cvar) = &*holder_entered_for_closure;
+                    *lock_std_mutex(lock) = true;
+                    cvar.notify_one();
+                    let (release_lock, release_cvar) = &*release_holder_for_closure;
+                    let mut released = lock_std_mutex(release_lock);
+                    while !*released {
+                        released = release_cvar
+                            .wait(released)
+                            .unwrap_or_else(PoisonError::into_inner);
+                    }
+                    Ok(())
+                })
+                .expect("holder lease");
+        });
+        // The claim happens before the closure runs, so once the holder is
+        // inside its closure the aggregate budget holds the whole machine.
+        {
+            let (lock, cvar) = &*holder_entered;
+            let mut entered = lock_std_mutex(lock);
+            while !*entered {
+                entered = cvar.wait(entered).unwrap_or_else(PoisonError::into_inner);
+            }
+        }
+        assert_eq!(
+            lock_std_mutex(&loaded.sessions.state).thread_budget.active,
+            cores
+        );
+        let waiter_ran = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let waiter_loaded = Arc::clone(&loaded);
+        let waiter_ran_for_closure = Arc::clone(&waiter_ran);
+        let waiter = thread::spawn(move || {
+            waiter_loaded
+                .sessions
+                .run(cores.max(2), move |_session| -> Result<(), ModelError> {
+                    waiter_ran_for_closure.fetch_add(1, Ordering::Release);
+                    Ok(())
+                })
+                .expect("waiter lease");
+        });
+        // The waiter needs at least one more intra-op thread than remains:
+        // under the pool lock, where the claim itself runs, it does not fit,
+        // and it has not run.
+        assert!(
+            !lock_std_mutex(&loaded.sessions.state)
+                .thread_budget
+                .fits(Some(1))
+        );
+        assert_eq!(waiter_ran.load(Ordering::Acquire), 0);
+        // Release the holder; the waiter must now proceed.
+        {
+            let (lock, cvar) = &*release_holder;
+            *lock_std_mutex(lock) = true;
+            cvar.notify_one();
+        }
+        holder.join().expect("holder thread");
+        waiter.join().expect("waiter thread");
+        assert_eq!(waiter_ran.load(Ordering::Acquire), 1);
+        assert_eq!(
+            lock_std_mutex(&loaded.sessions.state).thread_budget.active,
+            0
+        );
+    }
+
     let barrier = Arc::new(std::sync::Barrier::new(2));
     let first_loaded = Arc::clone(&loaded);
     let first_barrier = Arc::clone(&barrier);
@@ -518,6 +602,35 @@ async fn cached_minilm_runs_real_onnx_inference() {
         .expect("second compute task")
         .expect("second pooled session");
     assert_eq!(lock_std_mutex(&loaded.sessions.state).sessions.len(), 2);
+
+    // A panicking inference closure must not leak the slot or the aggregate
+    // CPU thread budget: the RAII lease releases both during unwind, so the
+    // pool still serves work afterwards.
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = loaded
+            .sessions
+            .run(1, |_session| -> Result<(), ModelError> {
+                panic!("inference panic")
+            });
+    }));
+    std::panic::set_hook(previous_hook);
+    assert!(panicked.is_err());
+    {
+        let state = lock_std_mutex(&loaded.sessions.state);
+        assert_eq!(state.thread_budget.active, 0);
+        assert!(
+            state
+                .sessions
+                .iter()
+                .all(|slot| !slot.busy.load(Ordering::Acquire))
+        );
+    }
+    loaded
+        .sessions
+        .run(1, |_session| Ok::<(), ModelError>(()))
+        .expect("pool serves work after a panicking inference");
 }
 
 #[cfg(target_os = "macos")]
