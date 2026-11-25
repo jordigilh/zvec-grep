@@ -241,6 +241,38 @@ with `--features mlx` (all non-GPU logic) **and** the macOS lane runs the
 MLX numerics test plus a smoke embedding on a confirmed Metal device.
 Local-only verification does not satisfy this.
 
+## Landing policy (decided 2026-11-25)
+
+MLX ships **opt-in**; the ORT CPU path stays the default everywhere.
+
+- One cargo feature `mlx` on `zg-engine`, declared only under
+  `[target.'cfg(target_os = "macos")'.dependencies]`, so it cannot be enabled
+  on Linux or Windows. Selecting `local/jina-embeddings-v2-base-code-mlx` is
+  the only way to reach it: no automatic promotion, and no silent fallback in
+  either direction — an MLX index never mixes with an ONNX one.
+- Rationale: this fork already diverges from upstream (#73, #75, #77 are fork
+  work), and upstream cannot adopt MLX without a second runtime for models it
+  already runs through ORT. Keeping the *default* path upstream-compatible
+  means normal users never carry the fork's dependency risk, while the 4-5x
+  engine-level and ~20x wall-clock gains stay available to anyone who opts in.
+- Promoting MLX to the macOS default is a separate, later decision with its
+  own lane run. It is not part of the first slice.
+
+**Exit criteria (recorded so the dependency risk is bounded).** If `mlx-rs`
+publishes no release for six months, or stays broken against a new MLX release
+for more than a week, the fallback order is:
+
+1. Pin the last working `mlx-rs`. The backend uses ~8 primitives (matmul,
+   softmax, erf, fast layer-norm, safetensors, `transforms::compile`), all
+   stable across recent releases.
+2. Bind `mlx-sys`'s C API directly — same primitives, same Apple mainline.
+3. Delete the feature, `backends/mlx/`, and the catalog entry. The
+   `EmbeddingModel` SPI and the factory need no change, so removal is a small
+   revert rather than a refactor.
+
+The numerics gate (cosine >= 0.999) makes breakage loud: a stale-but-correct
+crate is tolerable, a wrong one fails CI.
+
 **Confidence: 0.78** that the slice lands within the estimate and keeps
 >= 3x over the CPU path in the shipped Rust backend (`transforms::compile`
 is exposed, so the compiled 3.7-5.2x is the target). Deductions: `Array
