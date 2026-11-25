@@ -504,9 +504,23 @@ impl SessionPool {
         max_sessions: usize,
         inference: impl Fn(&mut Session) -> Result<T, ModelError>,
     ) -> Result<T, ModelError> {
+        self.run_with_cancellation(max_sessions, None, inference)
+    }
+
+    /// Claims a pooled session for one inference call. `signal` makes the
+    /// admission wait cancellation-aware: a cancelled request parked on the
+    /// condvar returns promptly instead of staying queued behind a saturated
+    /// thread budget until unrelated inference releases capacity.
+    fn run_with_cancellation<T>(
+        &self,
+        max_sessions: usize,
+        signal: Option<&CancellationToken>,
+        inference: impl Fn(&mut Session) -> Result<T, ModelError>,
+    ) -> Result<T, ModelError> {
         let max_sessions = max_sessions.max(1);
         loop {
             let mut state = lock_std_mutex(&self.state);
+            check_cancelled(signal)?;
             // One cached runtime serves leases with different execution limits
             // (indexing and queries), so sessions created for an earlier lease
             // can outlive that lease's budget. The retirement sweep and the
@@ -600,9 +614,13 @@ impl SessionPool {
             }
 
             state.waiting += 1;
-            state = self
+            // Condvar wakeups drive progress; the timeout only bounds how
+            // long a cancelled request can stay parked, since the pool has no
+            // cancellation-driven wakeup of its own. The loop top rechecks
+            // the token on every wake.
+            let (mut state, _wake) = self
                 .changed
-                .wait(state)
+                .wait_timeout(state, CANCELLATION_POLL)
                 .unwrap_or_else(PoisonError::into_inner);
             state.waiting -= 1;
             drop(state);
@@ -1133,6 +1151,11 @@ fn configure_directml(
 /// longer than the budget still runs alone.
 const MAX_BATCH_TOKENS: usize = 4096;
 
+/// How long a pooled caller may park between cancellation rechecks. This is a
+/// latency bound on cancelling an already-queued request, not a progress
+/// mechanism: completions, creations, and retirements notify every waiter.
+const CANCELLATION_POLL: Duration = Duration::from_millis(250);
+
 fn embed_batch(
     loaded: &LoadedTransformersModel,
     texts: &[String],
@@ -1212,9 +1235,11 @@ fn run_cpu_batched(
                 .collect::<Vec<_>>();
             let prepared =
                 prepare_batch_from_probe(&loaded.tokenizers, sub_texts, entry, &sub_probe)?;
-            loaded.sessions.run(execution_concurrency, |session| {
-                run_session(session, &prepared, entry, signal)
-            })
+            loaded
+                .sessions
+                .run_with_cancellation(execution_concurrency, signal, |session| {
+                    run_session(session, &prepared, entry, signal)
+                })
         },
     )
 }
