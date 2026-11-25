@@ -25,23 +25,24 @@ prebuilt-metallib `mlx-sys` path, neither of which exists today).
 
 ## Measurements (2026-11-25, 12-core Apple Silicon, CLT-only host)
 
-Corpus: `rust/crates/zg-engine/src` (158 files, 126k real tokens after the
-1024-token cap), longest-first packing, padded 8 x 1024 batches, single
-process. Every row below is reproducible with the committed
+Corpus: `rust/crates/zg-engine/src` (158 files, each pre-truncated to 6000
+chars — below what the 1024-token cap already removes — giving 126k real
+tokens after the cap), longest-first packing, padded 8 x 1024 batches,
+single process. Every row below is reproducible with the committed
 `jina_mlx_spike.py` (`--eager`, `--dtype bf16`, `--batch 16`, and
 `--skip-checks` for the MLX-only RSS runs).
 
 | Engine | Wall | Throughput | Files/s | Peak RSS |
 |---|---|---|---|---|
-| ORT CPU q8 (12 intra-op threads), production artifact | 58.4 s | 2 159 tok/s | 2.70 | not measured |
-| MLX GPU fp16, eager | 18.9 s | 6 662 tok/s | 8.35 | 0.82 GB (MLX-only) |
-| MLX GPU fp16, `mx.compile` | **13.7-14.6 s** | **8 621-9 223 tok/s** | **10.8-11.6** | 0.82 GB (MLX-only) |
-| MLX GPU fp16, `mx.compile`, batch 16 | 13.9 s | 9 078 tok/s | 11.37 | 0.82 GB (MLX-only) |
-| MLX GPU bf16, `mx.compile` | 15.1 s | 8 363 tok/s | 10.48 | 0.82 GB (MLX-only) |
+| ORT CPU q8 (12 intra-op threads), production artifact | 58.4-70.8 s | 1 780-2 159 tok/s | 2.2-2.7 | not measured |
+| MLX GPU fp16, eager | 18.1 s | 6 959 tok/s | 8.72 | 0.82 GB (MLX-only) |
+| MLX GPU fp16, `mx.compile` | **13.7 s** | **9 226 tok/s** | **11.56** | 0.82 GB (MLX-only) |
+| MLX GPU fp16, `mx.compile`, batch 16 | 13.5 s | 9 355 tok/s | 11.72 | 0.82 GB (MLX-only) |
+| MLX GPU bf16, `mx.compile` | 14.6 s | 8 621 tok/s | 10.80 | 0.82 GB (MLX-only) |
 
-- **Engine-vs-engine speedup: 3.7-4.3x** (identical batches, identical
-  tokenizer). This is the honest ceiling number: it isolates the compute
-  engine from batching policy.
+- **Engine-vs-engine speedup: 3.7-5.2x** (identical batches, identical
+  tokenizer, same-run pairs). This is the honest ceiling number: it isolates
+  the compute engine from batching policy.
 - Against the **current production CPU path** (max_batch_size 2, token-budget
   sub-batching; #73 baseline 311 s wall / 0.78 GB RSS for 166 files) the same
   MLX configuration is ~20x faster wall-clock, because the GPU path also
@@ -51,9 +52,7 @@ process. Every row below is reproducible with the committed
   measured in a process without the ONNX reference sessions), versus the
   measured CoreML regression (7.2 GB RSS, 3.1x slower than CPU) that closed
   the ORT-CoreML route in #74.
-- bf16 lands within noise of fp16 on this workload; fp16 is the right
-  default.
-- Run-to-run spread on this host (MLX 13.7-14.6 s, ORT 49.7-60.7 s across
+- Run-to-run spread on this host (MLX 13.5-14.6 s, ORT 49.7-70.8 s across
   sessions) is host load, not the engines; every ratio above uses same-run
   pairs.
 
@@ -64,9 +63,18 @@ The spike implements the full JinaBERT forward pass from the fp16
 reference from the same revision:
 
 - Embedding cosine (MLX fp16 vs ORT fp32, 3 short texts: Rust, Rust, SQL):
-  **1.0 / 0.9999999 / 1.0** (printed by the committed script).
+  **0.9999990-0.9999996** (printed by the committed script).
 - Embedding cosine vs the shipped q8 artifact: 0.991-0.995 (the fp16-vs-q8
   gap, as expected; also printed by the committed script).
+
+**Precision policy (measured, and binding for the Rust port):** fp16/bf16
+weights and activations everywhere, except layer norms compute their
+mean/variance in fp32, and attention scores + softmax run in fp32. Either
+shortcut degrades embedding cosine to ~0.95 on some inputs: fp16 layer-norm
+accumulation loses precision in the variance, and fp16 scores/softmax lose
+it in the ALiBi-biased exponentials. With the policy above the port is exact
+(cosine ~1.0) at the same throughput. `--dump-fixtures DIR` writes the
+ids/mask/reference/MLX embedding set used by the future Rust backend test.
 
 The forward pass spec below was recovered from the shipped ONNX graph and
 confirmed numerically, so the eventual Rust port does not need to rediscover
@@ -89,7 +97,7 @@ binding: active (releases within the month, MLX 0.32.2), MIT/Apache-2.0,
 needs — matmul/softmax/erf, `fast` layer-norm helpers, safetensors loading
 (behind the `safetensors` feature), and `transforms::compile` (the Rust
 counterpart of `mx.compile`, verified in the 0.34 source), so the compiled
-3.7-4.3x number is the target for the Rust backend, not just the Python
+3.7-5.2x number is the target for the Rust backend, not just the Python
 spike.
 The constraint that shapes the design is `Array` being `!Send` (0.34):
 arrays must be built and evaluated on one thread.
@@ -100,8 +108,8 @@ arrays must be built and evaluated on one thread.
 x  = LayerNorm(word_emb[ids] + token_type_emb[0])          # eps 1e-12
 alibi[h,i,j] = slope_h * |i - j|                            # slopes below
 mask_bias    = (1 - mask) * -FLT_MAX                        # additive
-per layer (12x):
-  q,k,v = Wq/Wk/Wv x + b
+per layer (12x):                                            # fp32: LN stats,
+  q,k,v = Wq/Wk/Wv x + b                                    # scores, softmax
   q = LN_q(q); k = LN_k(k)                                  # qk-LayerNorm
   s = (q @ k^T)/sqrt(64) + alibi + mask_bias
   a = reshape(softmax(s) @ v)
@@ -140,12 +148,14 @@ prebuilt-MLX `mlx-sys` path). Estimated 3-4 days for the jina slice.
    cancellation between sub-batches, worker survives a panicked forward,
    runtime execution budget still bounds concurrent callers (backend adds no
    scheduler of its own).
-3. **Forward pass (numerics test-first).** Port the spec above; wrap the
-   layer stack in `mlx_rs::transforms::compile` (shapeless over batch size,
-   recompiled per sequence length bucket if needed); ignored-tagged test
-   `cached_jina_mlx` (mirrors `cached_minilm`) asserting embedding cosine
-   >= 0.999 against fixtures generated by this spike's script, plus
-   dimension and finite-value checks through `validate_result`.
+3. **Forward pass (numerics test-first).** Port the spec above with the
+   measured precision policy (fp32 layer-norm internals and attention
+   scores/softmax); wrap the layer stack in `mlx_rs::transforms::compile`
+   (shapeless over batch size, recompiled per sequence length bucket if
+   needed); ignored-tagged test `cached_jina_mlx` (mirrors `cached_minilm`)
+   asserting embedding cosine >= 0.999 against the fixtures written by this
+   spike's `--dump-fixtures`, plus dimension and finite-value checks through
+   `validate_result`.
 4. **Batching + pooling.** Promote the token-budget sub-batch packing and
    probe-encoding helpers out of `backends/transformers/model.rs` into a
    backend-neutral `models` helper module (AGENTS.md layout rules) so the
@@ -163,8 +173,9 @@ prebuilt-MLX `mlx-sys` path). Estimated 3-4 days for the jina slice.
 
 **Confidence: 0.78** that the slice lands within the estimate and keeps
 >= 3x over the CPU path in the shipped Rust backend (`transforms::compile`
-is exposed, so the compiled 3.7-4.3x is the target). Deductions: `Array
-!Send` forces the worker-thread design; single-maintainer crate; the
-toolchain blocker adds environment risk and gates the whole plan. Numerics
-risk is low (spec validated here); scheduling/identity risk is low (runtime
-rules already established in #73/#77).
+is exposed, so the compiled 3.7-5.2x is the target). Deductions: `Array
+!Send` forces the worker-thread design; the precision policy adds a
+correctness surface (fp32 LN/scores are mandatory, measured); single-maintainer
+crate; the toolchain blocker adds environment risk and gates the whole plan.
+Numerics risk is low (spec validated here); scheduling/identity risk is low
+(runtime rules already established in #73/#77).

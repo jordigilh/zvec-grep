@@ -40,7 +40,8 @@ REPO = "jinaai/jina-embeddings-v2-base-code"
 REVISION = "516f4baf13dec4ddddda8631e019b5737c8bc250"
 H, L, HEADS = 768, 12, 12
 EPS = 1e-12
-# Recovered from the shipped ONNX graph (see README).
+# Recovered from the shipped ONNX graph (see README). Attention scores run in
+# fp32, so the bias is built in fp32.
 SLOPES = mx.array([-0.5, -0.25, -0.125, -0.0625, -0.03125, -0.015625,
                    -0.0078125, -0.00390625,
                    -0.7071067690849304, -0.3535533845424652,
@@ -64,23 +65,33 @@ def load_weights():
 
 
 def layer_norm(x, gain, bias):
-    mu = mx.mean(x, axis=-1, keepdims=True)
-    d = x - mu
+    """Layer norm with fp32 internals: fp16 accumulation in the mean/variance
+    degrades embedding cosine to ~0.95 on some inputs (measured), so the
+    reduction always runs in fp32 and returns the activation dtype."""
+    f = x.astype(mx.float32)
+    mu = mx.mean(f, axis=-1, keepdims=True)
+    d = f - mu
     var = mx.mean(d * d, axis=-1, keepdims=True)
-    return d / mx.sqrt(var + EPS) * gain + bias
+    out = d / mx.sqrt(var + EPS) * gain.astype(mx.float32) + bias.astype(mx.float32)
+    return out.astype(x.dtype)
 
 
-def alibi_bias(n):
+def alibi_bias(n, dtype):
     pos = mx.arange(n, dtype=mx.float32)
     dist = mx.abs(pos.reshape(1, n) - pos.reshape(n, 1)).reshape(1, 1, n, n)
-    return SLOPES * dist
+    return (SLOPES * dist).astype(dtype)
 
 
 def forward(w, ids, mask):
+    """JinaBERT forward. Precision policy (measured, see README): fp16/bf16
+    weights and activations, fp32 layer-norm internals, and fp32 attention
+    scores + softmax. Full-fp16 scores or fp16 layer-norm accumulation each
+    degrade embedding cosine to ~0.95 on some inputs."""
     b, n = ids.shape
+    dtype = w["embeddings.LayerNorm.weight"].dtype
     x = w["embeddings.word_embeddings.weight"][ids] + w["embeddings.token_type_embeddings.weight"][0]
     x = layer_norm(x, w["embeddings.LayerNorm.weight"], w["embeddings.LayerNorm.bias"])
-    alibi = alibi_bias(n)
+    alibi = alibi_bias(n, mx.float32)
     mask_bias = (1 - mask.astype(mx.float32)).reshape(b, 1, 1, n) * -3.4028235e38
     for i in range(L):
         p = f"encoder.layer.{i}."
@@ -92,8 +103,9 @@ def forward(w, ids, mask):
         q = q.reshape(b, n, HEADS, H // HEADS).transpose(0, 2, 1, 3)
         k = k.reshape(b, n, HEADS, H // HEADS).transpose(0, 2, 1, 3)
         v = v.reshape(b, n, HEADS, H // HEADS).transpose(0, 2, 1, 3)
-        scores = (q @ k.transpose(0, 1, 3, 2)) / 8.0 + alibi + mask_bias
-        a = mx.softmax(scores, axis=-1) @ v
+        scores = ((q.astype(mx.float32) @ k.astype(mx.float32).transpose(0, 1, 3, 2)) / 8.0
+                  + alibi + mask_bias)
+        a = mx.softmax(scores, axis=-1).astype(dtype) @ v
         a = a.transpose(0, 2, 1, 3).reshape(b, n, H)
         ao = a @ w[p + "attention.output.dense.weight"].T + w[p + "attention.output.dense.bias"]
         a_ln = layer_norm(ao + x, w[p + "attention.output.LayerNorm.weight"], w[p + "attention.output.LayerNorm.bias"])
@@ -123,32 +135,59 @@ def corpus_texts(corpus):
     return texts
 
 
-def numerics_check(w, tokenizer, onnx_path):
-    """Return (cosine vs fp32 ONNX, cosine vs cached q8 ONNX) per text."""
+def numerics_texts():
+    return ["def main():\n    print('hello world')\n    return 0\n",
+            "pub fn embed_batch(loaded: &LoadedModel) -> Result<()> { run_cpu_batched() }",
+            "SELECT * FROM users WHERE id = 42; -- fetch user row"]
+
+
+def reference_embeddings(tokenizer, onnx_path):
+    """Ground-truth pooled embeddings from the fp32 ONNX reference."""
     import onnxruntime as ort
-    texts = ["def main():\n    print('hello world')\n    return 0\n",
-             "pub fn embed_batch(loaded: &LoadedModel) -> Result<()> { run_cpu_batched() }",
-             "SELECT * FROM users WHERE id = 42; -- fetch user row"]
-    enc = tokenizer.encode_batch(texts)
+    enc = tokenizer.encode_batch(numerics_texts())
+    session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+    out = session.run(None, {
+        "input_ids": np.array([e.ids for e in enc], dtype=np.int64),
+        "attention_mask": np.array([e.attention_mask for e in enc], dtype=np.int64),
+    })[0].astype(np.float32)
+    tm = np.array([e.attention_mask for e in enc], dtype=np.float32)
+    ref = (out * tm[..., None]).sum(1) / tm.sum(1, keepdims=True)
+    return enc, ref / np.linalg.norm(ref, axis=1, keepdims=True)
+
+
+def dump_fixtures(w, tokenizer, onnx_path, out_dir):
+    """Write the numerics fixture set for the future Rust backend test."""
+    os.makedirs(out_dir, exist_ok=True)
+    enc, ref = reference_embeddings(tokenizer, onnx_path)
     ids = mx.array([e.ids for e in enc], dtype=mx.uint32)
     mask = mx.array([e.attention_mask for e in enc], dtype=mx.float32)
     ours = np.array(pooled(w, ids, mask))
+    np.savez(os.path.join(out_dir, "jina_mlx_numerics.npz"),
+             ids=np.array([e.ids for e in enc], dtype=np.int64),
+             attention_mask=np.array([e.attention_mask for e in enc], dtype=np.int64),
+             reference=ref, mlx=ours)
+    print(f"fixtures written to {out_dir}/jina_mlx_numerics.npz")
+
+
+def numerics_check(w, tokenizer, onnx_path):
+    """Return (cosine vs fp32 ONNX, cosine vs cached q8 ONNX) per text."""
+    enc, ref = reference_embeddings(tokenizer, onnx_path)
+    ids = mx.array([e.ids for e in enc], dtype=mx.uint32)
+    mask = mx.array([e.attention_mask for e in enc], dtype=mx.float32)
+    ours = np.array(pooled(w, ids, mask))
+    cos_fp32 = (ours * ref).sum(1)
+
+    import onnxruntime as ort
     tm = np.array([e.attention_mask for e in enc], dtype=np.float32)
-
-    def session_cosines(path):
-        session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
-        out = session.run(None, {
-            "input_ids": np.array([e.ids for e in enc], dtype=np.int64),
-            "attention_mask": np.array([e.attention_mask for e in enc], dtype=np.int64),
-        })[0].astype(np.float32)
-        ref = (out * tm[..., None]).sum(1) / tm.sum(1, keepdims=True)
-        ref = ref / np.linalg.norm(ref, axis=1, keepdims=True)
-        return (ours * ref).sum(1)
-
-    cos_fp32 = session_cosines(onnx_path)
     q8 = default_cache_q8() or fetch("onnx/model_quantized.onnx")
-    cos_q8 = session_cosines(q8)
-    return cos_fp32, cos_q8
+    session = ort.InferenceSession(q8, providers=["CPUExecutionProvider"])
+    out = session.run(None, {
+        "input_ids": np.array([e.ids for e in enc], dtype=np.int64),
+        "attention_mask": np.array([e.attention_mask for e in enc], dtype=np.int64),
+    })[0].astype(np.float32)
+    q = (out * tm[..., None]).sum(1) / tm.sum(1, keepdims=True)
+    q = q / np.linalg.norm(q, axis=1, keepdims=True)
+    return cos_fp32, (ours * q).sum(1)
 
 
 def run_mlx(w, batches, enc, compiled):
@@ -207,6 +246,9 @@ def main():
     ap.add_argument("--skip-checks", action="store_true",
                     help="skip the numerics check and the ORT benchmark "
                          "(MLX-only run: measures MLX-only peak RSS)")
+    ap.add_argument("--dump-fixtures", metavar="DIR",
+                    help="write the numerics fixture set (ids, mask, "
+                         "reference and MLX embeddings) to DIR and exit")
     args = ap.parse_args()
 
     w = load_weights()
@@ -216,6 +258,10 @@ def main():
     tokenizer = Tokenizer.from_file(fetch("tokenizer.json"))
     tokenizer.enable_padding(length=1024)
     tokenizer.enable_truncation(max_length=1024)
+
+    if args.dump_fixtures:
+        dump_fixtures(w, tokenizer, fetch("onnx/model.onnx"), args.dump_fixtures)
+        return
 
     if not args.skip_checks:
         fp32_onnx = fetch("onnx/model.onnx")
