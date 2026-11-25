@@ -35,7 +35,7 @@ pub use zg_transport_mcp::McpToolset;
 
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:7999";
 const WATCHER_IDLE_TIMEOUT_SECONDS_ENV: &str = "ZVEC_GREP_WATCHER_IDLE_TIMEOUT_SECONDS";
-pub(crate) const MAX_TIMER_DELAY_SECONDS: u64 = 2_147_483_647 / 1_000;
+const MAX_TIMER_DELAY_SECONDS: u64 = 2_147_483_647 / 1_000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListenAddress {

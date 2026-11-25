@@ -71,11 +71,11 @@ fn parse_session_idle(value: Option<&str>) -> Duration {
 }
 
 impl BoundedSessionManager {
-    /// Deployment override for the MCP session idle TTL. Unset, non-UTF8,
-    /// malformed, zero, negative, or above `MAX_TIMER_DELAY_SECONDS` values keep
-    /// the 30-minute default and log a warning, so a typo cannot disable expiry
-    /// silently. Long-lived agent sessions can raise this to outlive their idle
-    /// gaps; the per-session activity rules are unchanged.
+    /// Deployment override for the MCP session idle TTL. Non-UTF8, malformed,
+    /// zero, negative, or above `MAX_TIMER_DELAY_SECONDS` values keep the
+    /// 30-minute default and log a warning; an unset variable keeps it silently.
+    /// Long-lived agent sessions can raise this to outlive their idle gaps; the
+    /// per-session activity rules are unchanged.
     pub(crate) fn from_env() -> Self {
         let raw = std::env::var_os(MCP_SESSION_IDLE_ENV);
         let value = match raw.as_deref().map(std::ffi::OsStr::to_str) {
