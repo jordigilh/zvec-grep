@@ -69,6 +69,12 @@ const EMBEDDING_SUCCESS_STREAK_MIN: usize = 4;
 pub(crate) trait IndexEmbeddingRuntime: Send + Sync {
     fn info(&self) -> &EmbeddingModelInfo;
 
+    /// The runtime's live backend identity, when it reports one separately
+    /// from its construction-time info. Defaults to none.
+    fn backend_identity(&self) -> Option<crate::domain::model::BackendIdentity> {
+        None
+    }
+
     fn concurrency_defaults(&self) -> EmbeddingConcurrencyDefaults;
 
     async fn prepare(
@@ -89,6 +95,10 @@ pub(crate) trait IndexEmbeddingRuntime: Send + Sync {
 impl IndexEmbeddingRuntime for ModelRuntimeLease {
     fn info(&self) -> &EmbeddingModelInfo {
         self.info()
+    }
+
+    fn backend_identity(&self) -> Option<crate::domain::model::BackendIdentity> {
+        self.backend_identity()
     }
 
     fn concurrency_defaults(&self) -> EmbeddingConcurrencyDefaults {
@@ -124,6 +134,11 @@ pub(crate) struct IndexingContext<'context> {
     pub on_progress: Option<IndexProgressReporter>,
     pub signal: Option<CancellationToken>,
     pub changes: &'context [WorkspaceChange],
+    /// The recorded backend identity an incremental update must not deviate
+    /// from, checked per embedding batch before any record is committed.
+    /// `None` for fresh builds, which accept their starting identity and
+    /// relabel the staging generation at publication.
+    pub expected_backend_identity: Option<crate::domain::model::BackendIdentity>,
 }
 
 pub(crate) async fn index_workspace(
@@ -133,8 +148,17 @@ pub(crate) async fn index_workspace(
     let started = Instant::now();
     let mut timings = TimingCollector::default();
     let mut model_prepared = false;
+    let mut observed_identity: Option<crate::domain::model::BackendIdentity> = None;
 
-    let first = run_index_pass(context, &mut timings, None, &[], &mut model_prepared).await?;
+    let first = run_index_pass(
+        context,
+        &mut timings,
+        None,
+        &[],
+        &mut model_prepared,
+        &mut observed_identity,
+    )
+    .await?;
     let mut passes = vec![first];
     if passes[0].stats.files_failed > 0 {
         let succeeded = passes[0].stats.files_indexed;
@@ -163,6 +187,7 @@ pub(crate) async fn index_workspace(
                 }),
                 &passes[0].stats.failed_files,
                 &mut model_prepared,
+                &mut observed_identity,
             )
             .await?,
         );
@@ -369,6 +394,7 @@ async fn run_index_pass(
     progress_base: Option<ProgressBase>,
     retry_paths: &[PathBuf],
     model_prepared: &mut bool,
+    observed_identity: &mut Option<crate::domain::model::BackendIdentity>,
 ) -> Result<IndexPassResult, EngineError> {
     throw_if_cancelled(context.signal.as_ref())?;
     report(
@@ -462,6 +488,7 @@ async fn run_index_pass(
         timings,
         progress_base,
         model_prepared,
+        observed_identity,
     )
     .await?;
     Ok(IndexPassResult {
@@ -637,6 +664,7 @@ async fn index_candidates(
     timings: &mut TimingCollector,
     progress_base: Option<ProgressBase>,
     model_prepared: &mut bool,
+    observed_identity: &mut Option<crate::domain::model::BackendIdentity>,
 ) -> Result<IndexWriteStats, EngineError> {
     let policy = resolve_embedding_policy(
         context.embedding_concurrency,
@@ -759,8 +787,15 @@ async fn index_candidates(
 
         if running.len() >= scheduler.task_concurrency()
             && let Some(outcome) = running.next().await
-            && let Err(error) =
-                apply_embedding_outcome(context, diff, progress_base, timings, &mut stats, outcome)
+            && let Err(error) = apply_embedding_outcome(
+                context,
+                diff,
+                progress_base,
+                timings,
+                &mut stats,
+                outcome,
+                observed_identity,
+            )
         {
             drain_embedding_futures(&mut running).await;
             return Err(error);
@@ -772,9 +807,15 @@ async fn index_candidates(
         push_embedding(&mut running, current_batch, context, Arc::clone(&scheduler));
     }
     while let Some(outcome) = running.next().await {
-        if let Err(error) =
-            apply_embedding_outcome(context, diff, progress_base, timings, &mut stats, outcome)
-        {
+        if let Err(error) = apply_embedding_outcome(
+            context,
+            diff,
+            progress_base,
+            timings,
+            &mut stats,
+            outcome,
+            observed_identity,
+        ) {
             drain_embedding_futures(&mut running).await;
             return Err(error);
         }
@@ -826,6 +867,10 @@ fn push_embedding<'context>(
         scheduler,
         context.signal.clone(),
         context.on_progress.clone(),
+        // An incremental update must not append fallback-runtime vectors to
+        // a live generation; a fresh build may fall back and relabel itself
+        // at publication.
+        context.expected_backend_identity.is_none(),
     )));
 }
 
@@ -840,6 +885,7 @@ fn apply_embedding_outcome(
     timings: &mut TimingCollector,
     stats: &mut IndexWriteStats,
     outcome: Result<EmbeddingBatchOutcome, ModelError>,
+    observed_identity: &mut Option<crate::domain::model::BackendIdentity>,
 ) -> Result<(), EngineError> {
     let outcome = outcome.map_err(ModelError::into_engine_error)?;
     timings.record("index_embedding", outcome.duration, outcome.outcomes.len());
@@ -850,7 +896,52 @@ fn apply_embedding_outcome(
         timings,
         stats,
         outcome.outcomes,
+        observed_identity,
     )
+}
+
+/// Refuse to commit vectors produced by a runtime whose live identity no
+/// longer matches the generation being appended to. Runs after a batch is
+/// embedded but before any of its records are written, so an incremental
+/// update whose provider fell back mid-run aborts with a single-runtime
+/// prefix instead of committing a cross-runtime mixture; the run's identity
+/// must also stay stable across batches.
+fn ensure_runtime_identity(
+    context: &IndexingContext<'_>,
+    observed: &mut Option<crate::domain::model::BackendIdentity>,
+) -> Result<(), EngineError> {
+    let Some(model) = context.embedding_models.first() else {
+        return Ok(());
+    };
+    let current = model
+        .backend_identity()
+        .or_else(|| model.info().backend_identity());
+    match observed {
+        None => {
+            // First batch of this run: an incremental update must start from
+            // the generation's recorded identity. A fresh build accepts its
+            // starting point and relabels the staging generation at
+            // publication.
+            if let Some(expected) = context.expected_backend_identity.as_ref()
+                && current.as_ref() != Some(expected)
+            {
+                return Err(crate::domain::model::mid_run_backend_mismatch(
+                    Some(expected),
+                    current.as_ref(),
+                ));
+            }
+            *observed = current;
+        }
+        Some(previous) => {
+            if current.as_ref() != Some(&*previous) {
+                return Err(crate::domain::model::mid_run_backend_mismatch(
+                    Some(previous),
+                    current.as_ref(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn apply_embedding_files(
@@ -860,7 +951,9 @@ fn apply_embedding_files(
     timings: &mut TimingCollector,
     stats: &mut IndexWriteStats,
     outcomes: Vec<EmbeddedFileOutcome>,
+    observed_identity: &mut Option<crate::domain::model::BackendIdentity>,
 ) -> Result<(), EngineError> {
+    ensure_runtime_identity(context, observed_identity)?;
     for outcome in outcomes {
         throw_if_cancelled(context.signal.as_ref())?;
         match outcome {
@@ -1271,6 +1364,7 @@ async fn embed_prepared_files(
     scheduler: Arc<EmbeddingScheduler>,
     signal: Option<CancellationToken>,
     progress: Option<IndexProgressReporter>,
+    allow_provider_fallback: bool,
 ) -> Result<EmbeddingBatchOutcome, ModelError> {
     let started = Instant::now();
     if files.len() == 1 && files[0].fragments.len() > model.info().max_batch_size {
@@ -1281,6 +1375,7 @@ async fn embed_prepared_files(
             &scheduler,
             signal.as_ref(),
             progress,
+            allow_provider_fallback,
         )
         .await
         {
@@ -1314,6 +1409,7 @@ async fn embed_prepared_files(
         &scheduler,
         signal.as_ref(),
         progress.clone(),
+        allow_provider_fallback,
     )
     .await;
     let outcomes = match result {
@@ -1328,6 +1424,7 @@ async fn embed_prepared_files(
                     &scheduler,
                     signal.as_ref(),
                     progress.clone(),
+                    allow_provider_fallback,
                 )
                 .await
                 {
@@ -1390,6 +1487,7 @@ async fn embed_file(
     scheduler: &EmbeddingScheduler,
     signal: Option<&CancellationToken>,
     progress: Option<IndexProgressReporter>,
+    allow_provider_fallback: bool,
 ) -> Result<EmbeddingResult, ModelError> {
     let maximum = model.info().max_batch_size;
     let batch_signal = signal.map_or_else(CancellationToken::new, CancellationToken::child_token);
@@ -1402,6 +1500,7 @@ async fn embed_file(
             scheduler,
             Some(&batch_signal),
             progress.clone(),
+            allow_provider_fallback,
         ));
     }
 
@@ -1453,12 +1552,22 @@ async fn embed_fragment_batch(
     scheduler: &EmbeddingScheduler,
     signal: Option<&CancellationToken>,
     progress: Option<IndexProgressReporter>,
+    allow_provider_fallback: bool,
 ) -> Result<FragmentBatchResult, ModelError> {
     let contents = fragments
         .iter()
         .map(|fragment| fragment.embedding_content.clone())
         .collect::<Vec<_>>();
-    match embed_with_retry(model, &contents, scheduler, signal, progress.clone()).await {
+    match embed_with_retry(
+        model,
+        &contents,
+        scheduler,
+        signal,
+        progress.clone(),
+        allow_provider_fallback,
+    )
+    .await
+    {
         Ok(embedding) => Ok(FragmentBatchResult { start, embedding }),
         Err(error) if fragments.len() == 1 || error.should_fail_fast() => Err(error),
         Err(_) => {
@@ -1471,6 +1580,7 @@ async fn embed_fragment_batch(
                     scheduler,
                     signal,
                     progress.clone(),
+                    allow_provider_fallback,
                 )
                 .await
                 .map_err(|error| {
@@ -1504,6 +1614,7 @@ async fn embed_with_retry(
     scheduler: &EmbeddingScheduler,
     signal: Option<&CancellationToken>,
     progress: Option<IndexProgressReporter>,
+    allow_provider_fallback: bool,
 ) -> Result<EmbeddingResult, ModelError> {
     let mut attempt = 0;
     loop {
@@ -1517,6 +1628,7 @@ async fn embed_with_retry(
                 EmbeddingOptions {
                     purpose: EmbeddingPurpose::Document,
                     signal: signal.cloned(),
+                    allow_provider_fallback,
                     ..EmbeddingOptions::default()
                 },
                 progress.clone(),
@@ -1902,7 +2014,11 @@ fn validate_context(context: &IndexingContext<'_>) -> Result<(), EngineError> {
             .ok_or_else(|| {
                 EngineError::invalid_argument("runtime model is not in workspace index")
             })?;
-        schema.ensure_index_compatible(model.info())?;
+        // Capsle only: the recorded identity was already checked when the
+        // storage opened against this manifest target, and a provider
+        // fallback during this build is corrected at publication, so the
+        // pipeline itself never compares a mid-build live identity.
+        schema.ensure_model_compatible(model.info())?;
         let _ =
             resolve_embedding_policy(context.embedding_concurrency, model.concurrency_defaults())?;
     }
@@ -2821,6 +2937,8 @@ mod tests {
                     max_batch_size: 1,
                     max_input_tokens: Some(64),
                     max_image_bytes: None,
+                    backend: None,
+                    dtype: None,
                 },
                 prepare_calls: AtomicUsize::new(0),
                 prepare_failures: AtomicUsize::new(0),
@@ -2849,6 +2967,8 @@ mod tests {
                     max_batch_size: 1,
                     max_input_tokens: Some(64),
                     max_image_bytes: None,
+                    backend: None,
+                    dtype: None,
                 },
                 calls: AtomicUsize::new(0),
                 active: AtomicUsize::new(0),
@@ -3053,6 +3173,8 @@ mod tests {
                     max_batch_size: 32,
                     max_input_tokens: Some(64),
                     max_image_bytes: None,
+                    backend: None,
+                    dtype: None,
                 },
             )),
             created_epoch_ms: 1,
@@ -3088,6 +3210,7 @@ mod tests {
                 on_progress: None,
                 signal: None,
                 changes: &[],
+                expected_backend_identity: None,
             })
             .await
             .expect_err("a storage failure must abort indexing");
@@ -3128,6 +3251,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            expected_backend_identity: None,
         })
         .await
         .expect("embedding errors allow the index to finish");
@@ -3168,6 +3292,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            expected_backend_identity: None,
         };
 
         let error = index_workspace(&context)
@@ -3213,6 +3338,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            expected_backend_identity: None,
         })
         .await
         .expect_err("shared embedding failure must abort indexing");
@@ -3248,6 +3374,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            expected_backend_identity: None,
         };
         let operation = index_workspace(&context);
         tokio::pin!(operation);
@@ -3292,7 +3419,7 @@ mod tests {
             prepared_fragment("first fragment", 0),
             prepared_fragment("second fragment", 1),
         ];
-        let operation = embed_file(&fragments, &model, &scheduler, None, None);
+        let operation = embed_file(&fragments, &model, &scheduler, None, None, true);
         tokio::pin!(operation);
 
         loop {
@@ -3342,6 +3469,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            expected_backend_identity: None,
         })
         .await
         .expect_err("exhausted transient failures must abort indexing");
@@ -3376,6 +3504,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            expected_backend_identity: None,
         })
         .await
         .expect("request-specific failures remain file failures");
@@ -3415,6 +3544,7 @@ mod tests {
             on_progress: None,
             signal: Some(signal),
             changes: &[],
+            expected_backend_identity: None,
         })
         .await
         .expect_err("pre-cancelled indexing must stop before preparation");
@@ -3467,6 +3597,7 @@ mod tests {
                 on_progress: None,
                 signal: None,
                 changes: &[],
+                expected_backend_identity: None,
             };
             index_workspace(&context)
                 .await
@@ -3501,6 +3632,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            expected_backend_identity: None,
         };
         index_workspace(&context).await.expect("initial index");
         assert_eq!(model.prepare_calls.load(Ordering::Acquire), 1);
@@ -3623,6 +3755,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            expected_backend_identity: None,
         };
         index_workspace(&context).await.expect("initial index");
         let calls = model.calls.load(Ordering::Acquire);
@@ -3687,6 +3820,7 @@ mod tests {
             on_progress: Some(reporter),
             signal: None,
             changes: &[],
+            expected_backend_identity: None,
         };
 
         let first = index_workspace(&context).await.expect("initial index");
@@ -3743,6 +3877,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            expected_backend_identity: None,
         })
         .await
         .expect("initial index");
@@ -3759,6 +3894,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &changes,
+            expected_backend_identity: None,
         })
         .await
         .expect("narrow index");
@@ -3813,6 +3949,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            expected_backend_identity: None,
         })
         .await
         .expect("initial index");
@@ -3853,6 +3990,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &changes,
+            expected_backend_identity: None,
         })
         .await
         .expect("repair during scoped update");
@@ -3944,6 +4082,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            expected_backend_identity: None,
         })
         .await
         .expect("index supported sources");

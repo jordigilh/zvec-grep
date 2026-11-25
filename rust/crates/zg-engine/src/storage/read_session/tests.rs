@@ -104,6 +104,8 @@ fn schema() -> EmbeddingModelInfo {
         max_batch_size: 32,
         max_input_tokens: None,
         max_image_bytes: None,
+        backend: None,
+        dtype: None,
     }
 }
 

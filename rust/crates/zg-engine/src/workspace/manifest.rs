@@ -401,6 +401,8 @@ mod tests {
                     max_batch_size: 32,
                     max_input_tokens: Some(8192),
                     max_image_bytes: Some(1_048_576),
+                    backend: None,
+                    dtype: None,
                 })),
                 created_epoch_ms: 10,
                 updated_epoch_ms: 20,
@@ -558,6 +560,42 @@ mod tests {
             Some(manifest)
         );
         assert!(!directory.path().join(".zvec-grep").exists());
+    }
+
+    #[test]
+    fn manifest_round_trips_backend_identity_and_accepts_legacy_records() {
+        let directory = tempdir().expect("workspace");
+        let home = directory.path().join(".zvec-grep");
+        let mut manifest = fixture_manifest(&home);
+        let embedding = EmbeddingModelInfo {
+            backend: Some("onnx-cpu".into()),
+            dtype: Some("q8".into()),
+            ..manifest.embedding().expect("embedding").clone()
+        };
+        manifest.workspace.index = IndexState::Enabled(IndexDescriptor::single(embedding));
+        write_workspace_manifest(&home, &manifest).expect("write manifest");
+        let text = fs::read_to_string(workspace_manifest_path(&home)).expect("manifest text");
+        let json: serde_json::Value = serde_json::from_str(&text).expect("manifest json");
+        assert_eq!(json["embeddings"][0]["backend"], "onnx-cpu");
+        assert_eq!(json["embeddings"][0]["dtype"], "q8");
+        assert_eq!(
+            read_workspace_manifest(&home).expect("read manifest"),
+            Some(manifest)
+        );
+        // A legacy manifest carries neither field and still decodes, with no
+        // recorded identity; compatibility checks elsewhere fail closed on it.
+        let mut legacy = json;
+        let embeddings = legacy["embeddings"][0]
+            .as_object_mut()
+            .expect("embedding object");
+        embeddings.remove("backend");
+        embeddings.remove("dtype");
+        fs::write(workspace_manifest_path(&home), legacy.to_string()).expect("legacy manifest");
+        let decoded = read_workspace_manifest(&home)
+            .expect("legacy manifest reads")
+            .expect("manifest");
+        assert_eq!(decoded.embedding().expect("embedding").backend, None);
+        assert_eq!(decoded.embedding().expect("embedding").dtype, None);
     }
 
     #[test]

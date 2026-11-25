@@ -8,6 +8,87 @@ fn entry(reference: &str) -> LlamaCppConfig {
 }
 
 #[test]
+fn quant_labels_come_from_the_pinned_artifact_name() {
+    // Both catalog entries record the quantization of their pinned GGUF.
+    assert_eq!(
+        llama_cpp_dtype(entry("local/embeddinggemma-300m")).expect("quant label"),
+        "q8_0"
+    );
+    assert_eq!(
+        llama_cpp_dtype(entry("local/qwen3-embedding-0.6b")).expect("quant label"),
+        "q8_0"
+    );
+    // Known llama.cpp quant families are recognized anywhere in a name.
+    for (file_name, expected) in [
+        ("model-Q8_0.gguf", Some("q8_0")),
+        ("model-Q4.gguf", Some("q4")),
+        ("model-Q4_K_M.gguf", Some("q4_k_m")),
+        ("model-IQ4_XS.gguf", Some("iq4_xs")),
+        ("model-F16.gguf", Some("f16")),
+        ("model-BF16.gguf", Some("bf16")),
+        ("Qwen3-Embedding-0.6B-Q8_0.gguf", Some("q8_0")),
+        // A quant-less name yields no label instead of a generic one: two
+        // different such artifacts must never share a dtype identity.
+        ("Qwen3-Embedding-0.6B.gguf", None),
+        ("Falcon-7B.gguf", None),
+        ("model", None),
+    ] {
+        assert_eq!(
+            gguf_quant_dtype(file_name),
+            expected.map(str::to_owned),
+            "{file_name}"
+        );
+    }
+}
+
+#[test]
+fn backend_labels_name_the_execution_device() {
+    assert_eq!(llama_backend_label(None, false), "llama-cpp-cpu");
+    assert_eq!(
+        llama_backend_label(Some(Device::Cpu), false),
+        "llama-cpp-cpu"
+    );
+    assert_eq!(
+        llama_backend_label(Some(Device::Metal), true),
+        "llama-cpp-metal"
+    );
+    assert_eq!(
+        llama_backend_label(Some(Device::Cuda), true),
+        "llama-cpp-cuda"
+    );
+    assert_eq!(
+        llama_backend_label(Some(Device::Vulkan), true),
+        "llama-cpp-vulkan"
+    );
+    assert_eq!(
+        llama_backend_label(Some(Device::Auto), true),
+        "llama-cpp-gpu"
+    );
+    // A GPU request whose load or inference fell back to CPU reports CPU, so
+    // a CPU-built generation is never confused with a GPU-built one.
+    assert_eq!(
+        llama_backend_label(Some(Device::Metal), false),
+        "llama-cpp-cpu"
+    );
+    assert!(!wants_gpu(None) && !wants_gpu(Some(Device::Cpu)));
+    assert!(wants_gpu(Some(Device::Metal)) && wants_gpu(Some(Device::Auto)));
+    // Before load, the model reports the predicted label of its device.
+    let model = LlamaCppEmbeddingModel::new(
+        entry("local/embeddinggemma-300m"),
+        ModelConfig {
+            device: Some(Device::Cpu),
+            ..ModelConfig::default()
+        },
+        crate::models::runtime::ModelComputeRuntime::shared(),
+    )
+    .expect("model");
+    assert_eq!(
+        model.backend_identity().expect("identity").backend.as_str(),
+        "llama-cpp-cpu"
+    );
+}
+
+#[test]
 fn formats_embeddinggemma_and_qwen_inputs_like_main() {
     assert_eq!(
         format_text("hello", EmbeddingPurpose::Query, "embeddinggemma"),
@@ -94,7 +175,8 @@ async fn cached_embeddinggemma_runs_real_llama_cpp_inference() {
             ..ModelConfig::default()
         },
         crate::models::runtime::ModelComputeRuntime::shared(),
-    );
+    )
+    .expect("llama.cpp model");
     let result = model
         .embed(
             &[
@@ -178,7 +260,8 @@ async fn cached_embeddinggemma_uses_metal_and_supports_concurrency() {
             ..ModelConfig::default()
         },
         crate::models::runtime::ModelComputeRuntime::shared(),
-    );
+    )
+    .expect("llama.cpp model");
     let result = model
         .embed(
             &[vec![Content::Text("find relevant code".to_owned())]],
@@ -234,7 +317,8 @@ async fn cached_qwen3_runs_real_llama_cpp_inference() {
             ..ModelConfig::default()
         },
         crate::models::runtime::ModelComputeRuntime::shared(),
-    );
+    )
+    .expect("llama.cpp model");
     let result = model
         .embed(
             &[vec![Content::Text(

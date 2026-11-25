@@ -32,6 +32,8 @@ impl ConcurrentFixtureModel {
                 max_batch_size: 8,
                 max_input_tokens: Some(32),
                 max_image_bytes: None,
+                backend: None,
+                dtype: None,
             },
             barrier: Barrier::new(2),
             active: AtomicUsize::new(0),

@@ -294,6 +294,7 @@ a new prompt. Older clients use reverse elicitation. No protected data is sent
 before consent, and FTS-only disables both vectors and refresh.
 
 HTTP discovery and tool lists advertise a one-hour private cache. Older HTTP
-sessions have a 256-session limit and 30-minute idle expiry; active requests remain
-protected. Closing stdio leaves the shared daemon running. Both transports are
+sessions have a 256-session limit and a 30-minute idle expiry by default;
+`ZVEC_GREP_MCP_SESSION_IDLE_SECONDS` changes the expiry, and active requests
+remain protected. Closing stdio leaves the shared daemon running. Both transports are
 covered by the normal Rust workspace tests and the three-platform Rust CI matrix.

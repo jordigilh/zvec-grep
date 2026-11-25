@@ -26,8 +26,8 @@ use tokio::{fs, sync::Mutex};
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::model::{
-    Device, EmbeddingModelInfo, EmbeddingPurpose, EmbeddingResult, ModelConfig, ModelInfo,
-    ModelProgress,
+    BackendIdentity, Device, EmbeddingModelInfo, EmbeddingPurpose, EmbeddingResult, ModelConfig,
+    ModelInfo, ModelProgress,
 };
 use crate::models::{
     artifacts::{
@@ -52,6 +52,11 @@ pub(crate) struct LlamaCppEmbeddingModel {
     compute_runtime: ModelComputeRuntime,
     client: ArtifactHttpClient,
     state: Mutex<Option<Arc<LoadedLlamaModel>>>,
+    /// Lock-free snapshot of whether the loaded model executes on a GPU.
+    /// Initialized from the requested device, corrected after load and by
+    /// runtime CPU fallbacks, so the reported identity never blocks on the
+    /// load lock or misses a completed fallback.
+    gpu: Arc<AtomicBool>,
 }
 
 struct LoadedLlamaModel {
@@ -124,12 +129,12 @@ impl LlamaCppEmbeddingModel {
         entry: LlamaCppConfig,
         options: ModelConfig,
         compute_runtime: ModelComputeRuntime,
-    ) -> Self {
+    ) -> Result<Self, ModelError> {
         let model_cache_dir = options
             .cache_dir
             .or_else(|| env::var_os("ZVEC_GREP_MODEL_CACHE").map(PathBuf::from))
             .unwrap_or_else(default_model_cache_dir);
-        Self {
+        Ok(Self {
             entry,
             info: EmbeddingModelInfo {
                 model: ModelInfo {
@@ -142,13 +147,18 @@ impl LlamaCppEmbeddingModel {
                 max_batch_size: entry.max_batch_size,
                 max_input_tokens: Some(entry.context_size),
                 max_image_bytes: None,
+                backend: Some(
+                    llama_backend_label(options.device, wants_gpu(options.device)).to_owned(),
+                ),
+                dtype: Some(llama_cpp_dtype(entry)?),
             },
             model_cache_dir,
             device: options.device,
             compute_runtime,
             client: ArtifactHttpClient::new(),
             state: Mutex::new(None),
-        }
+            gpu: Arc::new(AtomicBool::new(wants_gpu(options.device))),
+        })
     }
 
     async fn ensure_loaded(
@@ -212,9 +222,18 @@ impl LlamaCppEmbeddingModel {
         validate_gguf_file(&path, self.entry.uri).await?;
         let device = self.device;
         let reporter_for_load = reporter.clone();
+        let gpu_snapshot = Arc::clone(&self.gpu);
         let model = self
             .compute_runtime
-            .run(move || load_model_with_fallback(&path, device, &reporter_for_load))
+            .run(move || {
+                let model = load_model_with_fallback(&path, device, &reporter_for_load);
+                // Publish the execution device the pool actually obtained,
+                // including an initialization fallback to CPU.
+                if let Ok(model) = &model {
+                    gpu_snapshot.store(model.gpu, Ordering::Release);
+                }
+                model
+            })
             .await??;
         reporter.finish();
         Ok(model)
@@ -245,6 +264,9 @@ impl LlamaCppEmbeddingModel {
                 .await??,
         );
         *state = Some(Arc::clone(&loaded));
+        // The identity snapshot must follow the switch: vectors produced
+        // after this point are CPU vectors.
+        self.gpu.store(false, Ordering::Release);
         Ok(loaded)
     }
 }
@@ -253,6 +275,17 @@ impl LlamaCppEmbeddingModel {
 impl EmbeddingModel for LlamaCppEmbeddingModel {
     fn info(&self) -> &EmbeddingModelInfo {
         &self.info
+    }
+
+    fn backend_identity(&self) -> Option<BackendIdentity> {
+        // Read the lock-free execution-device snapshot: a GPU load that fell
+        // back to CPU reports cpu, so a generation is never served by a
+        // runtime running on a different device than the one that built it.
+        let backend = llama_backend_label(self.device, self.gpu.load(Ordering::Acquire));
+        Some(BackendIdentity {
+            backend: backend.to_owned(),
+            dtype: self.info.dtype.clone()?,
+        })
     }
 
     async fn prepare(&self, options: EmbeddingPrepareOptions) -> Result<(), ModelError> {
@@ -283,6 +316,7 @@ impl EmbeddingModel for LlamaCppEmbeddingModel {
         let entry = self.entry;
         let signal = options.signal;
         let execution_concurrency = options.execution_concurrency.max(1);
+        let allow_provider_fallback = options.allow_provider_fallback;
         let loaded = Arc::clone(&model);
         let texts_for_first_attempt = texts.clone();
         let signal_for_first_attempt = signal.clone();
@@ -300,7 +334,10 @@ impl EmbeddingModel for LlamaCppEmbeddingModel {
             .await?;
         let result = match first {
             Ok(result) => result,
-            Err(error) if model.gpu => {
+            // Query embedding refuses the fallback: CPU-produced query
+            // vectors must not be served against a GPU-built generation,
+            // so the inference error propagates instead.
+            Err(error) if allow_provider_fallback && model.gpu => {
                 let cpu = self
                     .fallback_to_cpu(model, on_progress, &error)
                     .await
@@ -422,6 +459,72 @@ const fn requested_device_name(device: Option<Device>) -> &'static str {
         Some(Device::Cuda) => "cuda",
         None | Some(Device::Cpu) => "cpu",
     }
+}
+
+/// Backend label naming the execution device. The catalog's default local
+/// models run llama.cpp with a Metal/Auto device request, so the device is
+/// part of the identity: CPU- and GPU-built generations must not mix.
+fn llama_backend_label(device: Option<Device>, gpu: bool) -> &'static str {
+    match (device, gpu) {
+        (_, false) => "llama-cpp-cpu",
+        (Some(Device::Metal), true) => "llama-cpp-metal",
+        (Some(Device::Cuda), true) => "llama-cpp-cuda",
+        (Some(Device::Vulkan), true) => "llama-cpp-vulkan",
+        (None | Some(Device::Cpu | Device::Auto), true) => "llama-cpp-gpu",
+    }
+}
+
+/// Whether the requested device asks for GPU execution at all.
+const fn wants_gpu(device: Option<Device>) -> bool {
+    !matches!(device, None | Some(Device::Cpu))
+}
+
+/// Quantization label of the pinned GGUF artifact, e.g. `Q8_0` -> `q8_0`.
+/// The artifact is content-pinned by the catalog, so its file name is a stable
+/// part of the backend identity recorded for a generation. Fails when the
+/// entry has no GGUF artifact or its name carries no recognizable quant
+/// token: a generic fallback label would compare equal across different
+/// artifacts and silently mix their vectors.
+fn llama_cpp_dtype(entry: LlamaCppConfig) -> Result<String, ModelError> {
+    let artifact = entry
+        .download
+        .artifacts
+        .iter()
+        .find(|artifact| Path::new(artifact.path).extension() == Some("gguf".as_ref()))
+        .ok_or_else(|| {
+            ModelError::invalid_argument("llama.cpp catalog entry does not list a GGUF artifact")
+        })?;
+    gguf_quant_dtype(artifact.path).ok_or_else(|| {
+        ModelError::invalid_argument(format!(
+            "llama.cpp catalog artifact {} has no recognizable quantization token",
+            artifact.path
+        ))
+    })
+}
+
+/// Extract a quantization token from a pinned GGUF file name, lowercased.
+/// Matches the llama.cpp quant families (`Q8_0`, `Q4`, `Q4_K_M`, `IQ4_XS`,
+/// `F16`, `BF16`); a name without a quant token yields `None`. The second
+/// byte must be a digit (or the exact `F16`/`BF16` forms), so model names
+/// like `Qwen3` or `Falcon` are never mistaken for a quant label.
+fn gguf_quant_dtype(file_name: &str) -> Option<String> {
+    let stem = file_name
+        .rsplit_once('.')
+        .map_or(file_name, |(stem, _)| stem);
+    stem.rsplit('-')
+        .find(|part| {
+            let bytes = part.as_bytes();
+            match bytes.first() {
+                Some(b'Q') => bytes.get(1).is_some_and(u8::is_ascii_digit),
+                Some(b'I') => {
+                    part.starts_with("IQ") && bytes.get(2).is_some_and(u8::is_ascii_digit)
+                }
+                Some(b'F') => *part == "F16",
+                Some(b'B') => *part == "BF16",
+                _ => false,
+            }
+        })
+        .map(str::to_ascii_lowercase)
 }
 
 fn report_warning(

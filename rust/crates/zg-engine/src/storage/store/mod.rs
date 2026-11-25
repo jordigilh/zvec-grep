@@ -188,6 +188,27 @@ impl IndexStore {
         }
     }
 
+    /// Rewrite the stored schema record after a build whose runtime identity
+    /// changed after the storage was opened (for example an accelerated
+    /// provider that fell back to CPU while embedding). Only valid while no
+    /// store is open on the path and the caller holds the home write lock.
+    pub(crate) fn rewrite_schema(
+        storage_home: &Path,
+        embeddings: &[EmbeddingModelInfo],
+    ) -> EngineResult<()> {
+        validate_models(embeddings)?;
+        let path = storage_home.join("storage").join("schema.json");
+        if !path.is_file() {
+            return Err(EngineError::storage_failure(format!(
+                "cannot rewrite a missing storage schema: {}",
+                path.display()
+            )));
+        }
+        let bytes = serde_json::to_vec(&SchemaRecord::new(embeddings))
+            .map_err(|error| json_error(&error))?;
+        write_record(&path, &bytes)
+    }
+
     pub(crate) fn delete(storage_path: &Path) -> EngineResult<()> {
         if !Self::exists(storage_path)? {
             return Ok(());

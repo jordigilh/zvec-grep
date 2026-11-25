@@ -68,6 +68,9 @@ pub(crate) enum Metric {
 mod embedding;
 mod reranking;
 
-pub(crate) use embedding::{EmbeddingModelInfo, EmbeddingPurpose, EmbeddingResult};
+pub(crate) use embedding::{
+    BackendIdentity, EmbeddingModelInfo, EmbeddingPurpose, EmbeddingResult,
+    mid_run_backend_mismatch,
+};
 #[allow(unused_imports)] // Reserved for the first reranking backend.
 pub(crate) use reranking::RerankScore;
