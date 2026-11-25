@@ -41,8 +41,10 @@ batches, single process. Every row below is reproducible with the committed
 | MLX GPU bf16, `mx.compile` | 14.6 s | 8 621 tok/s | 10.80 | 0.82 GB (MLX-only) |
 
 - **Engine-vs-engine speedup: 3.7-5.2x** (identical batches, identical
-  tokenizer, same-run pairs). This is the honest ceiling number: it isolates
-  the compute engine from batching policy.
+  tokenizer, same-run pairs; the 3.7x lower bound pairs the best MLX wall
+  with the best ORT wall across the spread noted below, the table's own
+  rows give 4.0-5.2x). This is the honest ceiling number: it isolates the
+  compute engine from batching policy.
 - Against the **current production CPU path** (max_batch_size 2, token-budget
   sub-batching; #73 baseline 311 s wall / 0.78 GB RSS for 166 files) the same
   MLX configuration is ~20x faster wall-clock, because the GPU path also
@@ -74,7 +76,8 @@ shortcut degrades embedding cosine to ~0.95 on some inputs: fp16 layer-norm
 accumulation loses precision in the variance, and fp16 scores/softmax lose
 it in the ALiBi-biased exponentials. With the policy above the port is exact
 (cosine ~1.0) at the same throughput. `--dump-fixtures DIR` writes the
-ids/mask/reference/MLX embedding set used by the future Rust backend test.
+ids/mask/reference/MLX embedding set used by the future Rust backend test
+(computed at fp16, stored fp32).
 
 The forward pass spec below was recovered from the shipped ONNX graph and
 confirmed numerically, so the eventual Rust port does not need to rediscover
@@ -136,6 +139,10 @@ prebuilt-MLX `mlx-sys` path). Estimated 3-4 days for the jina slice.
    `mlx`; `backends/mlx/mod.rs` declarative; new catalog entry
    `local/jina-embeddings-v2-base-code-mlx` (same repo/revision, adds
    `model.safetensors` artifact, `max_batch_size` 8, dtype `fp16`).
+   Pin the ModelScope fallback source and revision explicitly for the new
+   entry (the existing entry falls back to a *different* revision,
+   `91aa0a6a…`, and `model.safetensors` must be verified to exist at
+   whichever revision is pinned — or drop the fallback for the MLX entry).
    Factory test: entry constructs and reports `backend: "mlx-gpu"`,
    `dtype: "fp16"` — a model-identity change, never mixed into an existing
    index, no automatic fallback to ONNX/model2vec. Refresh
@@ -172,36 +179,49 @@ prebuilt-MLX `mlx-sys` path). Estimated 3-4 days for the jina slice.
 6. **gte-modernbert** is out of scope for the first slice; follow-up issue
    with its own spike (rotary + sliding-window attention port).
 
-## CI gating (merge blocker for the implementation)
+## CI gating (decided: ubuntu CPU gate + hosted macOS lane)
 
-The repository's workflows run on `ubuntu-latest` only — there is **no macOS
-CI today**, so an MLX backend cannot be regression-gated as things stand,
-and the implementation PR must not merge with local-only verification.
-Options, with trade-offs:
+Decision (2026-11-25): the implementation ships **two lanes**, and no
+self-hosted runner is required unless the hosted macOS spike fails. This
+repository has no macOS lane today; it was removed, and the workflows now
+run on `ubuntu-latest` only, so both lanes are new work.
 
-1. **Self-hosted macOS runner on the maintainer's Mac.** Real Metal, real
-   numerics, no per-minute cost; requires runner registration and the
-   machine to be online for CI. The only option guaranteed to exercise
-   Metal today.
-2. **GitHub-hosted `macos-14/15/26` job.** 10x minute cost (free for public
-   repos). Whether Metal kernels actually execute on the Apple Silicon
-   hosted VMs is **unverified** — GitHub images ship Xcode, but the Metal
-   toolchain may be a separate `xcodebuild -downloadComponent
-   MetalToolchain` step — so this needs its own spike before being relied
-   on. If the spike fails, option 1 is required.
-3. **Ubuntu-only gating for everything that is not Metal execution** —
-   worker-thread design, packing, pooling, identity, cancellation,
-   execution-budget handling, catalog/oracle fixtures — behind the `mlx`
-   feature with the MLX-dependent tests `#[ignore]`d. Cheap, and the
-   recommended baseline regardless of the macOS choice.
-4. **`#[ignore]`d MLX numerics test** mirroring `cached_minilm`, runnable
-   locally and on whichever macOS runner is chosen.
+1. **Ubuntu lane — mandatory, gates everything that is not Metal
+   execution.** `mlx-sys` builds with `default-features = false`
+   (`MLX_BUILD_METAL=OFF`, `MLX_BUILD_CPU=ON`), and MLX publishes a CPU-only
+   build for Linux (`pip install mlx[cpu]`), so the `mlx` feature can be
+   compiled and its non-GPU tests run on `ubuntu-latest`: worker-thread
+   design (`Array` is `!Send`), token-budget packing, mean-pool/normalize,
+   model identity, cancellation, execution-budget handling, catalog and
+   oracle fixtures. **Prerequisite spike (30 min):** confirm `mlx-sys`
+   builds CPU-only on `ubuntu-latest` (CMake, C++20, libblas/liblapack
+   headers). If it does not, the lane compiles the feature against a stub
+   backend and the macOS lane carries every MLX execution test.
+2. **Hosted macOS lane — gates the Metal kernels.** `runs-on: macos-26`
+   (arm64, 3-core M1, 7 GB). Standard GitHub-hosted runners are **free and
+   unlimited on public repositories**, macOS included, so this lane costs
+   nothing and needs no payment method. Steps: run `xcrun -f metal`, and
+   `xcodebuild -downloadComponent MetalToolchain` when it fails (Xcode 26+
+   ships Metal as a separate downloadable component; CommandLineTools alone
+   never has it), then the `#[ignore]`d `cached_jina_mlx` numerics test
+   (cosine >= 0.999 against the fp32 fixtures from this spike), a smoke
+   embedding, and one end-to-end `zg` run.
+3. **Hosted Metal must be proven, not assumed.** Metal does execute on
+   hosted arm64 macOS VMs — actions/runner-images#14836 (Oct 2026) shows
+   Metal command buffers running cleanly on `macos-15`/`macos-26` arm64,
+   with GPU hangs confined to `macos-15-intel` — but MLX itself does not
+   rely on it: upstream `ml-explore/mlx` runs its `mac_build` matrix
+   (`cpu`, `metal`, `jit`) on `runs-on: [self-hosted, macos]`. The lane
+   must therefore assert that an MLX **Metal device** was allocated (not a
+   silent CPU fallback) before the numerics test counts as a GPU gate.
+4. **Fallback.** If (3) fails, a self-hosted macOS runner on the
+   maintainer's Mac replaces (2) with identical jobs; only the `runs-on:`
+   label changes and the acceptance criteria stay the same.
 
-**Acceptance criteria for the implementation PR:** ubuntu gates all
-non-GPU logic (option 3, mandatory) **and** one macOS job — hosted (option
-2) if the Metal spike succeeds, otherwise self-hosted (option 1) — runs the
-MLX numerics test and a smoke embedding. If hosted macOS cannot execute
-Metal, the self-hosted runner is required.
+**Acceptance criteria for the implementation PR:** the ubuntu lane is green
+with `--features mlx` (all non-GPU logic) **and** the macOS lane runs the
+MLX numerics test plus a smoke embedding on a confirmed Metal device.
+Local-only verification does not satisfy this.
 
 **Confidence: 0.78** that the slice lands within the estimate and keeps
 >= 3x over the CPU path in the shipped Rust backend (`transforms::compile`
