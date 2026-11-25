@@ -64,8 +64,12 @@ def run(binary: str, root: str, query: str) -> list[str]:
 
 
 def main() -> None:
+    if len(sys.argv) != 5:
+        sys.exit("usage: compare-pair.py <a-root> <b-root> <queries.json> <out-prefix>")
     a_root, b_root, queries_file, prefix = sys.argv[1:5]
     queries = json.loads(Path(queries_file).read_text())["queries"]
+    if not queries:
+        sys.exit(f"{queries_file} contains no queries")
 
     def rel(hits, root):
         return [h[len(root):].lstrip("/") if h.startswith(root) else h for h in hits]

@@ -665,28 +665,34 @@ fn cpu_sub_batches_reassemble_vectors_in_input_order() {
     // (max_batch_size 4 -> three sub-batches of longest-first indexes).
     let lengths = [10, 1, 9, 2, 8, 3, 7, 4, 6, 5];
     let calls = StdMutex::new(Vec::new());
-    let result = embed_sub_batches(&texts, &lengths, entry, None, |sub_texts| {
+    let result = embed_sub_batches(&texts, &lengths, entry, None, |indexes, sub_texts| {
         let call = lock_std_mutex(&calls).len();
-        lock_std_mutex(&calls).push(sub_texts.to_vec());
+        lock_std_mutex(&calls).push((indexes.to_vec(), sub_texts.to_vec()));
         Ok(sub_batch_result(call, sub_texts))
     })
     .expect("sub-batched embedding");
     assert_eq!(
         *lock_std_mutex(&calls),
         vec![
-            vec![
-                texts[0].clone(),
-                texts[2].clone(),
-                texts[4].clone(),
-                texts[6].clone()
-            ],
-            vec![
-                texts[8].clone(),
-                texts[9].clone(),
-                texts[7].clone(),
-                texts[5].clone()
-            ],
-            vec![texts[3].clone(), texts[1].clone()],
+            (
+                vec![0, 2, 4, 6],
+                vec![
+                    texts[0].clone(),
+                    texts[2].clone(),
+                    texts[4].clone(),
+                    texts[6].clone()
+                ]
+            ),
+            (
+                vec![8, 9, 7, 5],
+                vec![
+                    texts[8].clone(),
+                    texts[9].clone(),
+                    texts[7].clone(),
+                    texts[5].clone()
+                ]
+            ),
+            (vec![3, 1], vec![texts[3].clone(), texts[1].clone()]),
         ]
     );
     // Each vector lands at its original input index with its sub-batch
@@ -715,17 +721,23 @@ fn cpu_sub_batches_check_cancellation_between_sub_batches() {
     let lengths = [1; 9];
     let signal = CancellationToken::new();
     let calls = StdMutex::new(0_usize);
-    let error = embed_sub_batches(&texts, &lengths, entry, Some(&signal), |sub_texts| {
-        let mut calls = lock_std_mutex(&calls);
-        *calls += 1;
-        if *calls == 1 {
-            signal.cancel();
-        }
-        Ok(EmbeddingResult {
-            vectors: vec![vec![0.0; 3]; sub_texts.len()],
-            truncated: Vec::new(),
-        })
-    })
+    let error = embed_sub_batches(
+        &texts,
+        &lengths,
+        entry,
+        Some(&signal),
+        |_indexes, sub_texts| {
+            let mut calls = lock_std_mutex(&calls);
+            *calls += 1;
+            if *calls == 1 {
+                signal.cancel();
+            }
+            Ok(EmbeddingResult {
+                vectors: vec![vec![0.0; 3]; sub_texts.len()],
+                truncated: Vec::new(),
+            })
+        },
+    )
     .expect_err("cancelled between sub-batches");
     assert_eq!(error.code(), crate::EngineError::CANCELLED);
     // The first sub-batch ran; the remaining two were skipped.
@@ -734,9 +746,13 @@ fn cpu_sub_batches_check_cancellation_between_sub_batches() {
 
 #[test]
 fn cpu_sub_batches_accept_empty_input() {
-    let result = embed_sub_batches(&[], &[], entry("mean", true), None, |_sub_texts| {
-        panic!("no sub-batches should run for empty input")
-    })
+    let result = embed_sub_batches(
+        &[],
+        &[],
+        entry("mean", true),
+        None,
+        |_indexes, _sub_texts| panic!("no sub-batches should run for empty input"),
+    )
     .expect("empty input");
     assert!(result.vectors.is_empty());
     assert!(result.truncated.is_empty());

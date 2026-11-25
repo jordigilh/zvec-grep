@@ -66,7 +66,7 @@ the clone, is the authoritative sample:
 
 | Corpus | Model | Upstream revision | Notes |
 |---|---|---|---|
-| kuadrant-operator (Go, 332 .rs-equivalent files) | gte | `21ed74e2` (v0.1.0-2645-g21ed74e2, dirty) | full repo incl. generated CRD/bundle YAML |
+| kuadrant-operator (Go, 332 .go source files, 826 indexed total) | gte | `21ed74e2` (v0.1.0-2645-g21ed74e2, dirty) | full repo incl. generated CRD/bundle YAML |
 | kubernaut-console (TS) | gte | `23a3f24a` (v1.6.0-rc28-55-g23a3f24, dirty) | node_modules/dist/storybook excluded |
 | java-analysis-adapter (Java, 227 files) | qwen3 (control) | `f17f31a` (clean) | src only; anchored excludes `/spike`, `/analysis`, `/target` |
 | praxis-grid (Rust) | jina | `3299794` (v0.1.3-57-g3299794, dirty) | target excluded |

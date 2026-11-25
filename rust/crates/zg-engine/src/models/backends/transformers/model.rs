@@ -957,7 +957,9 @@ fn embed_batch(
 
 /// CPU inference split into token-budgeted sub-batches so one long fragment
 /// cannot stretch (or OOM) the whole batch. Vectors are reassembled in the
-/// original input order.
+/// original input order. The probe encodings are computed once for the whole
+/// request and reused by every sub-batch, so each text is probe-tokenized
+/// exactly once per embed call.
 fn run_cpu_batched(
     loaded: &LoadedTransformersModel,
     texts: &[String],
@@ -965,36 +967,46 @@ fn run_cpu_batched(
     execution_concurrency: usize,
     signal: Option<&CancellationToken>,
 ) -> Result<EmbeddingResult, ModelError> {
-    let token_lengths = probe_token_lengths(&loaded.tokenizers, texts, entry)?;
-    embed_sub_batches(texts, &token_lengths, entry, signal, |sub_texts| {
-        let prepared = prepare_batch(&loaded.tokenizers, sub_texts, entry)?;
-        loaded.sessions.run(execution_concurrency, |session| {
-            run_session(session, &prepared, entry, signal)
-        })
-    })
+    let probe = probe_encodings(&loaded.tokenizers, texts, entry)?;
+    let token_lengths = probe.iter().map(probe_token_count).collect::<Vec<_>>();
+    embed_sub_batches(
+        texts,
+        &token_lengths,
+        entry,
+        signal,
+        |indexes, sub_texts| {
+            let sub_probe = indexes
+                .iter()
+                .map(|&index| probe[index].clone())
+                .collect::<Vec<_>>();
+            let prepared =
+                prepare_batch_from_probe(&loaded.tokenizers, sub_texts, entry, &sub_probe)?;
+            loaded.sessions.run(execution_concurrency, |session| {
+                run_session(session, &prepared, entry, signal)
+            })
+        },
+    )
 }
 
-/// Token lengths from the no-padding probe tokenizer, used only to pack
-/// sub-batches; each sub-batch is still tokenized by `prepare_batch`.
-fn probe_token_lengths(
+/// Encodings from the no-padding probe tokenizer (truncating one token past
+/// the model limit), used to pack sub-batches and to detect truncation.
+fn probe_encodings(
     tokenizers: &PreparedTokenizers,
     texts: &[String],
     entry: TransformersConfig,
-) -> Result<Vec<usize>, ModelError> {
-    let encodings = tokenizers
+) -> Result<Vec<tokenizers::Encoding>, ModelError> {
+    tokenizers
         .probe
         .encode_batch(texts.to_vec(), entry.add_special_tokens)
-        .map_err(|error| tokenization_error(entry, error))?;
-    Ok(encodings
+        .map_err(|error| tokenization_error(entry, error))
+}
+
+fn probe_token_count(encoding: &tokenizers::Encoding) -> usize {
+    encoding
+        .get_attention_mask()
         .iter()
-        .map(|encoding| {
-            encoding
-                .get_attention_mask()
-                .iter()
-                .filter(|&&value| value != 0)
-                .count()
-        })
-        .collect())
+        .filter(|&&value| value != 0)
+        .count()
 }
 
 /// Greedily pack input indexes into sub-batches constrained by both
@@ -1035,13 +1047,15 @@ fn pack_token_budgeted_batches(
 
 /// Runs each packed sub-batch through `embed_sub_batch`, reassembling vectors
 /// and truncation indexes in the original input order. Cancellation is
-/// re-checked before every sub-batch.
+/// re-checked before every sub-batch. The sub-batch callback receives both
+/// the original input indexes and their texts so callers can reuse
+/// per-request state (such as precomputed probe encodings) for the sub-batch.
 fn embed_sub_batches(
     texts: &[String],
     token_lengths: &[usize],
     entry: TransformersConfig,
     signal: Option<&CancellationToken>,
-    mut embed_sub_batch: impl FnMut(&[String]) -> Result<EmbeddingResult, ModelError>,
+    mut embed_sub_batch: impl FnMut(&[usize], &[String]) -> Result<EmbeddingResult, ModelError>,
 ) -> Result<EmbeddingResult, ModelError> {
     let sub_batches =
         pack_token_budgeted_batches(token_lengths, entry.max_batch_size, MAX_BATCH_TOKENS);
@@ -1053,7 +1067,7 @@ fn embed_sub_batches(
             .iter()
             .map(|&index| texts[index].clone())
             .collect::<Vec<_>>();
-        let result = embed_sub_batch(&sub_texts)?;
+        let result = embed_sub_batch(&indexes, &sub_texts)?;
         if result.vectors.len() != indexes.len() {
             return Err(ModelError::internal(
                 "Transformers sub-batch returned an unexpected vector count",
@@ -1318,21 +1332,24 @@ fn prepare_batch(
     texts: &[String],
     entry: TransformersConfig,
 ) -> Result<PreparedBatch, ModelError> {
-    let probe = tokenizers
-        .probe
-        .encode_batch(texts.to_vec(), entry.add_special_tokens)
-        .map_err(|error| tokenization_error(entry, error))?;
+    let probe = probe_encodings(tokenizers, texts, entry)?;
+    prepare_batch_from_probe(tokenizers, texts, entry, &probe)
+}
+
+/// Builds the padded inference batch, taking the probe encodings for
+/// `texts` (in input order) from the caller so the CPU path can compute them
+/// once per request instead of once per sub-batch.
+fn prepare_batch_from_probe(
+    tokenizers: &PreparedTokenizers,
+    texts: &[String],
+    entry: TransformersConfig,
+    probe: &[tokenizers::Encoding],
+) -> Result<PreparedBatch, ModelError> {
     let truncated = probe
         .iter()
         .enumerate()
         .filter_map(|(index, encoding)| {
-            (encoding
-                .get_attention_mask()
-                .iter()
-                .filter(|&&value| value != 0)
-                .count()
-                > entry.max_input_tokens)
-                .then_some(index)
+            (probe_token_count(encoding) > entry.max_input_tokens).then_some(index)
         })
         .collect::<Vec<_>>();
 
