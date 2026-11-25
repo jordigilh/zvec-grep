@@ -27,8 +27,8 @@ prebuilt-metallib `mlx-sys` path, neither of which exists today).
 
 Corpus: `rust/crates/zg-engine/src` (158 files, each pre-truncated to 6000
 chars — below what the 1024-token cap already removes — giving 126k real
-tokens after the cap), longest-first packing, padded 8 x 1024 batches,
-single process. Every row below is reproducible with the committed
+tokens after the cap), longest-first packing, padded 8 (default) or 16 x 1024
+batches, single process. Every row below is reproducible with the committed
 `jina_mlx_spike.py` (`--eager`, `--dtype bf16`, `--batch 16`, and
 `--skip-checks` for the MLX-only RSS runs).
 
@@ -163,13 +163,45 @@ prebuilt-MLX `mlx-sys` path). Estimated 3-4 days for the jina slice.
    attention mask, L2-normalize. Unit tests for packing edge cases run
    without the MLX feature.
 5. **Gates.** `cargo fmt`, `cargo clippy -p zg-engine --all-targets
-   -- -D warnings` with and without `--features mlx` (CI macos runners have
-   Xcode), targeted `zg-engine` tests, `cached_minilm` real-model pair with
-   same-cap invariance per the #80 README. The nine quality lanes are not
-   re-run for existing models (new identity, existing indexes untouched);
-   the new entry gets its own lane run before default promotion.
+   -- -D warnings` with and without `--features mlx`, targeted `zg-engine`
+   tests, `cached_minilm` real-model pair with same-cap invariance per the
+   #80 README. The nine quality lanes are not re-run for existing models
+   (new identity, existing indexes untouched); the new entry gets its own
+   lane run before default promotion. CI gating is a merge blocker for the
+   implementation PR — see the next section.
 6. **gte-modernbert** is out of scope for the first slice; follow-up issue
    with its own spike (rotary + sliding-window attention port).
+
+## CI gating (merge blocker for the implementation)
+
+The repository's workflows run on `ubuntu-latest` only — there is **no macOS
+CI today**, so an MLX backend cannot be regression-gated as things stand,
+and the implementation PR must not merge with local-only verification.
+Options, with trade-offs:
+
+1. **Self-hosted macOS runner on the maintainer's Mac.** Real Metal, real
+   numerics, no per-minute cost; requires runner registration and the
+   machine to be online for CI. The only option guaranteed to exercise
+   Metal today.
+2. **GitHub-hosted `macos-14/15/26` job.** 10x minute cost (free for public
+   repos). Whether Metal kernels actually execute on the Apple Silicon
+   hosted VMs is **unverified** — GitHub images ship Xcode, but the Metal
+   toolchain may be a separate `xcodebuild -downloadComponent
+   MetalToolchain` step — so this needs its own spike before being relied
+   on. If the spike fails, option 1 is required.
+3. **Ubuntu-only gating for everything that is not Metal execution** —
+   worker-thread design, packing, pooling, identity, cancellation,
+   execution-budget handling, catalog/oracle fixtures — behind the `mlx`
+   feature with the MLX-dependent tests `#[ignore]`d. Cheap, and the
+   recommended baseline regardless of the macOS choice.
+4. **`#[ignore]`d MLX numerics test** mirroring `cached_minilm`, runnable
+   locally and on whichever macOS runner is chosen.
+
+**Acceptance criteria for the implementation PR:** ubuntu gates all
+non-GPU logic (option 3, mandatory) **and** one macOS job — hosted (option
+2) if the Metal spike succeeds, otherwise self-hosted (option 1) — runs the
+MLX numerics test and a smoke embedding. If hosted macOS cannot execute
+Metal, the self-hosted runner is required.
 
 **Confidence: 0.78** that the slice lands within the estimate and keeps
 >= 3x over the CPU path in the shipped Rust backend (`transforms::compile`

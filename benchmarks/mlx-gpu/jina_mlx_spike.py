@@ -163,6 +163,7 @@ def dump_fixtures(w, tokenizer, onnx_path, out_dir):
     mask = mx.array([e.attention_mask for e in enc], dtype=mx.float32)
     ours = np.array(pooled(w, ids, mask))
     np.savez(os.path.join(out_dir, "jina_mlx_numerics.npz"),
+             policy=np.array("fp16-weights/fp32-ln-scores"),
              ids=np.array([e.ids for e in enc], dtype=np.int64),
              attention_mask=np.array([e.attention_mask for e in enc], dtype=np.int64),
              reference=ref, mlx=ours)
@@ -238,7 +239,8 @@ def default_cache_q8():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--corpus", required=True, help="directory of .rs files to embed")
+    ap.add_argument("--corpus", help="directory of .rs files to embed "
+                    "(not needed with --dump-fixtures)")
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--threads", type=int, default=12, help="ORT intra-op threads")
     ap.add_argument("--dtype", choices=["fp16", "bf16"], default="fp16")
@@ -252,16 +254,21 @@ def main():
     args = ap.parse_args()
 
     w = load_weights()
-    if args.dtype == "bf16":
-        w = {k: (v.astype(mx.bfloat16) if v.dtype in (mx.float16, mx.float32) else v)
-             for k, v in w.items()}
     tokenizer = Tokenizer.from_file(fetch("tokenizer.json"))
     tokenizer.enable_padding(length=1024)
     tokenizer.enable_truncation(max_length=1024)
 
     if args.dump_fixtures:
+        # Fixtures are the oracle for the future fp16 Rust backend, so they
+        # are always dumped at fp16 regardless of --dtype.
         dump_fixtures(w, tokenizer, fetch("onnx/model.onnx"), args.dump_fixtures)
         return
+    if not args.corpus:
+        ap.error("--corpus is required unless --dump-fixtures is given")
+
+    if args.dtype == "bf16":
+        w = {k: (v.astype(mx.bfloat16) if v.dtype in (mx.float16, mx.float32) else v)
+             for k, v in w.items()}
 
     if not args.skip_checks:
         fp32_onnx = fetch("onnx/model.onnx")
