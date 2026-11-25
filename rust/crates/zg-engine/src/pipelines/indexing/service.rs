@@ -47,7 +47,8 @@ use crate::{
 };
 
 use super::pipeline::{
-    IndexEmbeddingRuntime, IndexingContext, get_workspace_index_status, index_workspace,
+    IndexEmbeddingRuntime, IndexingContext, RunIdentityObservation, get_workspace_index_status,
+    index_workspace_observing,
 };
 
 const DEFAULT_LOCAL_EMBEDDING: &str = "local/gte-modernbert-base";
@@ -307,27 +308,31 @@ impl WorkspaceIndexService {
             .iter()
             .map(|model| model as &dyn IndexEmbeddingRuntime)
             .collect::<Vec<_>>();
-        let result = index_workspace(&IndexingContext {
-            workspace_index: &manifest.workspace,
-            storage: &writer.session.storage,
-            scanner: &self.scanner,
-            embedding_models: &embedding_models,
-            embedding_concurrency: options.embedding_concurrency,
-            on_progress: options.on_progress,
-            signal: options.signal.clone(),
-            changes: &options.changes,
-            // An incremental update appends to a live generation and must not
-            // mix runtimes, so the pipeline enforces the recorded identity
-            // per batch before committing. A fresh build accepts its starting
-            // identity and relabels its staging generation at publication.
-            expected_backend_identity: if build.is_some() {
-                None
-            } else {
-                opened_embeddings
-                    .first()
-                    .and_then(crate::domain::model::EmbeddingModelInfo::backend_identity)
+        let mut run_observation = RunIdentityObservation::default();
+        let result = index_workspace_observing(
+            &IndexingContext {
+                workspace_index: &manifest.workspace,
+                storage: &writer.session.storage,
+                scanner: &self.scanner,
+                embedding_models: &embedding_models,
+                embedding_concurrency: options.embedding_concurrency,
+                on_progress: options.on_progress,
+                signal: options.signal.clone(),
+                changes: &options.changes,
+                // An incremental update appends to a live generation and must not
+                // mix runtimes, so the pipeline enforces the recorded identity
+                // per batch before committing. A fresh build accepts its starting
+                // identity and relabels its staging generation at publication.
+                expected_backend_identity: if build.is_some() {
+                    None
+                } else {
+                    opened_embeddings
+                        .first()
+                        .and_then(crate::domain::model::EmbeddingModelInfo::backend_identity)
+                },
             },
-        })
+            &mut run_observation,
+        )
         .await;
         #[cfg(test)]
         let result = result.and_then(|indexed| {
@@ -381,8 +386,12 @@ impl WorkspaceIndexService {
             // The pipeline already refused any batch whose runtime identity
             // deviated before committing it; this end-of-run check is a
             // backstop for drift that bypassed the batches (for example a
-            // sticky fallen-back snapshot on a run that embedded nothing).
-            if opened_identity != runtime_identity {
+            // sticky fallen-back snapshot appearing after the last batch).
+            // It applies only to runs that completed at least one batch —
+            // `saw_batch` is set by the first batch's identity check even
+            // if that batch's files all failed — so a no-op run on an
+            // up-to-date generation never refuses.
+            if run_observation.saw_batch() && opened_identity != runtime_identity {
                 return Err(crate::domain::model::mid_run_backend_mismatch(
                     opened_identity.as_ref(),
                     runtime_identity.as_ref(),
@@ -3120,6 +3129,113 @@ mod tests {
         state
     }
 
+    /// A no-op incremental run on a runtime that already fell back must not
+    /// refuse: the end-of-run backstop only applies to runs that completed
+    /// at least one batch. The generation keeps its recorded identity, and
+    /// a later run with real changes still refuses at its first batch, as
+    /// does serving, so nothing is laundered.
+    #[tokio::test]
+    async fn a_noop_incremental_on_a_fallen_back_runtime_succeeds_without_vectors() {
+        let directory = tempdir().expect("workspace");
+        let root = std::fs::canonicalize(directory.path()).expect("root");
+        std::fs::write(root.join("notes.txt"), "orchard vines and orchard rows").expect("source");
+        let embeds = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let fallback_after = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(u32::MAX));
+        let manager = {
+            let embeds = std::sync::Arc::clone(&embeds);
+            let fallback_after = std::sync::Arc::clone(&fallback_after);
+            ModelRuntimeManager::with_factory(move |_reference, _options, _compute| {
+                Ok(std::sync::Arc::new(MidRunFallbackStub {
+                    info: crate::domain::model::EmbeddingModelInfo {
+                        model: crate::domain::model::ModelInfo {
+                            provider: "local".into(),
+                            name: "potion-code-16m-v2".into(),
+                            endpoint: None,
+                        },
+                        dimension: 8,
+                        metric: crate::domain::model::Metric::Cosine,
+                        max_batch_size: 32,
+                        max_input_tokens: Some(64),
+                        max_image_bytes: None,
+                        backend: Some("stub-gpu".into()),
+                        dtype: Some("q8".into()),
+                    },
+                    embeds: std::sync::Arc::clone(&embeds),
+                    fallback_after: std::sync::Arc::clone(&fallback_after),
+                }))
+            })
+        };
+        let service = WorkspaceIndexService::with_test_registry();
+        service
+            .index(&manager, empty_index_options(&root))
+            .await
+            .expect("initial gpu index");
+        let home = root.join(".zvec-grep");
+        let manifest = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("active");
+
+        // The cached runtime has already fallen back: its live snapshot
+        // reports the cpu identity, but with no workspace changes the
+        // incremental run embeds nothing and must not refuse on it.
+        fallback_after.store(0, std::sync::atomic::Ordering::Release);
+        let embeds_before = embeds.load(std::sync::atomic::Ordering::Acquire);
+        service
+            .index(&manager, empty_index_options(&root))
+            .await
+            .expect("no-op incremental update succeeds without embedding");
+        assert_eq!(
+            embeds.load(std::sync::atomic::Ordering::Acquire),
+            embeds_before,
+            "the no-op run embeds nothing"
+        );
+        let unchanged = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("active");
+        assert_eq!(
+            unchanged.storage_generation, manifest.storage_generation,
+            "the no-op run keeps the active generation"
+        );
+        assert_eq!(
+            unchanged.embedding().expect("embedding").backend.as_deref(),
+            Some("stub-gpu"),
+            "the no-op run does not relabel the generation"
+        );
+        let schema = std::fs::read_to_string(unchanged.storage_home().join("storage/schema.json"))
+            .expect("schema");
+        assert!(schema.contains("stub-gpu"), "{schema}");
+        assert!(!schema.contains("stub-cpu"), "{schema}");
+
+        // Nothing was laundered: once real changes arrive, the fallen-back
+        // runtime still refuses at its first batch instead of appending
+        // cpu-identity vectors to the gpu-identity generation.
+        std::fs::write(root.join("late.txt"), "orchard rows extended again").expect("late source");
+        let error = service
+            .index(&manager, empty_index_options(&root))
+            .await
+            .expect_err("a changed incremental run on the fallen-back runtime must refuse");
+        assert_eq!(
+            error.code(),
+            crate::EngineError::INDEX_BACKEND_MISMATCH,
+            "{}",
+            error.message()
+        );
+        let refused = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("active");
+        assert_eq!(
+            refused.embedding().expect("embedding").backend.as_deref(),
+            Some("stub-gpu"),
+            "the refused run does not relabel the generation"
+        );
+        assert_ne!(
+            indexed_file_state(&refused.storage_home(), "late.txt"),
+            Some(true),
+            "the refused run commits no fallback vectors"
+        );
+        manager.close();
+    }
+
     #[tokio::test]
     #[expect(
         clippy::too_many_lines,
@@ -3182,7 +3298,7 @@ mod tests {
         assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
         assert!(
             error.message().contains("the storage opened with")
-                && error.message().contains("produced vectors with"),
+                && error.message().contains("this runtime reports"),
             "{}",
             error.message()
         );

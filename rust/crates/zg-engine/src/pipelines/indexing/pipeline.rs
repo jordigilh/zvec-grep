@@ -141,14 +141,47 @@ pub(crate) struct IndexingContext<'context> {
     pub expected_backend_identity: Option<crate::domain::model::BackendIdentity>,
 }
 
+/// What the pipeline observed about the runtime identity of a run's batches.
+/// `saw_batch` is set by the first batch that completes the run's identity
+/// check — even if that batch's files all fail — so it stays `false` only
+/// for runs that complete zero batches and embed nothing. `identity` is the
+/// identity those batches ran under, `None` when the runtime reports none.
+#[derive(Default)]
+pub(crate) struct RunIdentityObservation {
+    saw_batch: bool,
+    identity: Option<crate::domain::model::BackendIdentity>,
+}
+
+impl RunIdentityObservation {
+    /// Whether at least one batch completed the run's identity check.
+    pub(crate) fn saw_batch(&self) -> bool {
+        self.saw_batch
+    }
+}
+
+/// Test-facing wrapper: production code uses [`index_workspace_observing`]
+/// to learn whether the run embedded anything; the pipeline's own tests
+/// exercise the identity-agnostic path directly.
+#[cfg(test)]
 pub(crate) async fn index_workspace(
     context: &IndexingContext<'_>,
+) -> Result<IndexResult, EngineError> {
+    let mut observed = RunIdentityObservation::default();
+    index_workspace_observing(context, &mut observed).await
+}
+
+/// Index a workspace, reporting what the pipeline observed about the runtime
+/// identity of this run's batches. The service's end-of-run identity backstop
+/// keys on [`RunIdentityObservation::saw_batch`].
+pub(crate) async fn index_workspace_observing(
+    context: &IndexingContext<'_>,
+    observed: &mut RunIdentityObservation,
 ) -> Result<IndexResult, EngineError> {
     validate_context(context)?;
     let started = Instant::now();
     let mut timings = TimingCollector::default();
     let mut model_prepared = false;
-    let mut observed_identity: Option<crate::domain::model::BackendIdentity> = None;
+    *observed = RunIdentityObservation::default();
 
     let first = run_index_pass(
         context,
@@ -156,7 +189,7 @@ pub(crate) async fn index_workspace(
         None,
         &[],
         &mut model_prepared,
-        &mut observed_identity,
+        observed,
     )
     .await?;
     let mut passes = vec![first];
@@ -187,7 +220,7 @@ pub(crate) async fn index_workspace(
                 }),
                 &passes[0].stats.failed_files,
                 &mut model_prepared,
-                &mut observed_identity,
+                observed,
             )
             .await?,
         );
@@ -394,7 +427,7 @@ async fn run_index_pass(
     progress_base: Option<ProgressBase>,
     retry_paths: &[PathBuf],
     model_prepared: &mut bool,
-    observed_identity: &mut Option<crate::domain::model::BackendIdentity>,
+    observed_identity: &mut RunIdentityObservation,
 ) -> Result<IndexPassResult, EngineError> {
     throw_if_cancelled(context.signal.as_ref())?;
     report(
@@ -664,7 +697,7 @@ async fn index_candidates(
     timings: &mut TimingCollector,
     progress_base: Option<ProgressBase>,
     model_prepared: &mut bool,
-    observed_identity: &mut Option<crate::domain::model::BackendIdentity>,
+    observed_identity: &mut RunIdentityObservation,
 ) -> Result<IndexWriteStats, EngineError> {
     let policy = resolve_embedding_policy(
         context.embedding_concurrency,
@@ -885,7 +918,7 @@ fn apply_embedding_outcome(
     timings: &mut TimingCollector,
     stats: &mut IndexWriteStats,
     outcome: Result<EmbeddingBatchOutcome, ModelError>,
-    observed_identity: &mut Option<crate::domain::model::BackendIdentity>,
+    observed_identity: &mut RunIdentityObservation,
 ) -> Result<(), EngineError> {
     let outcome = outcome.map_err(ModelError::into_engine_error)?;
     timings.record("index_embedding", outcome.duration, outcome.outcomes.len());
@@ -908,7 +941,7 @@ fn apply_embedding_outcome(
 /// must also stay stable across batches.
 fn ensure_runtime_identity(
     context: &IndexingContext<'_>,
-    observed: &mut Option<crate::domain::model::BackendIdentity>,
+    observed: &mut RunIdentityObservation,
 ) -> Result<(), EngineError> {
     let Some(model) = context.embedding_models.first() else {
         return Ok(());
@@ -916,30 +949,26 @@ fn ensure_runtime_identity(
     let current = model
         .backend_identity()
         .or_else(|| model.info().backend_identity());
-    match observed {
-        None => {
-            // First batch of this run: an incremental update must start from
-            // the generation's recorded identity. A fresh build accepts its
-            // starting point and relabels the staging generation at
-            // publication.
-            if let Some(expected) = context.expected_backend_identity.as_ref()
-                && current.as_ref() != Some(expected)
-            {
-                return Err(crate::domain::model::mid_run_backend_mismatch(
-                    Some(expected),
-                    current.as_ref(),
-                ));
-            }
-            *observed = current;
+    if !observed.saw_batch {
+        // First batch of this run: an incremental update must start from
+        // the generation's recorded identity. A fresh build accepts its
+        // starting point and relabels the staging generation at
+        // publication.
+        if let Some(expected) = context.expected_backend_identity.as_ref()
+            && current.as_ref() != Some(expected)
+        {
+            return Err(crate::domain::model::mid_run_backend_mismatch(
+                Some(expected),
+                current.as_ref(),
+            ));
         }
-        Some(previous) => {
-            if current.as_ref() != Some(&*previous) {
-                return Err(crate::domain::model::mid_run_backend_mismatch(
-                    Some(previous),
-                    current.as_ref(),
-                ));
-            }
-        }
+        observed.identity = current;
+        observed.saw_batch = true;
+    } else if current.as_ref() != observed.identity.as_ref() {
+        return Err(crate::domain::model::mid_run_backend_mismatch(
+            observed.identity.as_ref(),
+            current.as_ref(),
+        ));
     }
     Ok(())
 }
@@ -951,7 +980,7 @@ fn apply_embedding_files(
     timings: &mut TimingCollector,
     stats: &mut IndexWriteStats,
     outcomes: Vec<EmbeddedFileOutcome>,
-    observed_identity: &mut Option<crate::domain::model::BackendIdentity>,
+    observed_identity: &mut RunIdentityObservation,
 ) -> Result<(), EngineError> {
     ensure_runtime_identity(context, observed_identity)?;
     for outcome in outcomes {
