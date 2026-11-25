@@ -15,7 +15,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{debug, warn};
 use zg_engine::{
     EngineError, ErrorSite, ZvecGrep,
     api::{
@@ -565,6 +565,34 @@ impl WorkspaceRuntimeManager {
         }
     }
 
+    /// Runs the synchronous search refresh, tolerating a backend-identity
+    /// mismatch when the waiting request never embeds query vectors. This
+    /// mirrors the engine's automatic-refresh tolerance: FTS-only retrieval
+    /// can serve the stored full-text results of a generation recorded by a
+    /// foreign runtime, while vector requests keep the hard refusal because
+    /// they cannot mix embeddings across runtimes.
+    ///
+    /// Returns whether the refresh failed and was tolerated, so the caller
+    /// reports the stored generation instead of a fresh one.
+    async fn refresh_for_search(
+        &self,
+        options: IndexOptions,
+        fts_only: bool,
+    ) -> Result<bool, EngineError> {
+        if let Err(error) = self.refresh_index(options, true).await {
+            if !is_swallowable_wait_refresh_error(fts_only, &error) {
+                return Err(error);
+            }
+            warn!(
+                code = error.code(),
+                "serving stored full-text results after a failed wait refresh: {}",
+                error.message()
+            );
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     async fn prove_clean_reconciliation(
         &self,
         root: &Path,
@@ -1088,7 +1116,12 @@ impl IndexOperationProvider for WorkspaceRuntimeManager {
             .unwrap_or(requested_root);
         let known_runtime = runtime_present
             && (self.runtime_snapshot(&root).watcher_active || self.job_for_root(&root).is_some());
-        let _refresh_activity = Box::pin(wait_for_search_refresh(&request, async {
+        // FTS-only retrieval never embeds, so a generation whose backend
+        // identity no longer matches this runtime can still serve its stored
+        // full-text results after a failed refresh. An unusable request
+        // normalizes as vector-capable, so the refresh failure propagates.
+        let fts_only = wait_search_fts_only(&request);
+        let served_despite_failed_refresh = Box::pin(wait_for_search_refresh(&request, async {
             wait_for_search_admission(&request, async {
                 if known_runtime {
                     // A resident workspace already has its coordinator and
@@ -1098,8 +1131,7 @@ impl IndexOperationProvider for WorkspaceRuntimeManager {
                     // starting a second admission cycle.
                     let mut options = options.clone();
                     options.root = Some(root.clone());
-                    self.refresh_index(options, true).await?;
-                    return Ok(());
+                    return self.refresh_for_search(options, fts_only).await;
                 }
                 self.inner
                     .scheduler
@@ -1116,20 +1148,18 @@ impl IndexOperationProvider for WorkspaceRuntimeManager {
                 if info.indexed {
                     let mut options = options;
                     options.root = Some(info.root);
-                    self.refresh_index(options, true).await?;
+                    return self.refresh_for_search(options, fts_only).await;
                 }
                 // Preserve the engine's missing-index error without silently creating one.
-                Ok(())
+                Ok(false)
             })
             .await
         }))
         .await?;
         // Resident Wait reconciles delivered watcher events. OS notifications
         // still in flight belong to a later refresh, not a second disk scan.
-        let mut reply = engine.context_after_refresh(request).await?;
-        reply.freshness = Some("fresh".to_owned());
-        reply.background_refresh = Some("idle".to_owned());
-        Ok(reply)
+        let reply = engine.context_after_refresh(request).await?;
+        Ok(wait_search_reply(reply, served_despite_failed_refresh))
     }
 
     async fn drop_index(&self, options: InfoOptions) -> Result<bool, EngineError> {
@@ -1176,6 +1206,50 @@ impl IndexOperationProvider for WorkspaceRuntimeManager {
     }
 }
 
+/// Stamps a Wait-policy reply with its freshness outcome. A tolerated
+/// refresh failure serves the stored generation: report it as such instead
+/// of claiming freshness the failed refresh never made.
+fn wait_search_reply(
+    mut reply: ContextResult,
+    served_despite_failed_refresh: bool,
+) -> ContextResult {
+    reply.freshness = Some(
+        if served_despite_failed_refresh {
+            "served_from_current_index"
+        } else {
+            "fresh"
+        }
+        .to_owned(),
+    );
+    reply.background_refresh = Some(
+        if served_despite_failed_refresh {
+            "failed"
+        } else {
+            "idle"
+        }
+        .to_owned(),
+    );
+    reply
+}
+
+/// Whether a wait-for-fresh search request never embeds query vectors, so a
+/// tolerated refresh failure can still serve its stored full-text results.
+/// An unusable request normalizes as vector-capable, so its refresh failure
+/// propagates instead of being served.
+fn wait_search_fts_only(request: &ContextOptions) -> bool {
+    match zg_engine::api::context::uses_vectors(request) {
+        Ok(uses_vectors) => !uses_vectors,
+        Err(error) => {
+            debug!(
+                code = error.code(),
+                "wait search request failed normalization: {}",
+                error.message()
+            );
+            false
+        }
+    }
+}
+
 async fn wait_for_search_refresh<T>(
     request: &ContextOptions,
     work: impl std::future::Future<Output = Result<T, EngineError>>,
@@ -1215,6 +1289,15 @@ fn ensure_refresh_succeeded(job: &IndexJobSnapshot) -> Result<(), EngineError> {
             |error| EngineError::from_report(error.report.clone()),
         ))
     }
+}
+
+/// Whether a failed synchronous search refresh may be downgraded to a warning
+/// so the stored full-text results are still served. Only the backend-mismatch
+/// error code is swallowable — mirroring the engine's automatic-refresh
+/// condition — and only for FTS-only requests; every other failure must reach
+/// the caller.
+fn is_swallowable_wait_refresh_error(fts_only: bool, error: &EngineError) -> bool {
+    fts_only && error.code() == EngineError::INDEX_BACKEND_MISMATCH
 }
 
 impl Drop for RuntimeManagerInner {
@@ -2576,6 +2659,221 @@ mod tests {
         manager.shutdown_all().await.expect("shutdown");
     }
 
+    #[tokio::test]
+    async fn fts_only_wait_search_survives_an_incompatible_refresh() {
+        use zg_engine::{
+            ZvecGrep,
+            api::{
+                context::{
+                    ContextOptions,
+                    options::{ContextRoute, ContextRouteMode, RefreshPolicy},
+                },
+                index::options::{Device, EmbeddingModelSpec},
+            },
+        };
+        use zg_transport_mcp::IndexOperationProvider;
+
+        let directory = tempdir().expect("workspace");
+        let root = std::fs::canonicalize(directory.path()).expect("root");
+        std::fs::write(root.join("notes.txt"), "orchard vines and orchard rows").expect("source");
+        let engine = Arc::new(ZvecGrep::new());
+        engine
+            .index(IndexOptions {
+                root: Some(root.clone()),
+                embedding: Some(EmbeddingModelSpec {
+                    reference: "local/potion-code-16m-v2".into(),
+                    revision: None,
+                    cache_dir: None,
+                    endpoint: None,
+                    device: Device::Cpu,
+                }),
+                ..IndexOptions::default()
+            })
+            .await
+            .expect("index");
+        // Simulate a generation recorded by a foreign embedding runtime.
+        rewrite_manifest_field(&root, "embeddings.0.backend", "onnx-cpu");
+        rewrite_manifest_field(&root, "embeddings.0.dtype", "q8");
+        // A changed workspace makes a wait-for-fresh request attempt an
+        // incremental refresh of the incompatible generation.
+        std::fs::write(root.join("extra.txt"), "orchard rows extended").expect("changed source");
+        let manager = WorkspaceRuntimeManager::native(Arc::clone(&engine));
+        let wait_search = |mode: ContextRouteMode| {
+            IndexOperationProvider::search(
+                &manager,
+                &engine,
+                ContextOptions {
+                    root: Some(root.clone()),
+                    routes: vec![ContextRoute {
+                        mode,
+                        query: "orchard".into(),
+                    }],
+                    refresh: Some(RefreshPolicy::Wait),
+                    auto_update: false,
+                    ..ContextOptions::default()
+                },
+            )
+        };
+        // FTS-only retrieval survives the failed refresh and serves the stored
+        // full-text results instead of failing the wait-for-fresh query, and
+        // the reply reports the stored generation rather than freshness.
+        let result = wait_search(ContextRouteMode::Fts)
+            .await
+            .expect("fts-only wait serves stored results despite the incompatible generation");
+        assert!(!result.items.is_empty());
+        assert_eq!(
+            result.freshness.as_deref(),
+            Some("served_from_current_index")
+        );
+        assert_eq!(result.background_refresh.as_deref(), Some("failed"));
+        // The first wait search activated the resident watcher, so the calls
+        // below deterministically take the known-runtime arm.
+        assert!(
+            manager.runtime_snapshot(&root).watcher_active,
+            "the first wait search activates the resident watcher"
+        );
+        // Vector requests keep the hard refusal: they cannot mix embeddings
+        // across runtimes, even when a fresh refresh is requested.
+        let error = wait_search(ContextRouteMode::Vector)
+            .await
+            .expect_err("vector wait query must still refuse");
+        assert_eq!(error.code(), EngineError::INDEX_BACKEND_MISMATCH);
+        // The resident arm (known runtime, watcher active) must swallow the
+        // same mismatch for a later FTS-only wait query after more changes.
+        // The vector refusal above proves the dirty state still triggers a
+        // refresh attempt, so the FTS call below exercises a real swallow.
+        std::fs::write(root.join("more.txt"), "orchard rows again").expect("changed source");
+        let error = wait_search(ContextRouteMode::Vector)
+            .await
+            .expect_err("resident vector wait query must still refuse");
+        assert_eq!(error.code(), EngineError::INDEX_BACKEND_MISMATCH);
+        let result = wait_search(ContextRouteMode::Fts)
+            .await
+            .expect("resident fts-only wait serves stored results");
+        assert!(!result.items.is_empty());
+        assert_eq!(
+            result.freshness.as_deref(),
+            Some("served_from_current_index")
+        );
+        assert_eq!(result.background_refresh.as_deref(), Some("failed"));
+        manager.shutdown_all().await.expect("shutdown");
+        engine.close();
+    }
+
+    #[tokio::test]
+    async fn fts_only_wait_search_still_fails_on_other_refresh_errors() {
+        use zg_engine::{
+            ZvecGrep,
+            api::{
+                context::{
+                    ContextOptions,
+                    options::{ContextRoute, ContextRouteMode, RefreshPolicy},
+                },
+                index::options::{Device, EmbeddingModelSpec},
+            },
+        };
+        use zg_transport_mcp::IndexOperationProvider;
+
+        let directory = tempdir().expect("workspace");
+        let root = std::fs::canonicalize(directory.path()).expect("root");
+        std::fs::write(root.join("notes.txt"), "orchard vines and orchard rows").expect("source");
+        let engine = Arc::new(ZvecGrep::new());
+        engine
+            .index(IndexOptions {
+                root: Some(root.clone()),
+                embedding: Some(EmbeddingModelSpec {
+                    reference: "local/potion-code-16m-v2".into(),
+                    revision: None,
+                    cache_dir: None,
+                    endpoint: None,
+                    device: Device::Cpu,
+                }),
+                ..IndexOptions::default()
+            })
+            .await
+            .expect("index");
+        // A changed workspace makes a wait-for-fresh request attempt an
+        // incremental refresh. Rewriting the stored model to a reference the
+        // catalog cannot resolve makes that refresh fail with an error that is
+        // not the terminal backend mismatch, so it must propagate even for an
+        // FTS-only request: only the identity mismatch is swallowable.
+        rewrite_manifest_field(&root, "embeddings.0.model.name", "does-not-exist");
+        rewrite_manifest_field(&root, "embeddingRoutes.text", "local/does-not-exist");
+        std::fs::write(root.join("extra.txt"), "orchard rows extended").expect("changed source");
+        let manager = WorkspaceRuntimeManager::native(Arc::clone(&engine));
+        let error = IndexOperationProvider::search(
+            &manager,
+            &engine,
+            ContextOptions {
+                root: Some(root.clone()),
+                routes: vec![ContextRoute {
+                    mode: ContextRouteMode::Fts,
+                    query: "orchard".into(),
+                }],
+                refresh: Some(RefreshPolicy::Wait),
+                auto_update: false,
+                ..ContextOptions::default()
+            },
+        )
+        .await
+        .expect_err("other refresh errors must fail the wait query");
+        assert_ne!(error.code(), EngineError::INDEX_BACKEND_MISMATCH);
+        assert!(
+            error.message().contains("does-not-exist"),
+            "{}",
+            error.message()
+        );
+        manager.shutdown_all().await.expect("shutdown");
+        engine.close();
+    }
+
+    /// Simulates a generation recorded by another runtime, or a corrupt model
+    /// reference, by rewriting one manifest field on disk. The field is a
+    /// dotted JSON path relative to the manifest root; a path segment named
+    /// `embeddings` must be followed by the array index to rewrite.
+    fn rewrite_manifest_field(root: &std::path::Path, field: &str, value: &str) {
+        let path = root.join(".zvec-grep/manifest.json");
+        let mut json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("manifest"))
+                .expect("manifest json");
+        let mut steps = field.split('.');
+        let mut target = &mut json;
+        while let Some(step) = steps.next() {
+            target = if step == "embeddings" {
+                let index: usize = steps
+                    .next()
+                    .expect("embeddings index")
+                    .parse()
+                    .expect("index");
+                target
+                    .get_mut("embeddings")
+                    .expect("embeddings array")
+                    .get_mut(index)
+                    .expect("embedding entry")
+            } else {
+                target
+                    .get_mut(step)
+                    .unwrap_or_else(|| panic!("manifest field {field} is missing"))
+            };
+        }
+        *target = serde_json::Value::String(value.to_owned());
+        std::fs::write(&path, json.to_string()).expect("rewrite manifest");
+    }
+
     mod freshness;
     mod lifecycle;
+
+    mod wait_refresh_fts {
+        use super::super::is_swallowable_wait_refresh_error;
+
+        #[test]
+        fn only_an_fts_only_backend_mismatch_is_swallowable() {
+            let mismatch = zg_engine::EngineError::index_backend_mismatch("foreign runtime");
+            let other = zg_engine::EngineError::internal("fixture index failed");
+            assert!(is_swallowable_wait_refresh_error(true, &mismatch));
+            assert!(!is_swallowable_wait_refresh_error(false, &mismatch));
+            assert!(!is_swallowable_wait_refresh_error(true, &other));
+            assert!(!is_swallowable_wait_refresh_error(false, &other));
+        }
+    }
 }

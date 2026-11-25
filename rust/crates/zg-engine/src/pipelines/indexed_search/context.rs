@@ -35,6 +35,15 @@ pub(crate) struct NormalizedContextRequest {
     pub groups: Vec<NormalizedContextGroup>,
 }
 
+impl NormalizedContextRequest {
+    /// Whether any normalized route embeds query vectors.
+    pub(crate) fn uses_vectors(&self) -> bool {
+        self.routes
+            .iter()
+            .any(|route| route.mode == ContextRouteMode::Vector)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct NormalizedContextGroup {
     pub id: String,
