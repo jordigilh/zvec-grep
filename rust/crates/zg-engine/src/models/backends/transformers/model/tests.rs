@@ -578,30 +578,48 @@ async fn cached_minilm_runs_real_onnx_inference() {
         );
     }
 
-    let barrier = Arc::new(std::sync::Barrier::new(2));
-    let first_loaded = Arc::clone(&loaded);
-    let first_barrier = Arc::clone(&barrier);
-    let first = model.compute_runtime.run(move || {
-        first_loaded.sessions.run(2, |_session| {
-            first_barrier.wait();
-            Ok(())
-        })
-    });
-    let second_loaded = Arc::clone(&loaded);
-    let second = model.compute_runtime.run(move || {
-        second_loaded.sessions.run(2, |_session| {
-            barrier.wait();
-            Ok(())
-        })
-    });
-    let (first, second) = tokio::join!(first, second);
-    first
-        .expect("first compute task")
-        .expect("first pooled session");
-    second
-        .expect("second compute task")
-        .expect("second pooled session");
-    assert_eq!(lock_std_mutex(&loaded.sessions.state).sessions.len(), 2);
+    // Two concurrent leases sharing the pool. On a single-core host each CPU
+    // session needs the entire thread budget, so the second concurrent claim
+    // could never start and a two-party barrier would deadlock; exercise the
+    // pool sequentially there instead. The holder/waiter scenario above runs
+    // on every host: a queued claim that cannot fit the budget is exactly
+    // what single-core saturation produces.
+    if cores >= 2 {
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let first_loaded = Arc::clone(&loaded);
+        let first_barrier = Arc::clone(&barrier);
+        let first = model.compute_runtime.run(move || {
+            first_loaded.sessions.run(2, |_session| {
+                first_barrier.wait();
+                Ok(())
+            })
+        });
+        let second_loaded = Arc::clone(&loaded);
+        let second = model.compute_runtime.run(move || {
+            second_loaded.sessions.run(2, |_session| {
+                barrier.wait();
+                Ok(())
+            })
+        });
+        let (first, second) = tokio::join!(first, second);
+        first
+            .expect("first compute task")
+            .expect("first pooled session");
+        second
+            .expect("second compute task")
+            .expect("second pooled session");
+        assert_eq!(lock_std_mutex(&loaded.sessions.state).sessions.len(), 2);
+    } else {
+        loaded
+            .sessions
+            .run(2, |_session| Ok::<(), ModelError>(()))
+            .expect("first sequential lease");
+        loaded
+            .sessions
+            .run(2, |_session| Ok::<(), ModelError>(()))
+            .expect("second sequential lease");
+        assert!(!lock_std_mutex(&loaded.sessions.state).sessions.is_empty());
+    }
 
     // A panicking inference closure must not leak the slot or the aggregate
     // CPU thread budget: the RAII lease releases both during unwind, so the
