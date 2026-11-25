@@ -442,15 +442,23 @@ impl SessionPool {
         let max_sessions = max_sessions.max(1);
         loop {
             let mut state = lock_std_mutex(&self.state);
-            if state.provider == TransformersExecutionProvider::Cpu {
-                // One cached runtime serves leases with different execution
-                // limits (indexing and queries), so sessions created for an
-                // earlier lease can outlive that lease's budget. Retire idle
-                // CPU sessions whose intra-op budget exceeds the budget this
-                // caller's limit implies: reusing them would oversubscribe
-                // cores. Undersized sessions stay reusable, which can only
-                // underutilize the machine, never exceed the budget.
-                let desired = cpu_intra_threads(max_sessions);
+            // One cached runtime serves leases with different execution limits
+            // (indexing and queries), so sessions created for an earlier lease
+            // can outlive that lease's budget. The desired budget and both the
+            // retirement sweep and the claim below run under this lock, but a
+            // completing caller clears `busy` without it, so a slot that was
+            // busy during the sweep can be idle by the claim. The claim
+            // therefore re-checks the budget itself: an oversized session is
+            // never handed out, it is retired by a later sweep instead.
+            // Reusing an oversized session would oversubscribe cores;
+            // undersized sessions stay reusable, which can only underutilize
+            // the machine, never exceed the budget.
+            let desired_budget = if state.provider == TransformersExecutionProvider::Cpu {
+                Some(cpu_intra_threads(max_sessions))
+            } else {
+                None
+            };
+            if let Some(desired) = desired_budget {
                 let before = state.sessions.len();
                 state.sessions.retain(|slot| {
                     slot.busy.load(Ordering::Acquire)
@@ -461,10 +469,12 @@ impl SessionPool {
                 }
             }
             if let Some(slot) = state.sessions.iter().find_map(|slot| {
-                slot.busy
-                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                    .is_ok()
-                    .then(|| Arc::clone(slot))
+                (cpu_session_claimable(slot.intra_threads, desired_budget)
+                    && slot
+                        .busy
+                        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok())
+                .then(|| Arc::clone(slot))
             }) {
                 drop(state);
                 let mut session = lock_session(&slot.session);
@@ -707,6 +717,19 @@ const fn cpu_session_within_budget(slot_threads: Option<usize>, desired: usize) 
     match slot_threads {
         Some(threads) => threads <= desired,
         None => true,
+    }
+}
+
+/// Whether a pooled session may be claimed by a caller whose execution limit
+/// implies `desired_budget` intra-op threads (`None` for non-CPU pools, where
+/// sessions carry no budget). Unlike the retirement sweep, this runs before
+/// the busy claim, so a session that goes idle mid-sweep (its completing
+/// caller clears `busy` without the pool lock) still cannot be handed out
+/// with an oversized budget.
+const fn cpu_session_claimable(slot_threads: Option<usize>, desired_budget: Option<usize>) -> bool {
+    match (slot_threads, desired_budget) {
+        (Some(threads), Some(desired)) => threads <= desired,
+        _ => true,
     }
 }
 

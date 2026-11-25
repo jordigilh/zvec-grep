@@ -20,8 +20,10 @@ so this harness measures:
    direction evidence. Overlap alone cannot distinguish "different" from
    "worse".
 3. **An invariance control**: a pair using a model the cap change does not
-   touch (qwen3 / llama-cpp) must score 10/10. If it does not, something other
-   than the cap moved.
+   touch (qwen3 / llama-cpp) must return identical rankings — ordered-equal
+   top-10 lists, not just overlapping sets (`ordered_equal` in
+   `compare-pair.py` output). If it does not, something other than the cap
+   moved.
 
 ## Method
 

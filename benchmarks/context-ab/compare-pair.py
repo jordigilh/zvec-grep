@@ -47,8 +47,15 @@ def run(binary: str, root: str, query: str) -> list[str]:
         cwd=root, capture_output=True, text=True, check=False,
     )
     if completed.returncode:
-        print(f"  query failed in {root}: {completed.stderr[-300:]}", file=sys.stderr)
-        return []
+        # A failed query must abort the comparison, not score as an empty
+        # ranking: a silent [] would report 0/10 overlap as if it were a
+        # measured divergence.
+        print(
+            f"query failed in {root} (exit {completed.returncode}): "
+            f"{completed.stderr[-300:]}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     return [
         f"{m['path']}:{m['start']}-{m['end'] or m['start']}"
         for m in (HEADER.match(line) for line in completed.stdout.splitlines())
@@ -63,7 +70,7 @@ def main() -> None:
     def rel(hits, root):
         return [h[len(root):].lstrip("/") if h.startswith(root) else h for h in hits]
 
-    span_overlaps, file_overlaps = [], []
+    span_overlaps, file_overlaps, ordered_equal = [], [], 0
     for q in queries:
         a = rel(run(A_BIN, a_root, q["query"]), a_root)
         b = rel(run(B_BIN, b_root, q["query"]), b_root)
@@ -71,11 +78,15 @@ def main() -> None:
         file = len({h.split(":")[0] for h in a} & {h.split(":")[0] for h in b})
         span_overlaps.append(span)
         file_overlaps.append(file)
-        print(f"{prefix} {q['id']} overlap@10={span}/10 file={file}/10 a={len(a)} b={len(b)}")
+        ordered_equal += a == b
+        print(f"{prefix} {q['id']} overlap@10={span}/10 file={file}/10 "
+              f"ordered_equal={a == b} a={len(a)} b={len(b)}")
         (OUT / f"{prefix}-{q['id']}.json").write_text(
             json.dumps({"query": q["query"], "a": a, "b": b}, indent=1))
     n = len(queries)
-    print(f"{prefix} MEAN overlap@10 span={sum(span_overlaps)/n:.2f} file={sum(file_overlaps)/n:.2f}")
+    print(f"{prefix} MEAN overlap@10 span={sum(span_overlaps)/n:.2f} "
+          f"file={sum(file_overlaps)/n:.2f} "
+          f"ordered_equal={ordered_equal}/{n}")
 
 
 main()

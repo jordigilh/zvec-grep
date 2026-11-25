@@ -633,6 +633,13 @@ fn pooled_cpu_sessions_never_exceed_the_callers_execution_budget() {
     assert!(cpu_session_within_budget(Some(1), 1));
     // Non-CPU sessions carry no intra-op budget.
     assert!(cpu_session_within_budget(None, 1));
+    // The claim-side check also accepts non-CPU slots and CPU pools without a
+    // desired budget, and re-checks the budget before the busy claim so a
+    // session that goes idle mid-sweep cannot be handed out oversized.
+    assert!(cpu_session_claimable(None, Some(1)));
+    assert!(cpu_session_claimable(Some(4), None));
+    assert!(cpu_session_claimable(Some(2), Some(4)));
+    assert!(!cpu_session_claimable(Some(10), Some(2)));
 }
 
 fn sub_batch_result(call: usize, texts: &[String]) -> EmbeddingResult {

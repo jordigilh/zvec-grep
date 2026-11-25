@@ -10,7 +10,7 @@
 # Use ANCHORED rsync excludes ("/target", "/node_modules") — an unanchored
 # "--exclude analysis" once silently dropped a source package directory named
 # "analysis" and shrank the corpus.
-set -u
+set -euo pipefail
 NAME=$1
 SRC=$2
 MODEL=$3
@@ -31,10 +31,16 @@ for side in a b; do
   echo "=== indexing $NAME-$side with $BIN"
   cd "$BASE/$NAME-$side-work"
   START=$(date +%s)
-  ZVEC_GREP_MODE=direct ZVEC_GREP_HOME="$BASE/$NAME-$side-home" \
+  if ZVEC_GREP_MODE=direct ZVEC_GREP_HOME="$BASE/$NAME-$side-home" \
     "$BIN" --index --embedding $MODEL \
     --model-cache "$MODEL_CACHE" --device cpu --mode direct \
     > "$BASE/$NAME-$side.index.log" 2>&1
-  echo "label=$NAME-$side exit=$? wall=$(( $(date +%s) - START ))s"
+  then
+    echo "label=$NAME-$side exit=0 wall=$(( $(date +%s) - START ))s"
+  else
+    status=$?
+    echo "label=$NAME-$side exit=$status wall=$(( $(date +%s) - START ))s (see $BASE/$NAME-$side.index.log)"
+    exit $status
+  fi
 done
 echo "PAIR_DONE $NAME"
