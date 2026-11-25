@@ -77,6 +77,11 @@ pub(crate) async fn context(
             if uses_vectors(&request) || error.code() != EngineError::INDEX_BACKEND_MISMATCH {
                 return Err(error);
             }
+            tracing::warn!(
+                code = error.code(),
+                "serving stored full-text results after a failed auto-refresh: {}",
+                error.message()
+            );
         }
     }
     let allows_writer = options.refresh.map_or(!options.auto_update, |policy| {
@@ -111,11 +116,14 @@ pub(crate) async fn context(
             "workspace index has not been built",
         ));
     }
-    let acquired = query_models(models, &manifest, options, &location.root, &request)?;
+    // Open the index storage before acquiring the embedding model: a missing
+    // or unreadable generation must fail fast instead of after a potentially
+    // large model download.
     let storage = match read_sessions {
         Some(cache) => cache.acquire(&location.home, &manifest.storage_home())?,
         None => ReadSessionLease::open(&manifest.storage_home())?,
     };
+    let acquired = query_models(models, &manifest, options, &location.root, &request).await?;
     let result = query_storage(
         &acquired,
         &location.root,
@@ -176,6 +184,23 @@ async fn try_writer_context(
         let model = models
             .acquire(model_request)
             .map_err(ModelError::into_engine_error)?;
+        // The writer's model may not be loaded yet (a freshly registered
+        // incremental writer that has embedded nothing); prepare before the
+        // compatibility check so a load-time CPU fallback is detected here
+        // too, exactly like the read path.
+        model
+            .prepare(
+                crate::models::EmbeddingPrepareOptions {
+                    signal: options.signal.clone(),
+                    on_progress: None,
+                },
+                options
+                    .on_progress
+                    .clone()
+                    .map(crate::pipelines::indexing::model_progress::for_index),
+            )
+            .await
+            .map_err(ModelError::into_engine_error)?;
         assert_embedding_compatible(Some(manifest), &model)?;
         vec![model]
     } else {
@@ -200,7 +225,7 @@ fn uses_vectors(request: &super::context::NormalizedContextRequest) -> bool {
         .any(|route| route.mode == crate::api::context::options::ContextRouteMode::Vector)
 }
 
-fn query_models(
+async fn query_models(
     models: &ModelRuntimeManager,
     manifest: &WorkspaceManifest,
     options: &ContextOptions,
@@ -217,6 +242,42 @@ fn query_models(
         options,
         root,
     )?;
+    // Cheap constructor-identity refusal first, so capsule mismatches and
+    // other non-identity errors fail without a model load.
+    let cheap = assert_embedding_compatible(Some(manifest), &model);
+    let cheap_is_mismatch = cheap
+        .as_ref()
+        .is_err_and(|error| error.code() == EngineError::INDEX_BACKEND_MISMATCH);
+    if !cheap_is_mismatch && let Err(error) = cheap {
+        return Err(error);
+    }
+    // Load the runtime and re-check against the live identity: a session
+    // that fell back at load must not serve a generation recorded under its
+    // accelerated provider, while a persistently falling-back runtime serves
+    // the generation it published under its live identity. Preparation stays
+    // lazy — it only runs for vector requests, which embed immediately
+    // after, and is idempotent for an already-loaded runtime.
+    let prepared = model
+        .prepare(
+            crate::models::EmbeddingPrepareOptions {
+                signal: options.signal.clone(),
+                on_progress: None,
+            },
+            options
+                .on_progress
+                .clone()
+                .map(crate::pipelines::indexing::model_progress::for_index),
+        )
+        .await;
+    if let Err(prepare_error) = prepared {
+        // The identity mismatch — with its rebuild hint and both identities —
+        // must not hide behind a model download or initialization failure.
+        return Err(if cheap_is_mismatch {
+            cheap.expect_err("checked mismatch")
+        } else {
+            ModelError::into_engine_error(prepare_error)
+        });
+    }
     assert_embedding_compatible(Some(manifest), &model)?;
     Ok(vec![model])
 }

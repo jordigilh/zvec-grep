@@ -233,13 +233,19 @@ impl WorkspaceIndexService {
             runtimes: acquired,
             descriptor,
         } = acquire_index_models(models, existing.as_ref(), &options, language_default)?;
-        if !rebuilding
-            && let Some(previous) = existing
-                .as_ref()
-                .and_then(|manifest| manifest.workspace.index.descriptor())
-        {
-            previous.ensure_index_compatible(&descriptor)?;
-        }
+        // Acquisition precedes the identity refusal below: construction is
+        // lazy and runtime-manager-cached, while the true backend identity is
+        // only known once the backend exists. Globs validate before it.
+        let mut descriptor = descriptor;
+        check_incremental_identity(
+            existing.as_ref(),
+            rebuilding,
+            &mut descriptor,
+            &acquired,
+            options.signal.clone(),
+            options.on_progress.clone(),
+        )
+        .await?;
         let mut manifest = index_manifest(
             &location,
             existing.as_ref(),
@@ -278,9 +284,13 @@ impl WorkspaceIndexService {
         options: IndexOptions,
         home_lock: Arc<FileLock>,
     ) -> Result<IndexResult, EngineError> {
+        // The storage schema records the same identity the manifest target
+        // carries, so a generation published after a provider fallback keeps
+        // one consistent identity across both records.
+        let opened_embeddings: Vec<_> = manifest.embeddings().to_vec();
         let storage = IndexStore::open(WorkspaceIndexStorageOptions::ReadWrite {
             storage_path: manifest.storage_home(),
-            embeddings: models.iter().map(|model| model.info().clone()).collect(),
+            embeddings: opened_embeddings.clone(),
         })?;
         let writer = self.writers.register(
             crate::pipelines::indexed_search::writer::WriterSession::new(
@@ -306,6 +316,17 @@ impl WorkspaceIndexService {
             on_progress: options.on_progress,
             signal: options.signal.clone(),
             changes: &options.changes,
+            // An incremental update appends to a live generation and must not
+            // mix runtimes, so the pipeline enforces the recorded identity
+            // per batch before committing. A fresh build accepts its starting
+            // identity and relabels its staging generation at publication.
+            expected_backend_identity: if build.is_some() {
+                None
+            } else {
+                opened_embeddings
+                    .first()
+                    .and_then(crate::domain::model::EmbeddingModelInfo::backend_identity)
+            },
         })
         .await;
         #[cfg(test)]
@@ -319,6 +340,13 @@ impl WorkspaceIndexService {
         });
         // Closing precedes publication: all checkpoints and native handles belong
         // to the completed generation before the active manifest can select it.
+        // Capture the runtime's live identity first: the models that produced
+        // this generation's vectors are owned by the writer session.
+        let runtime_identity = writer.session.models.first().and_then(|model| {
+            model
+                .backend_identity()
+                .or_else(|| model.info().backend_identity())
+        });
         writer.retire().await;
         let close_result = writer.session.storage.close();
         let indexed = result?;
@@ -333,9 +361,33 @@ impl WorkspaceIndexService {
             ));
         }
         let now = epoch_millis();
-        if let Some(build) = build {
+        let opened_identity = opened_embeddings
+            .first()
+            .and_then(crate::domain::model::EmbeddingModelInfo::backend_identity);
+        if let Some(mut build) = build {
+            // A fresh build may relabel itself: the storage schema was
+            // written before the models loaded, so an accelerated provider
+            // that fell back to CPU while embedding is corrected here, before
+            // the generation is published. Storage handles are closed and
+            // the home write lock is still held.
+            record_runtime_backend_identity(&mut manifest, runtime_identity.clone());
+            if opened_identity != runtime_identity {
+                IndexStore::rewrite_schema(&manifest.storage_home(), manifest.embeddings())?;
+            }
+            build.target = manifest.clone();
             publish_build(build, now)?;
         } else {
+            // An incremental update appends to the live generation in place.
+            // The pipeline already refused any batch whose runtime identity
+            // deviated before committing it; this end-of-run check is a
+            // backstop for drift that bypassed the batches (for example a
+            // sticky fallen-back snapshot on a run that embedded nothing).
+            if opened_identity != runtime_identity {
+                return Err(crate::domain::model::mid_run_backend_mismatch(
+                    opened_identity.as_ref(),
+                    runtime_identity.as_ref(),
+                ));
+            }
             manifest.record_update(now);
             write_workspace_manifest(&manifest.path, &manifest)?;
         }
@@ -498,6 +550,87 @@ fn workspace_has_index_data(location: &WorkspaceIndexLocation) -> Result<bool, E
         || location.home.join("files.zvec").exists()
         || location.home.join("index.zvec").exists()
         || has_generation_storage(&location.home)?)
+}
+
+/// Check an incremental update against the previous generation. The
+/// descriptor's identity is construction-time; when it disagrees with the
+/// previous generation, retry against the loaded runtime's live identity
+/// before refusing, so a machine whose accelerated provider persistently
+/// falls back to CPU can still refresh the generation it published under
+/// that live identity.
+async fn check_incremental_identity(
+    existing: Option<&WorkspaceManifest>,
+    rebuilding: bool,
+    descriptor: &mut crate::domain::IndexDescriptor,
+    acquired: &[ModelRuntimeLease],
+    signal: Option<tokio_util::sync::CancellationToken>,
+    on_progress: Option<crate::api::index::progress::IndexProgressReporter>,
+) -> Result<(), EngineError> {
+    if rebuilding {
+        return Ok(());
+    }
+    let Some(previous) = existing.and_then(|manifest| manifest.workspace.index.descriptor()) else {
+        return Ok(());
+    };
+    let model = acquired
+        .first()
+        .expect("indexing acquires exactly one model");
+    if let Err(error) = previous.ensure_index_compatible(descriptor)
+        && error.code() == EngineError::INDEX_BACKEND_MISMATCH
+    {
+        model
+            .prepare(
+                crate::models::EmbeddingPrepareOptions {
+                    signal,
+                    on_progress: None,
+                },
+                on_progress.map(super::model_progress::for_index),
+            )
+            .await
+            .map_err(ModelError::into_engine_error)?;
+        if let Some(identity) = model
+            .backend_identity()
+            .or_else(|| model.info().backend_identity())
+            && let Some(info) = descriptor.embeddings.first_mut()
+        {
+            info.record_backend_identity(identity);
+        }
+        return previous.ensure_index_compatible(descriptor);
+    }
+    Ok(())
+}
+
+/// Refusal for an incremental update whose runtime changed identity after
+/// the storage opened. The live generation already holds vectors from both
+/// runtimes; it keeps its recorded identity, and the structured error names
+/// both so the caller can rebuild.
+/// Record the identity of the runtime that actually produced this build's
+/// vectors before the generation is published. A session that fell back to
+/// CPU after the manifest target was created must not publish its
+/// accelerated-provider label.
+fn record_runtime_backend_identity(
+    manifest: &mut WorkspaceManifest,
+    identity: Option<crate::domain::model::BackendIdentity>,
+) {
+    let Some(identity) = identity else {
+        return;
+    };
+    let Some(info) = manifest
+        .workspace
+        .index
+        .descriptor()
+        .and_then(|descriptor| descriptor.embeddings.first())
+    else {
+        return;
+    };
+    if info.backend.as_deref() == Some(identity.backend.as_str())
+        && info.dtype.as_deref() == Some(identity.dtype.as_str())
+    {
+        return;
+    }
+    let mut updated = info.clone();
+    updated.record_backend_identity(identity);
+    manifest.workspace.index = IndexState::Enabled(IndexDescriptor::single(updated));
 }
 
 fn index_manifest(
@@ -875,7 +1008,15 @@ pub(in crate::pipelines) fn assert_embedding_compatible(
                 "model is not part of the workspace index; rebuild the index",
             )
         })?;
-    schema.ensure_index_compatible(model.info())
+    // The capsule comes from the construction-time info; the identity is
+    // checked against the runtime's live execution path, because a loaded
+    // session that fell back to another provider must be compared by what it
+    // now uses, not by what its device requested.
+    schema.ensure_model_compatible(model.info())?;
+    let current = model
+        .backend_identity()
+        .or_else(|| model.info().backend_identity());
+    schema.ensure_backend_compatible(current.as_ref())
 }
 
 fn resolve_scan(
@@ -2729,5 +2870,372 @@ mod tests {
         .expect_err("auto-update vector query must still refuse");
         assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
         models.close();
+    }
+
+    #[tokio::test]
+    async fn fts_only_auto_update_still_fails_on_other_refresh_errors() {
+        let directory = tempdir().expect("workspace");
+        let root = std::fs::canonicalize(directory.path()).expect("root");
+        std::fs::write(root.join("notes.txt"), "orchard vines and orchard rows").expect("source");
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&root))
+            .await
+            .expect("index");
+        let home = root.join(".zvec-grep");
+        let manifest = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("active");
+        // A changed workspace makes an auto-update request attempt an
+        // incremental refresh. Rewriting the stored model to a reference the
+        // catalog cannot resolve makes that refresh fail with an error that is
+        // not the terminal backend mismatch, so it must propagate even for an
+        // FTS-only request: only the identity mismatch is swallowable.
+        std::fs::write(root.join("extra.txt"), "orchard rows extended").expect("changed source");
+        let mut unknown_model = manifest.embedding().expect("embedding").clone();
+        unknown_model.model.name = "does-not-exist".into();
+        let mut rewritten = manifest.clone();
+        rewritten.workspace.index =
+            IndexState::Enabled(crate::domain::IndexDescriptor::single(unknown_model));
+        {
+            let _writer = crate::workspace::lock::acquire_home_lock(
+                &home,
+                crate::workspace::lock::LockMode::Write,
+                "test.rewrite",
+            )
+            .expect("writer");
+            super::write_workspace_manifest(&home, &rewritten).expect("rewrite manifest");
+        }
+        let error = run_context_query(
+            &service,
+            &models,
+            &route_options(
+                &root,
+                crate::api::context::options::ContextRouteMode::Fts,
+                true,
+            ),
+        )
+        .await
+        .expect_err("other refresh errors must fail the query");
+        assert_ne!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
+        assert!(
+            error.message().contains("does-not-exist"),
+            "{}",
+            error.message()
+        );
+        models.close();
+    }
+
+    /// A runtime whose construction-time identity names an accelerated
+    /// provider but persistently executes on CPU: every generation it
+    /// publishes records the live CPU identity.
+    struct PersistentCpuFallbackStub {
+        info: crate::domain::model::EmbeddingModelInfo,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::models::EmbeddingModel for PersistentCpuFallbackStub {
+        fn info(&self) -> &crate::domain::model::EmbeddingModelInfo {
+            &self.info
+        }
+
+        fn backend_identity(&self) -> Option<crate::domain::model::BackendIdentity> {
+            Some(crate::domain::model::BackendIdentity {
+                backend: "stub-cpu".to_owned(),
+                dtype: "q8".to_owned(),
+            })
+        }
+
+        async fn prepare(
+            &self,
+            _options: crate::models::EmbeddingPrepareOptions,
+        ) -> Result<(), crate::models::ModelError> {
+            Ok(())
+        }
+
+        async fn embed(
+            &self,
+            inputs: &[Vec<crate::domain::Content>],
+            _options: crate::models::EmbeddingOptions,
+        ) -> Result<crate::domain::model::EmbeddingResult, crate::models::ModelError> {
+            Ok(crate::domain::model::EmbeddingResult {
+                vectors: inputs
+                    .iter()
+                    .map(|_| vec![0.25; self.info.dimension])
+                    .collect(),
+                truncated: Vec::new(),
+            })
+        }
+    }
+
+    fn persistent_fallback_manager() -> ModelRuntimeManager {
+        ModelRuntimeManager::with_factory(|_reference, _options, _compute| {
+            Ok(std::sync::Arc::new(PersistentCpuFallbackStub {
+                info: crate::domain::model::EmbeddingModelInfo {
+                    model: crate::domain::model::ModelInfo {
+                        provider: "local".into(),
+                        name: "potion-code-16m-v2".into(),
+                        endpoint: None,
+                    },
+                    dimension: 8,
+                    metric: crate::domain::model::Metric::Cosine,
+                    max_batch_size: 32,
+                    max_input_tokens: Some(64),
+                    max_image_bytes: None,
+                    // The construction-time label names the accelerated
+                    // provider the runtime never manages to use.
+                    backend: Some("stub-accelerated".into()),
+                    dtype: Some("q8".into()),
+                },
+            }))
+        })
+    }
+
+    #[tokio::test]
+    async fn a_persistently_falling_back_runtime_refreshes_incrementally() {
+        let directory = tempdir().expect("workspace");
+        let root = std::fs::canonicalize(directory.path()).expect("root");
+        std::fs::write(root.join("notes.txt"), "orchard vines and orchard rows").expect("source");
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = persistent_fallback_manager();
+        service
+            .index(&models, empty_index_options(&root))
+            .await
+            .expect("initial index");
+        let home = root.join(".zvec-grep");
+        let manifest = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("active");
+        // The published generation and its storage schema both record the
+        // live CPU identity, not the construction-time accelerated label.
+        assert_eq!(
+            manifest.embedding().expect("embedding").backend.as_deref(),
+            Some("stub-cpu")
+        );
+        let schema = std::fs::read_to_string(manifest.storage_home().join("storage/schema.json"))
+            .expect("schema");
+        assert!(schema.contains("stub-cpu"), "{schema}");
+        assert!(!schema.contains("stub-accelerated"), "{schema}");
+
+        // A changed workspace refreshes the same generation incrementally:
+        // the refresh retries the identity check against the loaded runtime
+        // instead of refusing the constructor-vs-live mismatch forever.
+        std::fs::write(root.join("extra.txt"), "orchard rows extended").expect("changed source");
+        service
+            .index(&models, empty_index_options(&root))
+            .await
+            .expect("incremental refresh survives the persistent fallback");
+        let refreshed = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("refreshed");
+        assert_eq!(
+            refreshed.storage_generation, manifest.storage_generation,
+            "incremental refresh keeps the active generation"
+        );
+
+        // Vector queries are served by the same live identity.
+        run_context_query(
+            &service,
+            &models,
+            &route_options(
+                &root,
+                crate::api::context::options::ContextRouteMode::Vector,
+                false,
+            ),
+        )
+        .await
+        .expect("query served by the fallback runtime");
+        models.close();
+    }
+
+    /// A runtime that starts on its accelerated provider and falls back part
+    /// way through a build, controlled by the test.
+    struct MidRunFallbackStub {
+        info: crate::domain::model::EmbeddingModelInfo,
+        embeds: std::sync::Arc<std::sync::atomic::AtomicU32>,
+        fallback_after: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::models::EmbeddingModel for MidRunFallbackStub {
+        fn info(&self) -> &crate::domain::model::EmbeddingModelInfo {
+            &self.info
+        }
+
+        fn backend_identity(&self) -> Option<crate::domain::model::BackendIdentity> {
+            let fallen_back = self.embeds.load(std::sync::atomic::Ordering::Acquire)
+                > self
+                    .fallback_after
+                    .load(std::sync::atomic::Ordering::Acquire);
+            Some(crate::domain::model::BackendIdentity {
+                backend: if fallen_back { "stub-cpu" } else { "stub-gpu" }.to_owned(),
+                dtype: "q8".to_owned(),
+            })
+        }
+
+        async fn prepare(
+            &self,
+            _options: crate::models::EmbeddingPrepareOptions,
+        ) -> Result<(), crate::models::ModelError> {
+            Ok(())
+        }
+
+        async fn embed(
+            &self,
+            inputs: &[Vec<crate::domain::Content>],
+            _options: crate::models::EmbeddingOptions,
+        ) -> Result<crate::domain::model::EmbeddingResult, crate::models::ModelError> {
+            self.embeds
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            Ok(crate::domain::model::EmbeddingResult {
+                vectors: inputs
+                    .iter()
+                    .map(|_| vec![0.25; self.info.dimension])
+                    .collect(),
+                truncated: Vec::new(),
+            })
+        }
+    }
+
+    /// Whether the named file exists in the generation and is recorded as
+    /// fully indexed. `None` means the file has no record at all.
+    fn indexed_file_state(storage_home: &Path, suffix: &str) -> Option<bool> {
+        let storage = super::IndexStore::open(super::WorkspaceIndexStorageOptions::ReadOnly {
+            storage_path: storage_home.to_path_buf(),
+        })
+        .expect("read storage");
+        let files = storage.list_files().expect("file records");
+        let state = files
+            .iter()
+            .find(|file| file.relative_path.to_path_buf().ends_with(suffix))
+            .map(|file| {
+                matches!(
+                    file.index_status,
+                    crate::domain::FileIndexStatus::Indexed { .. }
+                )
+            });
+        storage.close().expect("close storage");
+        state
+    }
+
+    #[tokio::test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one scenario spans build, refused incremental, and recovery"
+    )]
+    async fn an_incremental_mid_run_fallback_refuses_instead_of_relabeling() {
+        let directory = tempdir().expect("workspace");
+        let root = std::fs::canonicalize(directory.path()).expect("root");
+        std::fs::write(root.join("notes.txt"), "orchard vines and orchard rows").expect("source");
+        let embeds = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let fallback_after = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(u32::MAX));
+        let manager = {
+            let embeds = std::sync::Arc::clone(&embeds);
+            let fallback_after = std::sync::Arc::clone(&fallback_after);
+            ModelRuntimeManager::with_factory(move |_reference, _options, _compute| {
+                Ok(std::sync::Arc::new(MidRunFallbackStub {
+                    info: crate::domain::model::EmbeddingModelInfo {
+                        model: crate::domain::model::ModelInfo {
+                            provider: "local".into(),
+                            name: "potion-code-16m-v2".into(),
+                            endpoint: None,
+                        },
+                        dimension: 8,
+                        metric: crate::domain::model::Metric::Cosine,
+                        max_batch_size: 32,
+                        max_input_tokens: Some(64),
+                        max_image_bytes: None,
+                        backend: Some("stub-gpu".into()),
+                        dtype: Some("q8".into()),
+                    },
+                    embeds: std::sync::Arc::clone(&embeds),
+                    fallback_after: std::sync::Arc::clone(&fallback_after),
+                }))
+            })
+        };
+        let service = WorkspaceIndexService::with_test_registry();
+        service
+            .index(&manager, empty_index_options(&root))
+            .await
+            .expect("initial gpu index");
+        let home = root.join(".zvec-grep");
+        let manifest = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("active");
+        assert_eq!(
+            manifest.embedding().expect("embedding").backend.as_deref(),
+            Some("stub-gpu")
+        );
+
+        // The provider falls back from the next embedded batch onward.
+        fallback_after.store(
+            embeds.load(std::sync::atomic::Ordering::Acquire),
+            std::sync::atomic::Ordering::Release,
+        );
+        std::fs::write(root.join("extra.txt"), "orchard rows extended").expect("changed source");
+        let error = service
+            .index(&manager, empty_index_options(&root))
+            .await
+            .expect_err("incremental mid-run fallback must refuse");
+        assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
+        assert!(
+            error.message().contains("the storage opened with")
+                && error.message().contains("produced vectors with"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("stub-gpu") && error.message().contains("stub-cpu"),
+            "{}",
+            error.message()
+        );
+        // The live generation keeps its recorded identity instead of being
+        // relabeled over vectors from both runtimes.
+        let unchanged = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("active");
+        assert_eq!(
+            unchanged.embedding().expect("embedding").backend.as_deref(),
+            Some("stub-gpu")
+        );
+        let schema = std::fs::read_to_string(unchanged.storage_home().join("storage/schema.json"))
+            .expect("schema");
+        assert!(schema.contains("stub-gpu"), "{schema}");
+        assert!(!schema.contains("stub-cpu"), "{schema}");
+        // The refusal fired before the flipped batch was committed: the
+        // changed file is absent or unfinished, so no fallback-runtime
+        // vectors entered the generation.
+        assert_ne!(
+            indexed_file_state(&unchanged.storage_home(), "extra.txt"),
+            Some(true),
+            "the refused batch must not leave indexed fallback vectors"
+        );
+        // Once the provider recovers, the same file is re-embedded and
+        // published on the recorded identity - there is nothing to launder,
+        // because no fallback vectors were committed.
+        let embeds_before_recovery = embeds.load(std::sync::atomic::Ordering::Acquire);
+        fallback_after.store(u32::MAX, std::sync::atomic::Ordering::Release);
+        service
+            .index(&manager, empty_index_options(&root))
+            .await
+            .expect("recovered runtime completes the incremental update");
+        assert!(
+            embeds.load(std::sync::atomic::Ordering::Acquire) > embeds_before_recovery,
+            "the changed file is re-embedded by the recovered runtime"
+        );
+        let recovered = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("recovered");
+        assert_eq!(
+            recovered.embedding().expect("embedding").backend.as_deref(),
+            Some("stub-gpu")
+        );
+        assert_eq!(
+            indexed_file_state(&recovered.storage_home(), "extra.txt"),
+            Some(true),
+            "the recovered run commits the changed file on the gpu identity"
+        );
+        manager.close();
     }
 }

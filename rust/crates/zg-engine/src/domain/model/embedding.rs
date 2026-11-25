@@ -98,6 +98,14 @@ impl EmbeddingModelInfo {
 
     /// Check the fields that determine whether an existing index can be reused.
     pub(crate) fn ensure_index_compatible(&self, other: &Self) -> EngineResult<()> {
+        self.ensure_model_compatible(other)?;
+        self.ensure_backend_compatible(other.backend_identity().as_ref())
+    }
+
+    /// Check the model capsule only: provider, name, dimension, metric, and
+    /// input limits. Separated from the identity check so callers can compare
+    /// a stored capsule against a runtime's live backend identity.
+    pub(crate) fn ensure_model_compatible(&self, other: &Self) -> EngineResult<()> {
         if self.model.provider != other.model.provider
             || self.model.name != other.model.name
             || self.dimension != other.dimension
@@ -109,16 +117,56 @@ impl EmbeddingModelInfo {
                 "existing index uses a different embedding model; rebuild the index",
             ));
         }
-        if (self.backend.as_deref(), self.dtype.as_deref())
-            != (other.backend.as_deref(), other.dtype.as_deref())
-        {
+        Ok(())
+    }
+
+    /// Check only the recorded backend identity against a serving runtime's
+    /// current identity. Used where the runtime reports its live execution
+    /// path separately from the identity it was constructed with.
+    pub(crate) fn ensure_backend_compatible(
+        &self,
+        current: Option<&BackendIdentity>,
+    ) -> EngineResult<()> {
+        let matches = match current {
+            Some(current) => {
+                self.backend.as_deref() == Some(current.backend.as_str())
+                    && self.dtype.as_deref() == Some(current.dtype.as_str())
+            }
+            None => self.backend.is_none() && self.dtype.is_none(),
+        };
+        if !matches {
             return Err(backend_identity_mismatch(
                 self.backend_identity().as_ref(),
-                other.backend_identity().as_ref(),
+                current,
             ));
         }
         Ok(())
     }
+
+    /// Replace the recorded backend identity.
+    pub(crate) fn record_backend_identity(&mut self, identity: BackendIdentity) {
+        self.backend = Some(identity.backend);
+        self.dtype = Some(identity.dtype);
+    }
+}
+
+/// Refusal for an update whose runtime identity differs from the identity
+/// the storage was opened with. Worded neutrally: the difference may predate
+/// the run (an already-fallen-back cached runtime) or appear mid-run.
+pub(crate) fn mid_run_backend_mismatch(
+    opened: Option<&BackendIdentity>,
+    runtime: Option<&BackendIdentity>,
+) -> EngineError {
+    let describe = |identity: Option<&BackendIdentity>| {
+        identity.map_or_else(|| "no recorded identity".to_owned(), ToString::to_string)
+    };
+    EngineError::index_backend_mismatch(format!(
+        "workspace index embedding backend identity does not match this runtime: \
+         the storage opened with {}, but the runtime produced vectors with {}; \
+         rebuild the index with `zg --index --rebuild`",
+        describe(opened),
+        describe(runtime)
+    ))
 }
 
 /// Structured refusal when the serving runtime differs from the stored one.

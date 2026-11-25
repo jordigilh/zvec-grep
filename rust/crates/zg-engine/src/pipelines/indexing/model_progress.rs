@@ -9,7 +9,7 @@ use crate::{
     models::ModelProgressReporter,
 };
 
-pub(super) fn for_index(reporter: IndexProgressReporter) -> ModelProgressReporter {
+pub(crate) fn for_index(reporter: IndexProgressReporter) -> ModelProgressReporter {
     ModelProgressReporter::new(move |progress, concurrency| {
         reporter.report(index_progress(progress, concurrency));
     })
