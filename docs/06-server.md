@@ -123,21 +123,6 @@ zg server on
 
 Set the value to `0` to keep activated watchers until the Server stops.
 
-Long-lived MCP clients that hold a notification stream but do not reinitialize
-after an expired-session `404` can extend the legacy HTTP session idle timeout:
-
-```bash
-export ZVEC_GREP_MCP_SESSION_IDLE_SECONDS=43200
-zg server off
-zg server on
-```
-
-The default is `1800` (30 minutes). Values outside `1`-`2147483` fall back to the
-default with a warning. A longer timeout also keeps abandoned sessions in the
-256-session cap longer. Under launchd, `kickstart -k` reuses the loaded job
-definition; after editing a plist, reload it with `launchctl bootout` followed by
-`launchctl bootstrap`.
-
 ## Configure the mode
 
 Choose a mode for one command:

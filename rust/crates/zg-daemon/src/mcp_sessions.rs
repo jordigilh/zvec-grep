@@ -17,9 +17,9 @@ use tracing::warn;
 
 /// Legacy MCP transport sessions are capped independently of request
 /// bookkeeping. The idle TTL is deployment-adjustable; see `from_env`.
-pub(crate) const MCP_SESSION_CAPACITY: usize = 256;
-pub(crate) const MCP_SESSION_IDLE: Duration = Duration::from_mins(30);
-pub(crate) const MCP_SESSION_IDLE_ENV: &str = "ZVEC_GREP_MCP_SESSION_IDLE_SECONDS";
+const MCP_SESSION_CAPACITY: usize = 256;
+const MCP_SESSION_IDLE: Duration = Duration::from_mins(30);
+const MCP_SESSION_IDLE_ENV: &str = "ZVEC_GREP_MCP_SESSION_IDLE_SECONDS";
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SessionError {
@@ -45,12 +45,6 @@ pub(crate) struct BoundedSessionManager {
     admission: tokio::sync::Mutex<()>,
     capacity: usize,
     idle: Duration,
-}
-
-impl Default for BoundedSessionManager {
-    fn default() -> Self {
-        Self::new(MCP_SESSION_CAPACITY, MCP_SESSION_IDLE)
-    }
 }
 
 fn parse_session_idle(value: Option<&str>) -> Duration {
@@ -286,6 +280,10 @@ impl SessionManager for BoundedSessionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn default_manager() -> BoundedSessionManager {
+        BoundedSessionManager::new(MCP_SESSION_CAPACITY, MCP_SESSION_IDLE)
+    }
     use rmcp::transport::{Transport, streamable_http_server::session::local::SessionTransport};
 
     #[test]
@@ -413,7 +411,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn default_session_serves_requests_after_rmcp_idle_timeout() {
-        let manager = BoundedSessionManager::default();
+        let manager = default_manager();
         let (id, mut transport) = initialized_session(&manager).await;
         let _subscription = manager
             .create_standalone_stream(&id)
@@ -437,7 +435,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn default_idle_expiry_closes_inner_session_with_notification_subscription() {
-        let manager = BoundedSessionManager::default();
+        let manager = default_manager();
         let (id, mut transport) = initialized_session(&manager).await;
         let subscription = manager
             .create_standalone_stream(&id)
@@ -457,7 +455,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn active_request_survives_idle_timeout_and_gets_fresh_idle_period() {
-        let manager = BoundedSessionManager::default();
+        let manager = default_manager();
         let (id, mut transport) = initialized_session(&manager).await;
         let stream = manager
             .create_stream(&id, tools_list_request())
