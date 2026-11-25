@@ -194,24 +194,38 @@ rm -rf <root>/.zvec-grep
 
 Beyond that hard failure, the index load path now identifies the embedding
 runtime: every generation records a `backend` + `dtype` identity in its
-manifest, and a serving runtime reporting a different pair refuses (see the
-next section). Storage that *does* open is no longer an implicit
-compatibility guarantee — the identity check is the guarantee, and it is
-only as fine-grained as the recorded pair.
+manifest — the transformers backend label names the provider **and the
+linked ONNX Runtime version** (e.g. `onnx-cpu/ort-1.22.0`, #94; llama.cpp
+labels stay version-less) — and a serving runtime
+reporting a different pair refuses (see the next section). Storage that
+*does* open is no longer an implicit compatibility guarantee — the identity
+check is the guarantee.
 
 ## One-time fleet reindex after backend identity (issue #85)
 
 Since #78 (merged `72943ce`) + #81 (merged `89ab30a`), every index generation
-records the
-identity of the embedding runtime that produced its vectors (`backend` +
-`dtype`, e.g. `onnx-cpu` / `q8`), and vector search plus incremental indexing
-fail closed when the serving runtime's identity does not match. Indexes built
+records the identity of the embedding runtime that produced its vectors
+(`backend` + `dtype`, e.g. `onnx-cpu/ort-1.22.0` / `q8`), and vector search
+plus incremental indexing fail closed when the serving runtime's identity
+does not match. Indexes built
 before this recording have no identity, and **every such index was by
 definition built by a runtime older than the current binary** — so after
 upgrading the daemon, all pre-existing **local-model** workspaces refuse
 vector search and incremental indexing until they are rebuilt once. Remote-model
 (e.g. qwen) indexes are unaffected: remote backends record no identity, and
 "no identity" on both sides matches.
+
+#94 (merged `8e46c49`, after this runbook was first drafted) tightened the
+label further: the transformers backend reads the linked ONNX Runtime
+version live (via the quarantined `zg-ort-version` crate) and records it in
+the backend label as `onnx-<provider>/ort-<version>`. An ORT version change
+is therefore itself a reindex trigger — a daemon upgraded across ORT
+versions refuses indexes rebuilt against the older one. This was deliberate
+scoping: #86 shipped inside this #85 reindex window, so the one-time fleet
+reindex below covers the identity-less legacy indexes, any index whose
+recorded ORT version differs from the new binary's, and any index rebuilt by
+a pre-#94 binary (which records `onnx-cpu` with no version — the same
+mismatch the rollback section describes).
 
 The refusal is terminal, not retryable: over MCP the error renders as
 `ZG.ENGINE.INDEX_BACKEND_MISMATCH` with `retryable: false`, naming both
@@ -272,7 +286,10 @@ does not match this runtime", which is the reliable grep anchor:
 ### Release-notes wording (proposed)
 
 > This release records the embedding-runtime identity (`backend` + `dtype`)
-> of every index generation and refuses to serve vectors across runtimes. The
+> of every local-model index generation and refuses to serve vectors across
+> runtimes. For transformers indexes, the backend label also embeds the linked
+> ONNX Runtime version (`onnx-<provider>/ort-<version>`); llama.cpp labels stay
+> version-less. Remote-model indexes record no identity. The
 > first vector search (or index update) on a pre-existing **local-model**
 > workspace fails once with `ZG.ENGINE.INDEX_BACKEND_MISMATCH` and a message
 > naming the mismatch; run `zg --index --rebuild <root>` to recover. Full-text
@@ -299,6 +316,15 @@ as identity-less again and refuses until it is rebuilt a second time. Disable
 auto-update on rebuilt workspaces for the rollback window, or budget for a
 second rebuild pass after re-upgrading.
 
+Rolling back across #94 behaves differently, and more safely: a #78–#93
+binary serving an index rebuilt by a post-#94 runtime fails the identity
+check cleanly — its runtime reports `onnx-cpu` where the manifest records
+`onnx-cpu/ort-…`, an `INDEX_BACKEND_MISMATCH` demanding a rebuild — rather
+than the pre-#78 rollback's silent drift. Rolling back to a #78–#93
+binary therefore refuses vector search on rebuilt workspaces instead of
+serving mixed-runtime embeddings. A pre-#78 binary does not refuse; see the
+rollback guidance above for that case.
+
 ## Cross-runtime embedding drift (important)
 
 ONNX Runtime **builds** — not just versions — drift embeddings. Measured:
@@ -317,11 +343,13 @@ Consequences, applied in this change:
   binary that no longer exists.
 - Every runtime switch must be followed by a re-index of active workspaces
   (see "Index compatibility" above). The backend-identity refusal (see
-  "One-time fleet reindex after backend identity") catches only switches
-  that change the recorded `backend` or `dtype` labels; a switch that can
-  change embeddings while reporting the same pair (e.g. a different ORT
-  build serving `onnx-cpu` / `q8`) still passes the check, so the manual
-  re-index rule remains in force for it.
+  "One-time fleet reindex after backend identity") now enforces this for ORT
+  version switches: the recorded backend label names the linked ONNX Runtime
+  version (#94), so a switch to a different ORT version refuses to serve the
+  old index. A same-version rebuild that still drifts embeddings reports
+  identical labels and passes the check — the measured cases above are
+  exactly that shape — so the manual re-index rule remains in force for
+  those switches.
 
 ## Open items (explicitly out of scope for this change)
 
