@@ -1,0 +1,35 @@
+{
+  "queries": [
+    {
+      "id": "q01",
+      "query": "how does the crdt replicate state across grid nodes"
+    },
+    {
+      "id": "q02",
+      "query": "where does the scoring engine rank provider results"
+    },
+    {
+      "id": "q03",
+      "query": "how does the overlay sync merge concurrent updates"
+    },
+    {
+      "id": "q04",
+      "query": "where does the operator reconcile the grid custom resources"
+    },
+    {
+      "id": "q05",
+      "query": "how are mock providers used in integration tests"
+    },
+    {
+      "id": "q06",
+      "query": "where does the swim protocol handle failure detection"
+    },
+    { "id": "q07", "query": "how does forge build and publish releases" },
+    { "id": "q08", "query": "where are certificates rotated for grid mTLS" },
+    {
+      "id": "q09",
+      "query": "how does xtask run linting and checks for the workspace"
+    },
+    { "id": "q10", "query": "where is the grid topology configured in charts" }
+  ]
+}

@@ -100,7 +100,7 @@
       "role": "holdout",
       "retrieval": {
         "ndcg@10": 0.4141852457068991,
-        "mrr@10": 0.479167,
+        "mrr@10": 0.4791666666666667,
         "recall@10": 0.595833,
         "precision@10": 0.225
       },
@@ -116,10 +116,10 @@
         },
         "ubuntu_measurement": {
           "ndcg@10": 0.429173,
-          "mrr@10": 0.479167,
+          "mrr@10": 0.4791666666666667,
           "recall@10": 0.595833,
           "precision@10": 0.225,
-          "note": "minimum of the observed ubuntu runs; ndcg/precision from run 45443430349 (0.425967/0.225) and 45447304395 (0.429173)"
+          "note": "minimum of the observed ubuntu runs; ndcg/precision from run 45443430349 (0.425967/0.225) and 45447304395 (0.429173). The mrr@10 of run 45447304395 was displayed as 0.479167 (6 decimals) but the measured quantum is 23/48 = 0.4791666666666667; the earlier pin stored the rounded-up display value, which sat 3.3e-7 above the quantum and failed any run landing exactly on it."
         }
       }
     },

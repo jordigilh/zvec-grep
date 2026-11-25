@@ -501,7 +501,9 @@ const CATALOG: [EmbeddingCatalogEntry; 15] = [
         normalize: true,
         query_prefix: None,
         document_prefix: None,
-        max_input_tokens: 8_192,
+        // Measured identical retrieval metrics at 1024 vs 8192 context on all
+        // five language fixtures (issue #73), with 64x less attention memory.
+        max_input_tokens: 1_024,
         max_batch_size: 2,
     }),
     EmbeddingCatalogEntry::Transformers(TransformersConfig {
@@ -529,7 +531,9 @@ const CATALOG: [EmbeddingCatalogEntry; 15] = [
         normalize: true,
         query_prefix: None,
         document_prefix: None,
-        max_input_tokens: 8_192,
+        // Measured identical retrieval metrics at 1024 vs 8192 context on all
+        // five language fixtures (issue #73), with 64x less attention memory.
+        max_input_tokens: 1_024,
         max_batch_size: 2,
     }),
     EmbeddingCatalogEntry::Transformers(TransformersConfig {

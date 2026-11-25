@@ -193,6 +193,7 @@ async fn try_writer_context(
                 crate::models::EmbeddingPrepareOptions {
                     signal: options.signal.clone(),
                     on_progress: None,
+                    ..Default::default()
                 },
                 options
                     .on_progress
@@ -262,6 +263,7 @@ async fn query_models(
             crate::models::EmbeddingPrepareOptions {
                 signal: options.signal.clone(),
                 on_progress: None,
+                ..Default::default()
             },
             options
                 .on_progress

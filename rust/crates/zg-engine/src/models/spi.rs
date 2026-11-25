@@ -83,6 +83,11 @@ impl Default for EmbeddingOptions {
 pub(crate) struct EmbeddingPrepareOptions {
     pub(crate) signal: Option<CancellationToken>,
     pub(crate) on_progress: Option<Arc<dyn Fn(ModelProgress) + Send + Sync>>,
+    /// Runtime-owned execution budget, mirroring
+    /// [`EmbeddingOptions::execution_concurrency`]. Backends use it to size
+    /// resources created eagerly during preparation so the first inference
+    /// batch does not oversubscribe the machine.
+    pub(crate) execution_concurrency: usize,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

@@ -434,6 +434,7 @@ impl ModelRuntimeLease {
                 reporter.report(progress, concurrency);
             }));
         }
+        options.execution_concurrency = self.operation.limit;
         self.entry.runtime.model.prepare(options).await
     }
 

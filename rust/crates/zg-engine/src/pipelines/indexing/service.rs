@@ -583,6 +583,7 @@ async fn check_incremental_identity(
                 crate::models::EmbeddingPrepareOptions {
                     signal,
                     on_progress: None,
+                    ..Default::default()
                 },
                 on_progress.map(super::model_progress::for_index),
             )

@@ -1,0 +1,75 @@
+{
+  "schema": "context-ab-corpora-v1",
+  "captured": "2026-11-24",
+  "sample": {
+    "path": "~/.engram/zvec-grep/context-ab/corpora-2026-11-24.tar.gz",
+    "sha256": "a903828a8428743835e4e5bc95bbfcc34e45195147aa3bf52f0d80e424aed718",
+    "note": "Exact indexed trees (.zvec-grep excluded); the tarball, not the upstream clones, is the authoritative sample because several clones were dirty at capture time."
+  },
+  "corpora": [
+    {
+      "name": "go",
+      "language": "go",
+      "project": "kuadrant-operator",
+      "source": "/Users/jgil/go/src/github.com/Kuadrant/kuadrant-operator",
+      "revision": "21ed74e2a231952c60a7b486ae4b6430c1593961",
+      "dirty_at_capture": true,
+      "model": "local/gte-modernbert-base",
+      "role": "treatment",
+      "excludes": [],
+      "queries": "queries-go.json",
+      "pair_work_roots": ["kuadrant-1024"],
+      "notes": "Full repo including generated CRD/bundle YAML — the generated-artifact stress case."
+    },
+    {
+      "name": "ts",
+      "language": "typescript",
+      "project": "kubernaut-console",
+      "source": "/Users/jgil/go/src/github.com/jordigilh/kubernaut-console",
+      "revision": "23a3f24a845865f6cdf41f2cf036ea1a45760c61",
+      "dirty_at_capture": true,
+      "model": "local/gte-modernbert-base",
+      "role": "treatment",
+      "excludes": [
+        "/node_modules",
+        "/dist",
+        "/dist-dynamic",
+        "/storybook-static",
+        "/test-results",
+        "/playwright-report",
+        "/coverage"
+      ],
+      "queries": "queries-ts.json",
+      "pair_work_roots": ["ts-old-work", "ts-new-work"],
+      "notes": "Mockup HTML with giant files — the chunk-flooding stress case."
+    },
+    {
+      "name": "java",
+      "language": "java",
+      "project": "java-analysis-adapter",
+      "source": "/Users/jgil/go/src/github.com/project-lightpath/java-analysis-adapter",
+      "revision": "f17f31aac060f805db3a0b2fbb926af70ee5f0cd",
+      "dirty_at_capture": false,
+      "model": "local/qwen3-embedding-0.6b",
+      "role": "invariance-control",
+      "excludes": ["/target", "/spike", "/analysis"],
+      "queries": "queries-java.json",
+      "pair_work_roots": ["java-old-work", "java-new-work"],
+      "notes": "llama-cpp backend, untouched by transformer context caps; must score 10/10 or something other than the cap moved. ANCHORED excludes are mandatory: an unanchored 'analysis' once dropped the com/projectlightpath/analysis source package."
+    },
+    {
+      "name": "rust",
+      "language": "rust",
+      "project": "praxis-grid",
+      "source": "/Users/jgil/go/src/github.com/praxis-proxy/praxis-grid",
+      "revision": "3299794716e8af8f3f71e77e4d66813aa40962e0",
+      "dirty_at_capture": true,
+      "model": "local/jina-embeddings-v2-base-code",
+      "role": "treatment",
+      "excludes": ["/target"],
+      "queries": "queries-rust.json",
+      "pair_work_roots": ["rust-old-work", "rust-new-work"],
+      "notes": "jina — the model the 8192 cap memory costs were measured on."
+    }
+  ]
+}
