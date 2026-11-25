@@ -107,3 +107,12 @@ jobs:
           cargo test --locked -p zg-engine --lib
           models::tests::real_model_smoke::selected_local_model_downloads_loads_and_embeds
           -- --ignored --exact --nocapture
+      - name: Run the pooled-session concurrency scenarios
+        if: matrix.model.name == 'transformers'
+        env:
+          ZVEC_GREP_MODEL_CACHE: ${{ runner.temp }}/zvec-grep-model-cache
+          ZVEC_GREP_TEST_MODEL_CACHE: ${{ runner.temp }}/zvec-grep-model-cache
+        run: >-
+          cargo test --locked -p zg-engine --lib
+          models::backends::transformers::model::tests::cached_minilm_runs_real_onnx_inference
+          -- --ignored --exact --nocapture

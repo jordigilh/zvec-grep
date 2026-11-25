@@ -89,6 +89,12 @@ struct SessionPoolState {
     creating: usize,
     sessions: Vec<Arc<SessionSlot>>,
     thread_budget: CpuThreadBudget,
+    /// Callers currently parked in `Condvar::wait`. Incremented under the
+    /// pool lock immediately before the wait and decremented after the wake,
+    /// so observing it proves a caller blocked rather than merely not having
+    /// been scheduled yet — the synchronization point tests need to prove a
+    /// queued claim actually waits.
+    waiting: usize,
 }
 
 struct SessionSlot {
@@ -474,6 +480,7 @@ impl SessionPool {
                 provider,
                 generation: 0,
                 creating: 0,
+                waiting: 0,
                 thread_budget: CpuThreadBudget::new(available_cores()),
                 sessions: vec![Arc::new(SessionSlot {
                     busy: AtomicBool::new(false),
@@ -592,10 +599,12 @@ impl SessionPool {
                 }
             }
 
+            state.waiting += 1;
             state = self
                 .changed
                 .wait(state)
                 .unwrap_or_else(PoisonError::into_inner);
+            state.waiting -= 1;
             drop(state);
         }
     }

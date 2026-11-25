@@ -605,10 +605,17 @@ async fn cached_minilm_runs_real_onnx_inference() {
         let waiter_ran = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let waiter_loaded = Arc::clone(&loaded);
         let waiter_ran_for_closure = Arc::clone(&waiter_ran);
+        // run(2) gives the waiter a cores/2-thread session budget, which
+        // cannot fit alongside the holder's machine-wide claim on any host,
+        // and caps its session quota at two so the later barrier phase's
+        // session count stays deterministic. Note the quota behavior this
+        // exposes: a budget-blocked caller fills its session quota before
+        // parking — bounded by its execution limit, and the sessions are
+        // shared with later callers.
         let waiter = thread::spawn(move || {
             waiter_loaded
                 .sessions
-                .run(cores.max(2), move |_session| -> Result<(), ModelError> {
+                .run(2, move |_session| -> Result<(), ModelError> {
                     waiter_ran_for_closure.fetch_add(1, Ordering::Release);
                     Ok(())
                 })
@@ -623,6 +630,16 @@ async fn cached_minilm_runs_real_onnx_inference() {
                 .fits(Some(1))
         );
         assert_eq!(waiter_ran.load(Ordering::Acquire), 0);
+        // Synchronize on the pool wait path before releasing the holder: the
+        // waiting counter is incremented under the pool lock immediately
+        // before `Condvar::wait`, so observing it proves the waiter is parked
+        // on the budget rather than merely not scheduled yet. Yielding until
+        // the state is reached is a condition wait, not a timing assertion —
+        // if the queueing were broken the test would hang, not flake.
+        while lock_std_mutex(&loaded.sessions.state).waiting == 0 {
+            std::thread::yield_now();
+        }
+        assert_eq!(waiter_ran.load(Ordering::Acquire), 0);
         // Release the holder; the waiter must now proceed.
         {
             let (lock, cvar) = &*release_holder;
@@ -636,6 +653,7 @@ async fn cached_minilm_runs_real_onnx_inference() {
             lock_std_mutex(&loaded.sessions.state).thread_budget.active,
             0
         );
+        assert_eq!(lock_std_mutex(&loaded.sessions.state).waiting, 0);
     }
 
     // Two concurrent leases sharing the pool. On a single-core host each CPU
