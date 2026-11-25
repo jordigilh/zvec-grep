@@ -12,6 +12,9 @@ use crate::models::{
     spi::{EmbeddingModel, ModelError},
 };
 
+#[cfg(feature = "mlx")]
+use super::mlx::MlxEmbeddingModel;
+
 /// Creates a catalog-backed embedding model.
 ///
 /// `None` for `options` is the Rust equivalent of omitting the optional
@@ -55,6 +58,8 @@ pub fn create_embedding_model(
             options,
             compute_runtime,
         )?)),
+        #[cfg(feature = "mlx")]
+        EmbeddingCatalogEntry::Mlx(config) => Ok(Arc::new(MlxEmbeddingModel::new(config, options))),
     }
 }
 

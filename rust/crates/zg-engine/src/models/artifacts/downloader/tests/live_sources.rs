@@ -40,6 +40,8 @@ fn local_models() -> Vec<(&'static str, &'static ArtifactDownloadConfig)> {
                 EmbeddingCatalogEntry::Transformers(config) => config.download,
                 EmbeddingCatalogEntry::Model2Vec(config) => config.download,
                 EmbeddingCatalogEntry::Bekko(config) => config.download,
+                #[cfg(feature = "mlx")]
+                EmbeddingCatalogEntry::Mlx(config) => config.download,
                 // Qwen API entries have no downloadable local artifacts.
                 EmbeddingCatalogEntry::Qwen(_) => return None,
             };
@@ -216,6 +218,7 @@ async fn download_local_model_from(
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn live_source_catalog_covers_every_local_model_and_pinned_weights() {
     let models = local_models();
     let references = models
@@ -258,6 +261,21 @@ fn live_source_catalog_covers_every_local_model_and_pinned_weights() {
                 .filter(|artifact| has_extension(artifact.path, "gguf"))
                 .map(|artifact| artifact.size)
                 .sum::<u64>(),
+            #[cfg(feature = "mlx")]
+            EmbeddingCatalogEntry::Mlx(_) => {
+                assert!(
+                    download
+                        .artifacts
+                        .iter()
+                        .any(|artifact| has_extension(artifact.path, "safetensors"))
+                );
+                download
+                    .artifacts
+                    .iter()
+                    .filter(|artifact| has_extension(artifact.path, "safetensors"))
+                    .map(|artifact| artifact.size)
+                    .sum::<u64>()
+            }
             EmbeddingCatalogEntry::Transformers(_) => {
                 assert!(
                     download

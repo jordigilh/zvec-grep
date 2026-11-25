@@ -176,6 +176,33 @@ const JINA_CODE_ARTIFACTS: &[ArtifactConfig] = &[
     },
 ];
 
+// jina-embeddings-v2-base-code at the pinned revision: tokenizer and config
+// plus the fp16 safetensors weights that MLX loads directly. The quantized
+// ONNX graph is deliberately absent — an MLX entry never falls back to ONNX.
+#[cfg(feature = "mlx")]
+const JINA_CODE_SAFETENSORS_ARTIFACTS: &[ArtifactConfig] = &[
+    ArtifactConfig {
+        path: "config.json",
+        size: 1_216,
+        sha256: "e426aa684c7f9a95c5f020aa855faf93a24f065f5fad0c9e17b124670cabdea6",
+    },
+    ArtifactConfig {
+        path: "tokenizer.json",
+        size: 2_561_316,
+        sha256: "b01c78a902aa4facb2f47f95449f48e2f7bbfea5d2472ee2f6ce92323c6f86e5",
+    },
+    ArtifactConfig {
+        path: "tokenizer_config.json",
+        size: 493,
+        sha256: "f477aeb15ff9f78d3c1ddf2361d2b0b8b20cf55220f839f29a37f3a18efddd89",
+    },
+    ArtifactConfig {
+        path: "model.safetensors",
+        size: 321_767_312,
+        sha256: "8b53bfd4ae2cd586004a6ca4a16551b630a2a1b1d655ff1ee9be1286a1781c5b",
+    },
+];
+
 const GTE_ARTIFACTS: &[ArtifactConfig] = &[
     ArtifactConfig {
         path: "config.json",
@@ -222,7 +249,12 @@ const NOMIC_ARTIFACTS: &[ArtifactConfig] = &[
     },
 ];
 
-const CATALOG: [EmbeddingCatalogEntry; 15] = [
+// The opt-in MLX entry (issue #74) is the only catalog row that depends on a
+// non-default feature, so the array length follows the feature instead of being
+// hard-coded.
+const CATALOG_LEN: usize = 15 + cfg!(feature = "mlx") as usize;
+
+const CATALOG: [EmbeddingCatalogEntry; CATALOG_LEN] = [
     EmbeddingCatalogEntry::LlamaCpp(LlamaCppConfig {
         reference: "local/embeddinggemma-300m",
         provider: "local",
@@ -506,6 +538,38 @@ const CATALOG: [EmbeddingCatalogEntry; 15] = [
         max_input_tokens: 1_024,
         max_batch_size: 2,
     }),
+    // Opt-in Apple-GPU backend (issue #74). Same weights, tokenizer, pooling and
+    // context cap as the ONNX entry above; only the artifact set and the batch
+    // size differ. Compiled only with `--features mlx`, and reachable only by
+    // this reference: no promotion to default and no cross-backend fallback.
+    #[cfg(feature = "mlx")]
+    EmbeddingCatalogEntry::Mlx(TransformersConfig {
+        reference: "local/jina-embeddings-v2-base-code-mlx",
+        provider: "local",
+        model: "jina-embeddings-v2-base-code-mlx",
+        repo: "jinaai/jina-embeddings-v2-base-code",
+        revision: "516f4baf13dec4ddddda8631e019b5737c8bc250",
+        download: &ArtifactDownloadConfig {
+            hugging_face: ArtifactSourceConfig {
+                repo: "jinaai/jina-embeddings-v2-base-code",
+                revision: "516f4baf13dec4ddddda8631e019b5737c8bc250",
+            },
+            // The ModelScope mirror pins a different revision whose
+            // `model.safetensors` is unverified, so this entry has no fallback.
+            model_scope: None,
+            artifacts: JINA_CODE_SAFETENSORS_ARTIFACTS,
+        },
+        dtype: "fp16",
+        add_special_tokens: true,
+        dimension: 768,
+        metric: Metric::Cosine,
+        pooling: "mean",
+        normalize: true,
+        query_prefix: None,
+        document_prefix: None,
+        max_input_tokens: 1_024,
+        max_batch_size: 8,
+    }),
     EmbeddingCatalogEntry::Transformers(TransformersConfig {
         reference: "local/gte-modernbert-base",
         provider: "local",
@@ -627,6 +691,8 @@ mod tests {
                 "local/potion-code-16m-v2",
                 "local/multilingual-e5-small",
                 "local/jina-embeddings-v2-base-code",
+                #[cfg(feature = "mlx")]
+                "local/jina-embeddings-v2-base-code-mlx",
                 "local/gte-modernbert-base",
                 "local/nomic-embed-text-v1.5",
                 "local/bekko-256-int8",
