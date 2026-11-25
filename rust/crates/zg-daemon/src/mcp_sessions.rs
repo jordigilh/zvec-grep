@@ -13,6 +13,13 @@ use std::{
     time::Duration,
 };
 use tokio::time::Instant;
+use tracing::warn;
+
+/// Legacy MCP transport sessions are capped independently of request
+/// bookkeeping. The idle TTL is deployment-adjustable; see `from_env`.
+const MCP_SESSION_CAPACITY: usize = 256;
+const MCP_SESSION_IDLE: Duration = Duration::from_mins(30);
+const MCP_SESSION_IDLE_ENV: &str = "ZVEC_GREP_MCP_SESSION_IDLE_SECONDS";
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SessionError {
@@ -40,13 +47,59 @@ pub(crate) struct BoundedSessionManager {
     idle: Duration,
 }
 
-impl Default for BoundedSessionManager {
-    fn default() -> Self {
-        Self::new(256, Duration::from_mins(30))
-    }
+fn parse_session_idle(value: Option<&str>) -> Duration {
+    let Some(raw) = value else {
+        return MCP_SESSION_IDLE;
+    };
+    let seconds = raw
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|seconds| *seconds > 0 && *seconds <= crate::MAX_TIMER_DELAY_SECONDS);
+    seconds.map_or_else(
+        || {
+            warn!(
+                value = raw,
+                default_secs = MCP_SESSION_IDLE.as_secs(),
+                max_secs = crate::MAX_TIMER_DELAY_SECONDS,
+                "invalid {MCP_SESSION_IDLE_ENV}; using the default",
+            );
+            MCP_SESSION_IDLE
+        },
+        Duration::from_secs,
+    )
 }
 
 impl BoundedSessionManager {
+    /// Deployment override for the MCP session idle TTL. Non-UTF8, malformed,
+    /// zero, negative, or above `MAX_TIMER_DELAY_SECONDS` values keep the
+    /// 30-minute default and log a warning; an unset variable keeps it silently.
+    /// Long-lived agent sessions can raise this to outlive their idle gaps; the
+    /// per-session activity rules are unchanged.
+    pub(crate) fn from_env() -> Self {
+        let raw = std::env::var_os(MCP_SESSION_IDLE_ENV);
+        let value = match raw.as_deref().map(std::ffi::OsStr::to_str) {
+            None => None,
+            Some(Some(text)) => Some(text),
+            Some(None) => {
+                warn!(
+                    variable = MCP_SESSION_IDLE_ENV,
+                    "non-UTF8 value; using the default",
+                );
+                None
+            }
+        };
+        Self::from_env_value(value)
+    }
+
+    fn from_env_value(value: Option<&str>) -> Self {
+        Self::new(MCP_SESSION_CAPACITY, parse_session_idle(value))
+    }
+
+    pub(crate) fn idle(&self) -> Duration {
+        self.idle
+    }
+
     fn new(capacity: usize, idle: Duration) -> Self {
         let mut inner = LocalSessionManager::default();
         // This manager owns request-aware expiry; rmcp's independent timer also
@@ -227,7 +280,42 @@ impl SessionManager for BoundedSessionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn default_manager() -> BoundedSessionManager {
+        BoundedSessionManager::new(MCP_SESSION_CAPACITY, MCP_SESSION_IDLE)
+    }
     use rmcp::transport::{Transport, streamable_http_server::session::local::SessionTransport};
+
+    #[test]
+    fn session_idle_override_has_safe_bounds() {
+        assert_eq!(parse_session_idle(None), MCP_SESSION_IDLE);
+        assert_eq!(parse_session_idle(Some("")), MCP_SESSION_IDLE);
+        assert_eq!(parse_session_idle(Some("  ")), MCP_SESSION_IDLE);
+        assert_eq!(parse_session_idle(Some("nope")), MCP_SESSION_IDLE);
+        assert_eq!(parse_session_idle(Some("0")), MCP_SESSION_IDLE);
+        assert_eq!(parse_session_idle(Some("-5")), MCP_SESSION_IDLE);
+        assert_eq!(
+            parse_session_idle(Some("2147484")),
+            MCP_SESSION_IDLE,
+            "values above MAX_TIMER_DELAY_SECONDS must fall back"
+        );
+        assert_eq!(
+            parse_session_idle(Some(" 43200 ")),
+            Duration::from_hours(12)
+        );
+        assert_eq!(
+            parse_session_idle(Some("2147483")),
+            Duration::from_secs(crate::MAX_TIMER_DELAY_SECONDS)
+        );
+        assert_eq!(
+            BoundedSessionManager::from_env_value(Some("43200")).idle(),
+            Duration::from_hours(12)
+        );
+        assert_eq!(
+            BoundedSessionManager::from_env_value(None).idle(),
+            MCP_SESSION_IDLE
+        );
+    }
 
     #[tokio::test(start_paused = true)]
     async fn bounds_sessions_and_expires_only_idle_work() {
@@ -323,7 +411,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn default_session_serves_requests_after_rmcp_idle_timeout() {
-        let manager = BoundedSessionManager::default();
+        let manager = default_manager();
         let (id, mut transport) = initialized_session(&manager).await;
         let _subscription = manager
             .create_standalone_stream(&id)
@@ -347,7 +435,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn default_idle_expiry_closes_inner_session_with_notification_subscription() {
-        let manager = BoundedSessionManager::default();
+        let manager = default_manager();
         let (id, mut transport) = initialized_session(&manager).await;
         let subscription = manager
             .create_standalone_stream(&id)
@@ -367,7 +455,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn active_request_survives_idle_timeout_and_gets_fresh_idle_period() {
-        let manager = BoundedSessionManager::default();
+        let manager = default_manager();
         let (id, mut transport) = initialized_session(&manager).await;
         let stream = manager
             .create_stream(&id, tools_list_request())

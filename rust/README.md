@@ -336,6 +336,15 @@ Public search reports `freshness: fresh` or `freshness: possibly_stale`.
 index provenance without verified freshness is conservatively shown as
 `possibly_stale`; a successful waited refresh reports `fresh`.
 
+Legacy HTTP MCP sessions are capped at 256 and expire after 30 idle minutes; a
+standalone notification stream does not count as activity. Long-lived clients
+that keep a stream open but do not reinitialize on the resulting `404` can raise
+the TTL with `ZVEC_GREP_MCP_SESSION_IDLE_SECONDS` (seconds, default `1800`,
+range `1`-`2147483`). Invalid values fall back to the default and log a warning.
+A longer TTL keeps abandoned sessions in the cap longer. Under launchd,
+`kickstart -k` reuses the loaded job definition; reload the job with
+`launchctl bootout` followed by `launchctl bootstrap` after editing a plist.
+
 Search and index accept `globs` and `insensitiveGlobs` as a string or list;
 case-insensitive string rules follow case-sensitive string rules. Index string
 parameters update only the supplied case category. Typed glob lists and CLI glob
