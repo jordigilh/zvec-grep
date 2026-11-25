@@ -27,33 +27,35 @@ prebuilt-metallib `mlx-sys` path, neither of which exists today).
 
 Corpus: `rust/crates/zg-engine/src` (158 files, 126k real tokens after the
 1024-token cap), longest-first packing, padded 8 x 1024 batches, single
-process. `jina_mlx_spike.py` is the harness; run it with the venv described
-in its docstring.
+process. Every row below is reproducible with the committed
+`jina_mlx_spike.py` (`--eager`, `--dtype bf16`, `--batch 16`, and
+`--skip-checks` for the MLX-only RSS runs).
 
 | Engine | Wall | Throughput | Files/s | Peak RSS |
 |---|---|---|---|---|
-| ORT CPU q8 (12 intra-op threads), production artifact | 49.7 s | 2 538 tok/s | 3.18 | not measured |
-| MLX GPU fp16, eager | 19.3 s | 6 537 tok/s | 8.19 | ~1.2 GB |
-| MLX GPU fp16, `mx.compile` | **14.1 s** | **8 929 tok/s** | **11.19** | ~1.2 GB |
-| MLX GPU fp16, `mx.compile`, batch 16 | 13.9 s | 9 054 tok/s | 11.34 | ~1.2 GB |
+| ORT CPU q8 (12 intra-op threads), production artifact | 58.4 s | 2 159 tok/s | 2.70 | not measured |
+| MLX GPU fp16, eager | 18.9 s | 6 662 tok/s | 8.35 | 0.82 GB (MLX-only) |
+| MLX GPU fp16, `mx.compile` | **13.7-14.6 s** | **8 621-9 223 tok/s** | **10.8-11.6** | 0.82 GB (MLX-only) |
+| MLX GPU fp16, `mx.compile`, batch 16 | 13.9 s | 9 078 tok/s | 11.37 | 0.82 GB (MLX-only) |
+| MLX GPU bf16, `mx.compile` | 15.1 s | 8 363 tok/s | 10.48 | 0.82 GB (MLX-only) |
 
-- **Engine-vs-engine speedup: 3.5x** (identical batches, identical tokenizer).
-  This is the honest ceiling number: it isolates the compute engine from
-  batching policy.
+- **Engine-vs-engine speedup: 3.7-4.3x** (identical batches, identical
+  tokenizer). This is the honest ceiling number: it isolates the compute
+  engine from batching policy.
 - Against the **current production CPU path** (max_batch_size 2, token-budget
   sub-batching; #73 baseline 311 s wall / 0.78 GB RSS for 166 files) the same
   MLX configuration is ~20x faster wall-clock, because the GPU path also
-  affords larger batches. Both numbers matter: the 3.5x survives a batching
-  parity comparison; the ~20x is what a user would see.
-- Memory stays ~1.2 GB (weights 0.32 GB fp16 + activations), versus the
+  affords larger batches. Both numbers matter: the engine-level ratio
+  survives a batching parity comparison; the ~20x is what a user would see.
+- Memory stays at **0.82 GB MLX-only** (weights 0.32 GB fp16 + activations;
+  measured in a process without the ONNX reference sessions), versus the
   measured CoreML regression (7.2 GB RSS, 3.1x slower than CPU) that closed
   the ORT-CoreML route in #74.
-- bf16 matches fp16 within noise on this workload; fp16 is the right default.
-- Verification re-run of the committed script: 13.8 s (9 161 tok/s) MLX vs
-  60.7 s (2 077 tok/s) ORT — 4.4x; the spread across runs is host load, not
-  the engines. Peak RSS in that process was 2.0 GB including the in-process
-  ONNX reference sessions used for the numerics check; the MLX-only footprint
-  is ~1.2 GB.
+- bf16 lands within noise of fp16 on this workload; fp16 is the right
+  default.
+- Run-to-run spread on this host (MLX 13.7-14.6 s, ORT 49.7-60.7 s across
+  sessions) is host load, not the engines; every ratio above uses same-run
+  pairs.
 
 ## Numerics
 
@@ -62,9 +64,9 @@ The spike implements the full JinaBERT forward pass from the fp16
 reference from the same revision:
 
 - Embedding cosine (MLX fp16 vs ORT fp32, 3 short texts: Rust, Rust, SQL):
-  **1.0 / 0.9999999 / 1.0**.
-- Embedding cosine vs the shipped q8 artifact: 0.993 (the fp16-vs-q8 gap, as
-  expected).
+  **1.0 / 0.9999999 / 1.0** (printed by the committed script).
+- Embedding cosine vs the shipped q8 artifact: 0.991-0.995 (the fp16-vs-q8
+  gap, as expected; also printed by the committed script).
 
 The forward pass spec below was recovered from the shipped ONNX graph and
 confirmed numerically, so the eventual Rust port does not need to rediscover
@@ -87,7 +89,8 @@ binding: active (releases within the month, MLX 0.32.2), MIT/Apache-2.0,
 needs — matmul/softmax/erf, `fast` layer-norm helpers, safetensors loading
 (behind the `safetensors` feature), and `transforms::compile` (the Rust
 counterpart of `mx.compile`, verified in the 0.34 source), so the compiled
-3.5x number is the target for the Rust backend, not just the Python spike.
+3.7-4.3x number is the target for the Rust backend, not just the Python
+spike.
 The constraint that shapes the design is `Array` being `!Send` (0.34):
 arrays must be built and evaluated on one thread.
 
@@ -127,7 +130,10 @@ prebuilt-MLX `mlx-sys` path). Estimated 3-4 days for the jina slice.
    `model.safetensors` artifact, `max_batch_size` 8, dtype `fp16`).
    Factory test: entry constructs and reports `backend: "mlx-gpu"`,
    `dtype: "fp16"` — a model-identity change, never mixed into an existing
-   index, no automatic fallback to ONNX/model2vec.
+   index, no automatic fallback to ONNX/model2vec. Refresh
+   `models/tests/fixtures/catalog-main-oracle.json` (record its source
+   revision, per `RUST_MAIN_PARITY.md`) and either mirror the entry in the
+   TypeScript catalog or document the divergence.
 2. **Worker-thread model (test-first).** `Array` is `!Send`, so the loaded
    model owns one dedicated worker thread; `embed` sends plain `Vec<u32>`
    token ids and receives `Vec<f32>`. Unit tests: order preservation,
@@ -157,8 +163,8 @@ prebuilt-MLX `mlx-sys` path). Estimated 3-4 days for the jina slice.
 
 **Confidence: 0.78** that the slice lands within the estimate and keeps
 >= 3x over the CPU path in the shipped Rust backend (`transforms::compile`
-is exposed, so the compiled 3.5x is the target). Deductions: `Array !Send`
-forces the worker-thread design; single-maintainer crate; the toolchain
-blocker adds environment risk and gates the whole plan. Numerics risk is low
-(spec validated here); scheduling/identity risk is low (runtime rules already
-established in #73/#77).
+is exposed, so the compiled 3.7-4.3x is the target). Deductions: `Array
+!Send` forces the worker-thread design; single-maintainer crate; the
+toolchain blocker adds environment risk and gates the whole plan. Numerics
+risk is low (spec validated here); scheduling/identity risk is low (runtime
+rules already established in #73/#77).

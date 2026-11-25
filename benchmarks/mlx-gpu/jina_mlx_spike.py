@@ -13,12 +13,16 @@ Prerequisites (CLT-only host is fine; the Python wheels ship prebuilt MLX):
 
 Usage:
 
-    .venv/bin/python jina_mlx_spike.py --corpus <repo>/rust/crates/zg-engine/src \
-        --model-cache ~/.engram/zvec-grep/model
+    .venv/bin/python jina_mlx_spike.py --corpus <repo>/rust/crates/zg-engine/src
 
-The model cache must hold the resolved jina-embeddings-v2-base-code artifacts
-(zg's standard cache layout, revision 516f4ba...). The fp16 safetensors and
-fp32 ONNX reference are fetched from the same pinned revision on first run.
+The resolved jina-embeddings-v2-base-code artifacts are located in zg's
+model cache (`$ZVEC_GREP_MODEL_CACHE`, else `$ZVEC_GREP_HOME/models`, else
+`~/.zvec-grep/models`, revision 516f4ba...); anything missing is fetched
+from the same pinned revision. The fp16 safetensors and fp32 ONNX reference
+are always fetched on first run. Use `--dtype bf16` for the bf16 variant,
+`--eager` to skip `mx.compile`, and `--skip-checks` to run the MLX benchmark
+alone in a fresh process (this is how the MLX-only peak RSS is measured,
+without the in-process ONNX reference sessions).
 """
 import argparse
 import glob
@@ -120,6 +124,7 @@ def corpus_texts(corpus):
 
 
 def numerics_check(w, tokenizer, onnx_path):
+    """Return (cosine vs fp32 ONNX, cosine vs cached q8 ONNX) per text."""
     import onnxruntime as ort
     texts = ["def main():\n    print('hello world')\n    return 0\n",
              "pub fn embed_batch(loaded: &LoadedModel) -> Result<()> { run_cpu_batched() }",
@@ -128,15 +133,22 @@ def numerics_check(w, tokenizer, onnx_path):
     ids = mx.array([e.ids for e in enc], dtype=mx.uint32)
     mask = mx.array([e.attention_mask for e in enc], dtype=mx.float32)
     ours = np.array(pooled(w, ids, mask))
-    session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
-    out = session.run(None, {
-        "input_ids": np.array([e.ids for e in enc], dtype=np.int64),
-        "attention_mask": np.array([e.attention_mask for e in enc], dtype=np.int64),
-    })[0].astype(np.float32)
     tm = np.array([e.attention_mask for e in enc], dtype=np.float32)
-    ref = (out * tm[..., None]).sum(1) / tm.sum(1, keepdims=True)
-    ref = ref / np.linalg.norm(ref, axis=1, keepdims=True)
-    return (ours * ref).sum(1)
+
+    def session_cosines(path):
+        session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+        out = session.run(None, {
+            "input_ids": np.array([e.ids for e in enc], dtype=np.int64),
+            "attention_mask": np.array([e.attention_mask for e in enc], dtype=np.int64),
+        })[0].astype(np.float32)
+        ref = (out * tm[..., None]).sum(1) / tm.sum(1, keepdims=True)
+        ref = ref / np.linalg.norm(ref, axis=1, keepdims=True)
+        return (ours * ref).sum(1)
+
+    cos_fp32 = session_cosines(onnx_path)
+    q8 = default_cache_q8() or fetch("onnx/model_quantized.onnx")
+    cos_q8 = session_cosines(q8)
+    return cos_fp32, cos_q8
 
 
 def run_mlx(w, batches, enc, compiled):
@@ -173,23 +185,45 @@ def run_ort(onnx_path, batches, enc, threads):
     return time.perf_counter() - t0
 
 
+def default_cache_q8():
+    """Locate the cached q8 artifact in zg's model-cache layout."""
+    cache = (os.environ.get("ZVEC_GREP_MODEL_CACHE")
+             or os.path.join(os.environ.get("ZVEC_GREP_HOME",
+                                            os.path.expanduser("~/.zvec-grep")),
+                             "models"))
+    for root, _, files in os.walk(cache):
+        if "model_quantized.onnx" in files and REVISION in root and "jina" in root:
+            return os.path.join(root, "model_quantized.onnx")
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True, help="directory of .rs files to embed")
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--threads", type=int, default=12, help="ORT intra-op threads")
+    ap.add_argument("--dtype", choices=["fp16", "bf16"], default="fp16")
+    ap.add_argument("--eager", action="store_true", help="skip mx.compile")
+    ap.add_argument("--skip-checks", action="store_true",
+                    help="skip the numerics check and the ORT benchmark "
+                         "(MLX-only run: measures MLX-only peak RSS)")
     args = ap.parse_args()
 
     w = load_weights()
+    if args.dtype == "bf16":
+        w = {k: (v.astype(mx.bfloat16) if v.dtype in (mx.float16, mx.float32) else v)
+             for k, v in w.items()}
     tokenizer = Tokenizer.from_file(fetch("tokenizer.json"))
     tokenizer.enable_padding(length=1024)
     tokenizer.enable_truncation(max_length=1024)
 
-    fp32_onnx = fetch("onnx/model.onnx")
-    cos = numerics_check(w, tokenizer, fp32_onnx)
-    print("numerics cosine(mlx fp16, onnx fp32):", np.round(cos, 7).tolist())
-    if not all(c >= 0.999 for c in cos):
-        sys.exit("numerics check failed")
+    if not args.skip_checks:
+        fp32_onnx = fetch("onnx/model.onnx")
+        cos_fp32, cos_q8 = numerics_check(w, tokenizer, fp32_onnx)
+        print("numerics cosine(mlx, onnx fp32):", np.round(cos_fp32, 7).tolist())
+        print("numerics cosine(mlx, onnx q8):", np.round(cos_q8, 4).tolist())
+        if not all(c >= 0.999 for c in cos_fp32):
+            sys.exit("numerics check failed")
 
     texts = corpus_texts(args.corpus)
     enc = tokenizer.encode_batch(texts)
@@ -197,18 +231,19 @@ def main():
     batches = [order[i:i + args.batch] for i in range(0, len(order), args.batch)]
     total_tokens = sum(sum(enc[i].attention_mask) for i in order)
     print(f"corpus: {len(texts)} files, {total_tokens} real tokens, "
-          f"{len(batches)} batches of {args.batch}")
+          f"{len(batches)} batches of {args.batch}, dtype {args.dtype}, "
+          f"{'eager' if args.eager else 'compiled'}")
 
-    dt = run_mlx(w, batches, enc, compiled=True)
+    dt = run_mlx(w, batches, enc, compiled=not args.eager)
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e9
-    print(f"MLX GPU fp16 compiled: {dt:.1f}s, {total_tokens/dt:.0f} tok/s, "
-          f"{len(texts)/dt:.2f} files/s, peak RSS {rss:.2f} GB")
+    print(f"MLX GPU {args.dtype} {'eager' if args.eager else 'compiled'}: "
+          f"{dt:.1f}s, {total_tokens/dt:.0f} tok/s, "
+          f"{len(texts)/dt:.2f} files/s, peak RSS {rss:.2f} GB"
+          f"{' (MLX-only)' if args.skip_checks else ' (includes ONNX sessions)'}")
 
-    cache_q8 = None
-    for root, _, files in os.walk(os.path.expanduser("~/.engram/zvec-grep/model")):
-        if "model_quantized.onnx" in files and REVISION in root and "jina" in root:
-            cache_q8 = os.path.join(root, "model_quantized.onnx")
-            break
+    if args.skip_checks:
+        return
+    cache_q8 = default_cache_q8()
     if cache_q8 is None:
         cache_q8 = fetch("onnx/model_quantized.onnx")
     dt = run_ort(cache_q8, batches, enc, args.threads)
