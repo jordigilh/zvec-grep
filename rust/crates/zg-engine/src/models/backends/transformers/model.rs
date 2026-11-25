@@ -27,8 +27,8 @@ use tokio::{fs, sync::Mutex};
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::model::{
-    Device, EmbeddingModelInfo, EmbeddingPurpose, EmbeddingResult, ModelConfig, ModelInfo,
-    ModelProgress,
+    BackendIdentity, Device, EmbeddingModelInfo, EmbeddingPurpose, EmbeddingResult, ModelConfig,
+    ModelInfo, ModelProgress,
 };
 use crate::models::{
     artifacts::{
@@ -134,12 +134,11 @@ impl TransformersEmbeddingModel {
             .or_else(|| env::var_os("ZVEC_GREP_MODEL_CACHE").map(PathBuf::from))
             .unwrap_or_else(default_model_cache_dir);
         // Record the execution path this binary resolves for the requested
-        // device. The label is fixed at construction: a mid-run CPU error
-        // fallback (SessionPool::fallback_to_cpu) is a degraded mode that is
-        // deliberately not re-recorded, because a mutated identity could never
-        // be matched again by a fresh process resolving the same device, which
-        // would turn a transient fallback into a permanent rebuild loop.
-        let execution_provider = resolve_execution_provider(options.device);
+        // device; the label is fixed at construction, then re-read from the
+        // loaded session pool so CPU fallbacks publish the truth (see
+        // `backend_identity`).
+        let identity =
+            transformers_backend_identity(resolve_execution_provider(options.device), entry.dtype);
         Self {
             entry,
             info: EmbeddingModelInfo {
@@ -153,8 +152,8 @@ impl TransformersEmbeddingModel {
                 max_batch_size: entry.max_batch_size,
                 max_input_tokens: Some(entry.max_input_tokens),
                 max_image_bytes: None,
-                backend: Some(format!("onnx-{}", execution_provider.name())),
-                dtype: Some(entry.dtype.to_owned()),
+                backend: Some(identity.backend),
+                dtype: Some(identity.dtype),
             },
             model_cache_dir,
             device: options.device,
@@ -176,6 +175,14 @@ impl TransformersEmbeddingModel {
         let loaded = Arc::new(self.load(on_progress, signal).await?);
         *state = Some(Arc::clone(&loaded));
         Ok(loaded)
+    }
+
+    /// The provider of the currently loaded session pool, when loaded. The
+    /// pool's provider is updated by initialization and runtime CPU fallbacks,
+    /// so this reports the execution path actually in use.
+    fn loaded_provider(&self) -> Option<TransformersExecutionProvider> {
+        let state = self.state.try_lock().ok()?;
+        state.as_ref().map(|loaded| loaded.sessions.provider())
     }
 
     async fn load(
@@ -263,6 +270,17 @@ impl TransformersEmbeddingModel {
 impl EmbeddingModel for TransformersEmbeddingModel {
     fn info(&self) -> &EmbeddingModelInfo {
         &self.info
+    }
+
+    fn backend_identity(&self) -> Option<BackendIdentity> {
+        // Prefer the loaded session pool's actual provider: an initialization
+        // or inference failure that fell back to CPU must not keep publishing
+        // the accelerated provider it no longer uses. Before load, the
+        // feature-aware resolution is the prediction the constructor recorded.
+        let provider = self
+            .loaded_provider()
+            .unwrap_or_else(|| resolve_execution_provider(self.device));
+        Some(transformers_backend_identity(provider, self.entry.dtype))
     }
 
     async fn prepare(&self, options: EmbeddingPrepareOptions) -> Result<(), ModelError> {
@@ -639,23 +657,59 @@ impl TransformersExecutionProvider {
     }
 }
 
+/// Backend identity for the provider that produces this model's vectors.
+/// A session pool that fell back to CPU reports `Cpu`, so its generations
+/// record `onnx-cpu` instead of the provider its device requested.
+fn transformers_backend_identity(
+    provider: TransformersExecutionProvider,
+    dtype: &str,
+) -> BackendIdentity {
+    BackendIdentity {
+        backend: format!("onnx-{}", provider.name()),
+        dtype: dtype.to_owned(),
+    }
+}
+
 fn resolve_execution_provider(device: Option<Device>) -> TransformersExecutionProvider {
     match device {
         None | Some(Device::Cpu) => TransformersExecutionProvider::Cpu,
+        // ORT's CPU/MLAS path is both faster and substantially smaller than
+        // CoreML for the catalog's quantized ONNX model on Apple Silicon.
         Some(Device::Metal | Device::Auto) if cfg!(target_os = "macos") => {
             TransformersExecutionProvider::Cpu
         }
-        Some(Device::Metal) => TransformersExecutionProvider::CoreMl,
-        Some(Device::Cuda) => TransformersExecutionProvider::Cuda,
-        // ORT's CPU/MLAS path is both faster and substantially smaller than
-        // CoreML for the catalog's quantized ONNX model on Apple Silicon.
+        Some(Device::Metal) => available_provider(
+            cfg!(target_os = "macos"),
+            TransformersExecutionProvider::CoreMl,
+        ),
+        Some(Device::Cuda) => {
+            available_provider(cfg!(feature = "cuda"), TransformersExecutionProvider::Cuda)
+        }
+        Some(Device::Auto) if cfg!(all(target_os = "linux", target_arch = "x86_64")) => {
+            available_provider(cfg!(feature = "cuda"), TransformersExecutionProvider::Cuda)
+        }
         Some(Device::Auto) if cfg!(target_os = "windows") => {
             TransformersExecutionProvider::DirectMl
         }
-        Some(Device::Auto) if cfg!(all(target_os = "linux", target_arch = "x86_64")) => {
-            TransformersExecutionProvider::Cuda
-        }
-        Some(Device::Vulkan | Device::Auto) => TransformersExecutionProvider::WebGpu,
+        Some(Device::Vulkan | Device::Auto) => available_provider(
+            cfg!(feature = "vulkan"),
+            TransformersExecutionProvider::WebGpu,
+        ),
+    }
+}
+
+/// Never resolve a provider this binary cannot initialize. A resolved but
+/// unavailable provider would fall back to a CPU session at load time while
+/// the backend identity recorded for the generation still named it, letting
+/// CPU-produced vectors masquerade under an accelerated-provider label.
+const fn available_provider(
+    available: bool,
+    provider: TransformersExecutionProvider,
+) -> TransformersExecutionProvider {
+    if available {
+        provider
+    } else {
+        TransformersExecutionProvider::Cpu
     }
 }
 

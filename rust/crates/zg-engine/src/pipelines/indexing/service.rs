@@ -233,6 +233,12 @@ impl WorkspaceIndexService {
             runtimes: acquired,
             descriptor,
         } = acquire_index_models(models, existing.as_ref(), &options, language_default)?;
+        // Model acquisition deliberately precedes the identity refusal below:
+        // construction is lazy (no download or load) and cached by the runtime
+        // manager, so a foreign generation costs one light construction per
+        // process, while the true backend identity — including the
+        // device-resolved execution provider — is only known once the backend
+        // exists. The glob validation above still runs before acquisition.
         if !rebuilding
             && let Some(previous) = existing
                 .as_ref()
@@ -319,6 +325,13 @@ impl WorkspaceIndexService {
         });
         // Closing precedes publication: all checkpoints and native handles belong
         // to the completed generation before the active manifest can select it.
+        // Capture the runtime's live identity first: the models that produced
+        // this generation's vectors are owned by the writer session.
+        let runtime_identity = writer.session.models.first().and_then(|model| {
+            model
+                .backend_identity()
+                .or_else(|| model.info().backend_identity())
+        });
         writer.retire().await;
         let close_result = writer.session.storage.close();
         let indexed = result?;
@@ -333,7 +346,11 @@ impl WorkspaceIndexService {
             ));
         }
         let now = epoch_millis();
-        if let Some(build) = build {
+        record_runtime_backend_identity(&mut manifest, runtime_identity);
+        if let Some(mut build) = build {
+            // The published target must carry the same runtime identity the
+            // local manifest just recorded.
+            build.target = manifest.clone();
             publish_build(build, now)?;
         } else {
             manifest.record_update(now);
@@ -498,6 +515,35 @@ fn workspace_has_index_data(location: &WorkspaceIndexLocation) -> Result<bool, E
         || location.home.join("files.zvec").exists()
         || location.home.join("index.zvec").exists()
         || has_generation_storage(&location.home)?)
+}
+
+/// Record the identity of the runtime that actually produced this build's
+/// vectors before the generation is published. A session that fell back to
+/// CPU after the manifest target was created must not publish its
+/// accelerated-provider label.
+fn record_runtime_backend_identity(
+    manifest: &mut WorkspaceManifest,
+    identity: Option<crate::domain::model::BackendIdentity>,
+) {
+    let Some(identity) = identity else {
+        return;
+    };
+    let Some(info) = manifest
+        .workspace
+        .index
+        .descriptor()
+        .and_then(|descriptor| descriptor.embeddings.first())
+    else {
+        return;
+    };
+    if info.backend.as_deref() == Some(identity.backend.as_str())
+        && info.dtype.as_deref() == Some(identity.dtype.as_str())
+    {
+        return;
+    }
+    let mut updated = info.clone();
+    updated.record_backend_identity(identity);
+    manifest.workspace.index = IndexState::Enabled(IndexDescriptor::single(updated));
 }
 
 fn index_manifest(
@@ -875,7 +921,14 @@ pub(in crate::pipelines) fn assert_embedding_compatible(
                 "model is not part of the workspace index; rebuild the index",
             )
         })?;
-    schema.ensure_index_compatible(model.info())
+    schema.ensure_index_compatible(model.info())?;
+    // The runtime's live identity wins over its construction-time info when
+    // the backend reports one: a session that fell back to another provider
+    // must be checked against the path it now uses.
+    let current = model
+        .backend_identity()
+        .or_else(|| model.info().backend_identity());
+    schema.ensure_backend_compatible(current.as_ref())
 }
 
 fn resolve_scan(
@@ -2728,6 +2781,61 @@ mod tests {
         .await
         .expect_err("auto-update vector query must still refuse");
         assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn fts_only_auto_update_still_fails_on_other_refresh_errors() {
+        let directory = tempdir().expect("workspace");
+        let root = std::fs::canonicalize(directory.path()).expect("root");
+        std::fs::write(root.join("notes.txt"), "orchard vines and orchard rows").expect("source");
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&root))
+            .await
+            .expect("index");
+        let home = root.join(".zvec-grep");
+        let manifest = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("active");
+        // A changed workspace makes an auto-update request attempt an
+        // incremental refresh. Rewriting the stored model to a reference the
+        // catalog cannot resolve makes that refresh fail with an error that is
+        // not the terminal backend mismatch, so it must propagate even for an
+        // FTS-only request: only the identity mismatch is swallowable.
+        std::fs::write(root.join("extra.txt"), "orchard rows extended").expect("changed source");
+        let mut unknown_model = manifest.embedding().expect("embedding").clone();
+        unknown_model.model.name = "does-not-exist".into();
+        let mut rewritten = manifest.clone();
+        rewritten.workspace.index =
+            IndexState::Enabled(crate::domain::IndexDescriptor::single(unknown_model));
+        {
+            let _writer = crate::workspace::lock::acquire_home_lock(
+                &home,
+                crate::workspace::lock::LockMode::Write,
+                "test.rewrite",
+            )
+            .expect("writer");
+            super::write_workspace_manifest(&home, &rewritten).expect("rewrite manifest");
+        }
+        let error = run_context_query(
+            &service,
+            &models,
+            &route_options(
+                &root,
+                crate::api::context::options::ContextRouteMode::Fts,
+                true,
+            ),
+        )
+        .await
+        .expect_err("other refresh errors must fail the query");
+        assert_ne!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
+        assert!(
+            error.message().contains("does-not-exist"),
+            "{}",
+            error.message()
+        );
         models.close();
     }
 }

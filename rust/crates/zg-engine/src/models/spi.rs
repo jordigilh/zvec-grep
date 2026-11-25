@@ -106,6 +106,16 @@ impl Default for EmbeddingConcurrencyDefaults {
 pub trait EmbeddingModel: Send + Sync {
     fn info(&self) -> &EmbeddingModelInfo;
 
+    /// Identity of the embedding runtime that will produce vectors for this
+    /// model, when the backend can report it separately from `info`. Backends
+    /// whose execution path can change after load (for example an ONNX
+    /// session that falls back to CPU) report their current path so index
+    /// generations record what actually produced them. `None` means the
+    /// identity in `info` is authoritative.
+    fn backend_identity(&self) -> Option<crate::domain::model::BackendIdentity> {
+        None
+    }
+
     fn concurrency_defaults(&self) -> EmbeddingConcurrencyDefaults {
         EmbeddingConcurrencyDefaults::default()
     }

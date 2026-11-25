@@ -10,23 +10,34 @@ fn entry(reference: &str) -> LlamaCppConfig {
 #[test]
 fn quant_labels_come_from_the_pinned_artifact_name() {
     // Both catalog entries record the quantization of their pinned GGUF.
-    assert_eq!(llama_cpp_dtype(entry("local/embeddinggemma-300m")), "q8_0");
-    assert_eq!(llama_cpp_dtype(entry("local/qwen3-embedding-0.6b")), "q8_0");
+    assert_eq!(
+        llama_cpp_dtype(entry("local/embeddinggemma-300m")).expect("quant label"),
+        "q8_0"
+    );
+    assert_eq!(
+        llama_cpp_dtype(entry("local/qwen3-embedding-0.6b")).expect("quant label"),
+        "q8_0"
+    );
     // Known llama.cpp quant families are recognized anywhere in a name.
     for (file_name, expected) in [
-        ("model-Q8_0.gguf", "q8_0"),
-        ("model-Q4.gguf", "q4"),
-        ("model-Q4_K_M.gguf", "q4_k_m"),
-        ("model-IQ4_XS.gguf", "iq4_xs"),
-        ("model-F16.gguf", "f16"),
-        ("model-BF16.gguf", "bf16"),
-        ("Qwen3-Embedding-0.6B-Q8_0.gguf", "q8_0"),
-        // A quant-less name must fall back, not match the model name.
-        ("Qwen3-Embedding-0.6B.gguf", "gguf"),
-        ("Falcon-7B.gguf", "gguf"),
-        ("model", "gguf"),
+        ("model-Q8_0.gguf", Some("q8_0")),
+        ("model-Q4.gguf", Some("q4")),
+        ("model-Q4_K_M.gguf", Some("q4_k_m")),
+        ("model-IQ4_XS.gguf", Some("iq4_xs")),
+        ("model-F16.gguf", Some("f16")),
+        ("model-BF16.gguf", Some("bf16")),
+        ("Qwen3-Embedding-0.6B-Q8_0.gguf", Some("q8_0")),
+        // A quant-less name yields no label instead of a generic one: two
+        // different such artifacts must never share a dtype identity.
+        ("Qwen3-Embedding-0.6B.gguf", None),
+        ("Falcon-7B.gguf", None),
+        ("model", None),
     ] {
-        assert_eq!(gguf_quant_dtype(file_name), expected, "{file_name}");
+        assert_eq!(
+            gguf_quant_dtype(file_name),
+            expected.map(str::to_owned),
+            "{file_name}"
+        );
     }
 }
 
@@ -117,7 +128,8 @@ async fn cached_embeddinggemma_runs_real_llama_cpp_inference() {
             ..ModelConfig::default()
         },
         crate::models::runtime::ModelComputeRuntime::shared(),
-    );
+    )
+    .expect("llama.cpp model");
     let result = model
         .embed(
             &[
@@ -201,7 +213,8 @@ async fn cached_embeddinggemma_uses_metal_and_supports_concurrency() {
             ..ModelConfig::default()
         },
         crate::models::runtime::ModelComputeRuntime::shared(),
-    );
+    )
+    .expect("llama.cpp model");
     let result = model
         .embed(
             &[vec![Content::Text("find relevant code".to_owned())]],
@@ -257,7 +270,8 @@ async fn cached_qwen3_runs_real_llama_cpp_inference() {
             ..ModelConfig::default()
         },
         crate::models::runtime::ModelComputeRuntime::shared(),
-    );
+    )
+    .expect("llama.cpp model");
     let result = model
         .embed(
             &[vec![Content::Text(

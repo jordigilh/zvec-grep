@@ -77,6 +77,11 @@ pub(crate) async fn context(
             if uses_vectors(&request) || error.code() != EngineError::INDEX_BACKEND_MISMATCH {
                 return Err(error);
             }
+            tracing::warn!(
+                code = error.code(),
+                "serving stored full-text results after a failed auto-refresh: {}",
+                error.message()
+            );
         }
     }
     let allows_writer = options.refresh.map_or(!options.auto_update, |policy| {
@@ -111,7 +116,7 @@ pub(crate) async fn context(
             "workspace index has not been built",
         ));
     }
-    let acquired = query_models(models, &manifest, options, &location.root, &request)?;
+    let acquired = query_models(models, &manifest, options, &location.root, &request).await?;
     let storage = match read_sessions {
         Some(cache) => cache.acquire(&location.home, &manifest.storage_home())?,
         None => ReadSessionLease::open(&manifest.storage_home())?,
@@ -200,7 +205,7 @@ fn uses_vectors(request: &super::context::NormalizedContextRequest) -> bool {
         .any(|route| route.mode == crate::api::context::options::ContextRouteMode::Vector)
 }
 
-fn query_models(
+async fn query_models(
     models: &ModelRuntimeManager,
     manifest: &WorkspaceManifest,
     options: &ContextOptions,
@@ -217,6 +222,18 @@ fn query_models(
         options,
         root,
     )?;
+    // Cheap constructor-identity check first, so a foreign generation refuses
+    // without paying a model load.
+    assert_embedding_compatible(Some(manifest), &model)?;
+    // Load the runtime before serving vectors: the live identity must reflect
+    // the provider that will actually embed. A session that fell back to CPU
+    // must not serve a generation recorded under its accelerated provider.
+    // Preparation stays lazy: it only runs for vector requests, which embed
+    // immediately after, and is idempotent for an already-loaded runtime.
+    model
+        .prepare(crate::models::EmbeddingPrepareOptions::default(), None)
+        .await
+        .map_err(ModelError::into_engine_error)?;
     assert_embedding_compatible(Some(manifest), &model)?;
     Ok(vec![model])
 }

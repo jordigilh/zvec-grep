@@ -124,12 +124,12 @@ impl LlamaCppEmbeddingModel {
         entry: LlamaCppConfig,
         options: ModelConfig,
         compute_runtime: ModelComputeRuntime,
-    ) -> Self {
+    ) -> Result<Self, ModelError> {
         let model_cache_dir = options
             .cache_dir
             .or_else(|| env::var_os("ZVEC_GREP_MODEL_CACHE").map(PathBuf::from))
             .unwrap_or_else(default_model_cache_dir);
-        Self {
+        Ok(Self {
             entry,
             info: EmbeddingModelInfo {
                 model: ModelInfo {
@@ -143,14 +143,14 @@ impl LlamaCppEmbeddingModel {
                 max_input_tokens: Some(entry.context_size),
                 max_image_bytes: None,
                 backend: Some("llama-cpp".to_owned()),
-                dtype: Some(llama_cpp_dtype(entry)),
+                dtype: Some(llama_cpp_dtype(entry)?),
             },
             model_cache_dir,
             device: options.device,
             compute_runtime,
             client: ArtifactHttpClient::new(),
             state: Mutex::new(None),
-        }
+        })
     }
 
     async fn ensure_loaded(
@@ -428,22 +428,33 @@ const fn requested_device_name(device: Option<Device>) -> &'static str {
 
 /// Quantization label of the pinned GGUF artifact, e.g. `Q8_0` -> `q8_0`.
 /// The artifact is content-pinned by the catalog, so its file name is a stable
-/// part of the backend identity recorded for a generation.
-fn llama_cpp_dtype(entry: LlamaCppConfig) -> String {
-    entry
+/// part of the backend identity recorded for a generation. Fails when the
+/// entry has no GGUF artifact or its name carries no recognizable quant
+/// token: a generic fallback label would compare equal across different
+/// artifacts and silently mix their vectors.
+fn llama_cpp_dtype(entry: LlamaCppConfig) -> Result<String, ModelError> {
+    let artifact = entry
         .download
         .artifacts
-        .first()
-        .map(|artifact| artifact.path)
-        .map_or_else(|| "gguf".to_owned(), gguf_quant_dtype)
+        .iter()
+        .find(|artifact| Path::new(artifact.path).extension() == Some("gguf".as_ref()))
+        .ok_or_else(|| {
+            ModelError::invalid_argument("llama.cpp catalog entry does not list a GGUF artifact")
+        })?;
+    gguf_quant_dtype(artifact.path).ok_or_else(|| {
+        ModelError::invalid_argument(format!(
+            "llama.cpp catalog artifact {} has no recognizable quantization token",
+            artifact.path
+        ))
+    })
 }
 
 /// Extract a quantization token from a pinned GGUF file name, lowercased.
 /// Matches the llama.cpp quant families (`Q8_0`, `Q4`, `Q4_K_M`, `IQ4_XS`,
-/// `F16`, `BF16`); a name without a quant token falls back to `gguf`. The
-/// second byte must be a digit (or the exact `F16`/`BF16` forms), so model
-/// names like `Qwen3` or `Falcon` are never mistaken for a quant label.
-fn gguf_quant_dtype(file_name: &str) -> String {
+/// `F16`, `BF16`); a name without a quant token yields `None`. The second
+/// byte must be a digit (or the exact `F16`/`BF16` forms), so model names
+/// like `Qwen3` or `Falcon` are never mistaken for a quant label.
+fn gguf_quant_dtype(file_name: &str) -> Option<String> {
     let stem = file_name
         .rsplit_once('.')
         .map_or(file_name, |(stem, _)| stem);
@@ -460,7 +471,7 @@ fn gguf_quant_dtype(file_name: &str) -> String {
                 _ => false,
             }
         })
-        .map_or_else(|| "gguf".to_owned(), str::to_ascii_lowercase)
+        .map(str::to_ascii_lowercase)
 }
 
 fn report_warning(

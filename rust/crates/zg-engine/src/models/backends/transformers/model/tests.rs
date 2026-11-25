@@ -21,19 +21,79 @@ fn maps_devices_to_native_rust_execution_providers() {
             TransformersExecutionProvider::Cpu
         );
     }
+    // Providers this build cannot initialize never resolve: the session would
+    // only fall back to CPU at load time while the recorded backend identity
+    // still named the unavailable provider.
     #[cfg(not(target_os = "macos"))]
     assert_eq!(
         resolve_execution_provider(Some(Device::Metal)),
-        TransformersExecutionProvider::CoreMl
+        TransformersExecutionProvider::Cpu
+    );
+    assert_provider_resolution(
+        Some(Device::Vulkan),
+        cfg!(feature = "vulkan"),
+        TransformersExecutionProvider::WebGpu,
+    );
+    assert_provider_resolution(
+        Some(Device::Cuda),
+        cfg!(feature = "cuda"),
+        TransformersExecutionProvider::Cuda,
+    );
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    assert_provider_resolution(
+        Some(Device::Auto),
+        cfg!(feature = "cuda"),
+        TransformersExecutionProvider::Cuda,
+    );
+    #[cfg(target_os = "windows")]
+    assert_eq!(
+        resolve_execution_provider(Some(Device::Auto)),
+        TransformersExecutionProvider::DirectMl
+    );
+}
+
+fn assert_provider_resolution(
+    device: Option<Device>,
+    available: bool,
+    provider: TransformersExecutionProvider,
+) {
+    let resolved = resolve_execution_provider(device);
+    if available {
+        assert_eq!(resolved, provider);
+    } else {
+        assert_eq!(resolved, TransformersExecutionProvider::Cpu);
+    }
+}
+
+#[test]
+fn backend_identity_names_the_provider_that_produces_vectors() {
+    // A pool that fell back to CPU reports CPU, so its generations record
+    // onnx-cpu instead of the accelerated provider its device requested.
+    assert_eq!(
+        transformers_backend_identity(TransformersExecutionProvider::Cpu, "q8").backend,
+        "onnx-cpu"
     );
     assert_eq!(
-        resolve_execution_provider(Some(Device::Vulkan)),
-        TransformersExecutionProvider::WebGpu
+        transformers_backend_identity(TransformersExecutionProvider::CoreMl, "q8").backend,
+        "onnx-coreml"
     );
     assert_eq!(
-        resolve_execution_provider(Some(Device::Cuda)),
-        TransformersExecutionProvider::Cuda
+        transformers_backend_identity(TransformersExecutionProvider::Cuda, "q4").dtype,
+        "q4"
     );
+    // Before load, the model reports the feature-aware resolution its
+    // constructor recorded, and the same dtype as its pinned artifact.
+    let model = TransformersEmbeddingModel::new(
+        entry("mean", true),
+        crate::domain::model::ModelConfig::default(),
+        crate::models::runtime::ModelComputeRuntime::shared(),
+    );
+    let identity = model.backend_identity().expect("identity");
+    assert_eq!(
+        identity.backend,
+        format!("onnx-{}", resolve_execution_provider(None).name())
+    );
+    assert_eq!(identity.dtype, "q8");
 }
 
 #[test]

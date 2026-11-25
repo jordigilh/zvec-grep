@@ -54,7 +54,7 @@ pub fn create_embedding_model(
             config,
             options,
             compute_runtime,
-        ))),
+        )?)),
     }
 }
 

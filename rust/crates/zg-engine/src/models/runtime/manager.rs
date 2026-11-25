@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use super::compute::ModelComputeRuntime;
 use crate::domain::{
     Content,
-    model::{Device, EmbeddingModelInfo, EmbeddingResult, ModelConfig},
+    model::{BackendIdentity, Device, EmbeddingModelInfo, EmbeddingResult, ModelConfig},
 };
 use crate::models::{
     backends::create_embedding_model,
@@ -411,6 +411,12 @@ impl ModelRuntimeLease {
 
     pub(crate) fn info(&self) -> &EmbeddingModelInfo {
         self.entry.runtime.model.info()
+    }
+
+    /// The runtime's current backend identity, when the backend reports one
+    /// separately from its construction-time model info.
+    pub(crate) fn backend_identity(&self) -> Option<BackendIdentity> {
+        self.entry.runtime.model.backend_identity()
     }
 
     pub(crate) async fn prepare(
