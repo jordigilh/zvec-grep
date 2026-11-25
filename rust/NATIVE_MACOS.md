@@ -285,9 +285,11 @@ does not match this runtime", which is the reliable grep anchor:
 
 ### Release-notes wording (proposed)
 
-> This release records the embedding-runtime identity (`backend` + `dtype`,
-> with the linked ONNX Runtime version embedded in the backend label) of
-> every index generation and refuses to serve vectors across runtimes. The
+> This release records the embedding-runtime identity (`backend` + `dtype`)
+> of every local-model index generation and refuses to serve vectors across
+> runtimes. For transformers indexes, the backend label also embeds the linked
+> ONNX Runtime version (`onnx-<provider>/ort-<version>`); llama.cpp labels stay
+> version-less. Remote-model indexes record no identity. The
 > first vector search (or index update) on a pre-existing **local-model**
 > workspace fails once with `ZG.ENGINE.INDEX_BACKEND_MISMATCH` and a message
 > naming the mismatch; run `zg --index --rebuild <root>` to recover. Full-text
@@ -314,13 +316,14 @@ as identity-less again and refuses until it is rebuilt a second time. Disable
 auto-update on rebuilt workspaces for the rollback window, or budget for a
 second rebuild pass after re-upgrading.
 
-Rolling back across #94 behaves differently, and more safely: a pre-#94
+Rolling back across #94 behaves differently, and more safely: a #78–#93
 binary serving an index rebuilt by a post-#94 runtime fails the identity
 check cleanly — its runtime reports `onnx-cpu` where the manifest records
 `onnx-cpu/ort-…`, an `INDEX_BACKEND_MISMATCH` demanding a rebuild — rather
-than the pre-#78 rollback's silent drift. Rolling back to a pre-#94 binary
-therefore refuses vector search on rebuilt workspaces instead of serving
-mixed-runtime embeddings.
+than the pre-#78 rollback's silent drift. Rolling back to a #78–#93
+binary therefore refuses vector search on rebuilt workspaces instead of
+serving mixed-runtime embeddings. A pre-#78 binary does not refuse; see the
+rollback guidance above for that case.
 
 ## Cross-runtime embedding drift (important)
 
