@@ -66,23 +66,31 @@ fn assert_provider_resolution(
 }
 
 #[test]
-fn backend_identity_names_the_provider_that_produces_vectors() {
+fn backend_identity_names_the_provider_and_onnx_runtime_version() {
     // A pool that fell back to CPU reports CPU, so its generations record
-    // onnx-cpu instead of the accelerated provider its device requested.
+    // onnx-cpu instead of the accelerated provider its device requested,
+    // and every label records which ORT build produced the vectors.
     assert_eq!(
-        transformers_backend_identity(TransformersExecutionProvider::Cpu, "q8").backend,
-        "onnx-cpu"
+        transformers_backend_identity(TransformersExecutionProvider::Cpu, "q8", "1.22.0").backend,
+        "onnx-cpu/ort-1.22.0"
     );
     assert_eq!(
-        transformers_backend_identity(TransformersExecutionProvider::CoreMl, "q8").backend,
-        "onnx-coreml"
+        transformers_backend_identity(TransformersExecutionProvider::CoreMl, "q8", "1.22.0")
+            .backend,
+        "onnx-coreml/ort-1.22.0"
     );
     assert_eq!(
-        transformers_backend_identity(TransformersExecutionProvider::Cuda, "q4").dtype,
+        transformers_backend_identity(TransformersExecutionProvider::WebGpu, "q4", "1.23.0")
+            .backend,
+        "onnx-webgpu/ort-1.23.0"
+    );
+    assert_eq!(
+        transformers_backend_identity(TransformersExecutionProvider::Cuda, "q4", "1.22.0").dtype,
         "q4"
     );
     // Before load, the model reports the feature-aware resolution its
-    // constructor recorded, and the same dtype as its pinned artifact.
+    // constructor recorded, the runtime's live ORT version, and the same
+    // dtype as its pinned artifact.
     let model = TransformersEmbeddingModel::new(
         entry("mean", true),
         crate::domain::model::ModelConfig::default(),
@@ -91,9 +99,62 @@ fn backend_identity_names_the_provider_that_produces_vectors() {
     let identity = model.backend_identity().expect("identity");
     assert_eq!(
         identity.backend,
-        format!("onnx-{}", resolve_execution_provider(None).name())
+        format!(
+            "onnx-{}/ort-{}",
+            resolve_execution_provider(None).name(),
+            onnx_runtime_version()
+        )
     );
     assert_eq!(identity.dtype, "q8");
+}
+
+#[test]
+fn a_different_onnx_runtime_version_refuses_to_serve_an_index() {
+    // Two runtimes with the same provider and dtype but different ORT builds
+    // must not serve each other's indexes: the version joins the label, so a
+    // version change alone is an identity mismatch.
+    let model = TransformersEmbeddingModel::new(
+        entry("mean", true),
+        crate::domain::model::ModelConfig::default(),
+        crate::models::runtime::ModelComputeRuntime::shared(),
+    );
+    let mut stored = model.info().clone();
+    stored.record_backend_identity(transformers_backend_identity(
+        TransformersExecutionProvider::Cpu,
+        "q8",
+        "1.22.0",
+    ));
+    let current = transformers_backend_identity(TransformersExecutionProvider::Cpu, "q8", "1.23.0");
+    let error = stored
+        .ensure_backend_compatible(Some(&current))
+        .expect_err("a different ONNX Runtime version must refuse");
+    assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
+    assert!(
+        error.message().contains("onnx-cpu/ort-1.22.0"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        error.message().contains("onnx-cpu/ort-1.23.0"),
+        "{}",
+        error.message()
+    );
+    stored
+        .ensure_backend_compatible(Some(&transformers_backend_identity(
+            TransformersExecutionProvider::Cpu,
+            "q8",
+            "1.22.0",
+        )))
+        .expect("the same version stays compatible");
+}
+
+#[test]
+fn onnx_runtime_version_is_reported_and_stable() {
+    // The linked runtime reports its version once; the helper must expose it
+    // verbatim (no parsing that could differ across ORT builds) and stably.
+    let version = onnx_runtime_version();
+    assert!(!version.is_empty(), "ORT must report a version string");
+    assert_eq!(onnx_runtime_version(), version);
 }
 
 #[test]

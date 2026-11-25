@@ -15,7 +15,7 @@ pub(crate) struct EmbeddingModelInfo {
     pub max_input_tokens: Option<usize>,
     /// Positive image size limit in bytes when applicable and known.
     pub max_image_bytes: Option<usize>,
-    /// Embedding runtime that produced the vectors, e.g. `onnx-cpu`.
+    /// Embedding runtime that produced the vectors, e.g. `onnx-cpu/ort-1.22.0`.
     /// Recorded by the backend from its actual execution path, never user config.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
