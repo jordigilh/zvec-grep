@@ -397,7 +397,11 @@ fn dtype_labels_the_pinned_artifact_tensor_format() {
         let entry = crate::models::catalog::get_embedding_model_catalog_entry(reference)
             .and_then(crate::models::catalog::EmbeddingCatalogEntry::model2vec_config)
             .expect("model2vec catalog entry");
-        assert_eq!(entry.dtype, "f16", "{reference}");
+        assert_eq!(
+            entry.dtype,
+            crate::models::catalog::Model2VecDtype::F16,
+            "{reference}"
+        );
     }
 }
 
@@ -407,7 +411,7 @@ async fn catalog_dtype_drift_fails_the_load_instead_of_mislabeling_the_identity(
     let mut entry = fixture_entry();
     // The fixture artifact stores an F16 tensor; a catalog claiming F32
     // must not record an identity the artifact cannot back.
-    entry.dtype = "f32";
+    entry.dtype = crate::models::catalog::Model2VecDtype::F32;
     let model = Model2VecEmbeddingModel::with_dependencies(
         entry,
         ModelConfig {
@@ -430,7 +434,7 @@ async fn catalog_dtype_drift_fails_the_load_instead_of_mislabeling_the_identity(
     // the drift must already carry the shared (fail-fast) disposition.
     assert!(!error.is_retryable());
     let mut entry = fixture_entry();
-    entry.dtype = "f32";
+    entry.dtype = crate::models::catalog::Model2VecDtype::F32;
     let model = Model2VecEmbeddingModel::with_dependencies(
         entry,
         ModelConfig {
@@ -464,7 +468,7 @@ fn fixture_entry() -> Model2VecConfig {
         repo: "test/potion",
         revision: "0123456789abcdef",
         download,
-        dtype: "f16",
+        dtype: crate::models::catalog::Model2VecDtype::F16,
         model_file: "model.safetensors",
         embedding_tensor: "embeddings",
         tokenizer_file: "tokenizer.json",
@@ -635,7 +639,7 @@ impl Model2VecDependencies for FixtureDependencies {
             values: vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 2.0],
             dimension: 3,
             rows: 3,
-            dtype: "f16",
+            dtype: crate::models::catalog::Model2VecDtype::F16,
         })
     }
 }

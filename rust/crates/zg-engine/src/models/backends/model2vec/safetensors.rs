@@ -7,6 +7,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncSeekExt},
 };
 
+use crate::models::catalog::Model2VecDtype;
 use crate::models::spi::ModelError;
 
 #[derive(Clone, Debug)]
@@ -14,30 +15,16 @@ pub(super) struct StaticEmbeddingTable {
     pub(super) values: Vec<f32>,
     pub(super) dimension: usize,
     pub(super) rows: usize,
-    /// Numeric dtype of the pinned tensor, e.g. `f16`; part of the backend
-    /// identity, so the loader reports what the artifact header really says.
-    pub(super) dtype: &'static str,
-}
-
-#[derive(Clone, Copy)]
-enum TensorDtype {
-    F16,
-    F32,
-}
-
-impl TensorDtype {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::F16 => "f16",
-            Self::F32 => "f32",
-        }
-    }
+    /// Numeric dtype of the pinned tensor as parsed from the artifact
+    /// header; part of the backend identity, so the loader reports what the
+    /// artifact really says.
+    pub(super) dtype: Model2VecDtype,
 }
 
 struct TensorLocation {
     absolute_start: usize,
     byte_length: usize,
-    dtype: TensorDtype,
+    dtype: Model2VecDtype,
     dimension: usize,
     rows: usize,
 }
@@ -106,13 +93,13 @@ pub(super) async fn load_static_embedding_table(
     })?;
 
     let values = match location.dtype {
-        TensorDtype::F16 => data
+        Model2VecDtype::F16 => data
             .as_chunks::<2>()
             .0
             .iter()
             .map(|chunk| f16::from_bits(u16::from_le_bytes(*chunk)).to_f32())
             .collect(),
-        TensorDtype::F32 => data
+        Model2VecDtype::F32 => data
             .as_chunks::<4>()
             .0
             .iter()
@@ -123,7 +110,7 @@ pub(super) async fn load_static_embedding_table(
         values,
         dimension: location.dimension,
         rows: location.rows,
-        dtype: location.dtype.label(),
+        dtype: location.dtype,
     })
 }
 
@@ -154,8 +141,8 @@ fn tensor_location(
         return Err(incompatible_tensor(tensor_name));
     }
     let dtype = match dtype {
-        "F16" => TensorDtype::F16,
-        "F32" => TensorDtype::F32,
+        "F16" => Model2VecDtype::F16,
+        "F32" => Model2VecDtype::F32,
         _ => return Err(incompatible_tensor(tensor_name)),
     };
     let rows = json_usize(&shape[0]).ok_or_else(|| incompatible_tensor(tensor_name))?;
@@ -169,8 +156,8 @@ fn tensor_location(
         .checked_mul(dimension)
         .ok_or_else(|| invalid_offsets(tensor_name))?;
     let bytes_per_value = match dtype {
-        TensorDtype::F16 => 2,
-        TensorDtype::F32 => 4,
+        Model2VecDtype::F16 => 2,
+        Model2VecDtype::F32 => 4,
     };
     let tensor_byte_length = value_count
         .checked_mul(bytes_per_value)
@@ -249,7 +236,7 @@ mod tests {
                 .expect("fixture table should parse");
             assert_eq!(table.rows, 2);
             assert_eq!(table.dimension, 2);
-            assert_eq!(table.dtype, name);
+            assert_eq!(table.dtype.label(), name);
             assert_eq!(table.values, [1.0, 2.0, 3.0, 4.0]);
         }
     }

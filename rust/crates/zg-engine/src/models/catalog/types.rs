@@ -143,9 +143,11 @@ pub(crate) struct Model2VecConfig {
     pub(crate) repo: &'static str,
     pub(crate) revision: &'static str,
     pub(crate) download: &'static ArtifactDownloadConfig,
-    /// Numeric dtype of the pinned safetensors tensor (`f16`/`f32`), part of
-    /// the backend identity like the transformers and llama.cpp dtype labels.
-    pub(crate) dtype: &'static str,
+    /// Numeric dtype of the pinned safetensors tensor, part of the backend
+    /// identity like the transformers and llama.cpp dtype labels. Typed so a
+    /// catalog typo cannot compile; the loader cross-checks it against the
+    /// artifact header at load time.
+    pub(crate) dtype: Model2VecDtype,
     pub(crate) model_file: &'static str,
     pub(crate) embedding_tensor: &'static str,
     pub(crate) tokenizer_file: &'static str,
@@ -157,4 +159,21 @@ pub(crate) struct Model2VecConfig {
     pub(crate) default_concurrency: usize,
     pub(crate) query_prefix: Option<&'static str>,
     pub(crate) document_prefix: Option<&'static str>,
+}
+
+/// Numeric dtype of a model2vec safetensors tensor: the closed set the
+/// loader parses from the artifact header.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Model2VecDtype {
+    F16,
+    F32,
+}
+
+impl Model2VecDtype {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::F16 => "f16",
+            Self::F32 => "f32",
+        }
+    }
 }

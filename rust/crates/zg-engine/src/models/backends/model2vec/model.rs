@@ -93,7 +93,7 @@ impl Model2VecEmbeddingModel {
                 max_input_tokens: Some(entry.max_input_tokens),
                 max_image_bytes: None,
                 backend: Some("model2vec".to_owned()),
-                dtype: Some(entry.dtype.to_owned()),
+                dtype: Some(entry.dtype.label().to_owned()),
             },
             model_cache_dir,
             compute_runtime,
@@ -172,7 +172,9 @@ impl Model2VecEmbeddingModel {
         if table.dtype != self.entry.dtype {
             return Err(ModelError::internal(format!(
                 "Model2Vec catalog dtype {} does not match the pinned artifact tensor dtype {} (model={})",
-                self.entry.dtype, table.dtype, self.entry.reference
+                self.entry.dtype.label(),
+                table.dtype.label(),
+                self.entry.reference
             ))
             // A catalog/artifact drift is terminal for every input, not a
             // per-file content failure, so the embed path must fail fast.
