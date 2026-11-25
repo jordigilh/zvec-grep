@@ -47,7 +47,7 @@ impl ModelProgressReporter {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct EmbeddingOptions {
     pub purpose: EmbeddingPurpose,
     pub signal: Option<CancellationToken>,
@@ -58,6 +58,25 @@ pub struct EmbeddingOptions {
     pub(crate) execution_concurrency: usize,
     /// Standard W3C trace headers propagated by remote embedding backends.
     pub(crate) trace_headers: Option<EmbeddingTraceHeaders>,
+    /// Whether a local backend may degrade from its resolved accelerated
+    /// provider to CPU after an initialization or inference failure. Document
+    /// embedding keeps the fallback for availability; query embedding refuses
+    /// it, because CPU-produced query vectors must not be served against a
+    /// generation recorded under the accelerated provider.
+    pub(crate) allow_provider_fallback: bool,
+}
+
+impl Default for EmbeddingOptions {
+    fn default() -> Self {
+        Self {
+            purpose: EmbeddingPurpose::default(),
+            signal: None,
+            on_progress: None,
+            execution_concurrency: 0,
+            trace_headers: None,
+            allow_provider_fallback: true,
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -81,6 +100,7 @@ impl fmt::Debug for EmbeddingOptions {
             .field("has_signal", &self.signal.is_some())
             .field("has_progress_callback", &self.on_progress.is_some())
             .field("execution_concurrency", &self.execution_concurrency)
+            .field("allow_provider_fallback", &self.allow_provider_fallback)
             .field("has_trace_headers", &self.trace_headers.is_some())
             .finish()
     }

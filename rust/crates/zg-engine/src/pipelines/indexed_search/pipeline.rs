@@ -109,6 +109,10 @@ impl SearchEmbeddingRuntime for ModelRuntimeLease {
                 .collect::<Vec<_>>(),
             EmbeddingOptions {
                 purpose: EmbeddingPurpose::Query,
+                // Query vectors must come from the provider the index was
+                // built with; a mid-embed CPU fallback would silently mix
+                // runtimes, so it is refused here.
+                allow_provider_fallback: false,
                 ..EmbeddingOptions::default()
             },
             None,
@@ -139,6 +143,7 @@ impl SearchEmbeddingRuntime for RequestEmbeddingRuntime<'_> {
                     .collect::<Vec<_>>(),
                 EmbeddingOptions {
                     purpose: EmbeddingPurpose::Query,
+                    allow_provider_fallback: false,
                     signal: self.signal.clone(),
                     ..EmbeddingOptions::default()
                 },
@@ -993,15 +998,103 @@ mod tests {
     };
 
     use super::{
-        FusionWeights, GlobMatcher, MatchedBy, QueryFilter, QueryShape, ResolvedSearchRoute,
-        SearchEmbeddingRuntime, SearchPlan, SearchRecallTrace, SearchRoute, SearchRouteMode,
-        SearchStorage, candidate_fusion_score, compile_path_filter, search_workspace_index,
+        FusionWeights, GlobMatcher, MatchedBy, QueryFilter, QueryShape, RequestEmbeddingRuntime,
+        ResolvedSearchRoute, SearchEmbeddingRuntime, SearchPlan, SearchRecallTrace, SearchRoute,
+        SearchRouteMode, SearchStorage, candidate_fusion_score, compile_path_filter,
+        search_workspace_index,
     };
 
     fn recall_with_route(path: SearchRouteMode, rank: usize, route_id: &str) -> SearchRecallTrace {
         let mut trace = recall(path, rank);
         trace.route_id = route_id.to_owned();
         trace
+    }
+
+    #[tokio::test]
+    async fn query_embeds_refuse_provider_fallback_while_documents_allow_it() {
+        // Records the fallback allowance of every embedding request it serves.
+        struct RecordingModel {
+            info: EmbeddingModelInfo,
+            fallback_flags: Arc<Mutex<Vec<bool>>>,
+        }
+
+        #[async_trait]
+        impl crate::models::EmbeddingModel for RecordingModel {
+            fn info(&self) -> &EmbeddingModelInfo {
+                &self.info
+            }
+
+            async fn embed(
+                &self,
+                inputs: &[Vec<Content>],
+                options: crate::models::EmbeddingOptions,
+            ) -> Result<crate::domain::model::EmbeddingResult, ModelError> {
+                self.fallback_flags
+                    .lock()
+                    .expect("flags")
+                    .push(options.allow_provider_fallback);
+                Ok(crate::domain::model::EmbeddingResult {
+                    vectors: inputs.iter().map(|_| vec![0.25; 2]).collect(),
+                    truncated: Vec::new(),
+                })
+            }
+        }
+
+        let flags = Arc::new(Mutex::new(Vec::new()));
+        let flags_for_factory = Arc::clone(&flags);
+        let manager = crate::models::ModelRuntimeManager::with_factory(
+            move |_reference, _options, _compute| {
+                let flags = Arc::clone(&flags_for_factory);
+                Ok(Arc::new(RecordingModel {
+                    info: EmbeddingModelInfo {
+                        model: crate::domain::model::ModelInfo {
+                            provider: "local".to_owned(),
+                            name: "fixture".to_owned(),
+                            endpoint: None,
+                        },
+                        dimension: 2,
+                        metric: Metric::Cosine,
+                        max_batch_size: 8,
+                        max_input_tokens: None,
+                        max_image_bytes: None,
+                        backend: None,
+                        dtype: None,
+                    },
+                    fallback_flags: flags,
+                }))
+            },
+        );
+        let lease = manager
+            .acquire(crate::models::ModelRuntimeRequest::new(
+                "local/fixture",
+                crate::domain::model::ModelConfig::default(),
+                None,
+            ))
+            .expect("lease");
+        // Query embedding must not silently degrade to CPU: the fallback
+        // would mix runtimes against the generation's recorded provider.
+        let runtime = RequestEmbeddingRuntime {
+            model: &lease,
+            signal: None,
+        };
+        runtime
+            .embed_queries(&["orchard".to_owned()])
+            .await
+            .expect("query embed");
+        // Document embedding keeps the fallback for availability.
+        lease
+            .embed(
+                &[vec![Content::Text("orchard".to_owned())]],
+                crate::models::EmbeddingOptions::default(),
+                None,
+            )
+            .await
+            .expect("document embed");
+        assert_eq!(
+            *flags.lock().expect("flags"),
+            vec![false, true],
+            "query embeds refuse the provider fallback; documents keep it"
+        );
     }
 
     fn recall(path: SearchRouteMode, rank: usize) -> SearchRecallTrace {

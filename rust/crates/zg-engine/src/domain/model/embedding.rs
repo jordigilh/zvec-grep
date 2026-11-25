@@ -98,6 +98,14 @@ impl EmbeddingModelInfo {
 
     /// Check the fields that determine whether an existing index can be reused.
     pub(crate) fn ensure_index_compatible(&self, other: &Self) -> EngineResult<()> {
+        self.ensure_model_compatible(other)?;
+        self.ensure_backend_compatible(other.backend_identity().as_ref())
+    }
+
+    /// Check the model capsule only: provider, name, dimension, metric, and
+    /// input limits. Separated from the identity check so callers can compare
+    /// a stored capsule against a runtime's live backend identity.
+    pub(crate) fn ensure_model_compatible(&self, other: &Self) -> EngineResult<()> {
         if self.model.provider != other.model.provider
             || self.model.name != other.model.name
             || self.dimension != other.dimension
@@ -109,7 +117,7 @@ impl EmbeddingModelInfo {
                 "existing index uses a different embedding model; rebuild the index",
             ));
         }
-        self.ensure_backend_compatible(other.backend_identity().as_ref())
+        Ok(())
     }
 
     /// Check only the recorded backend identity against a serving runtime's

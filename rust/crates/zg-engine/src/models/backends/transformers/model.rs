@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex as StdMutex, MutexGuard as StdMutexGuard, PoisonError,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
     thread,
     time::Duration,
@@ -51,6 +51,12 @@ pub(crate) struct TransformersEmbeddingModel {
     compute_runtime: ModelComputeRuntime,
     client: ArtifactHttpClient,
     state: Mutex<Option<Arc<LoadedTransformersModel>>>,
+    /// Lock-free snapshot of the executing provider, shared with the session
+    /// pool. Initialized to the feature-aware resolution, updated when the
+    /// pool finishes loading (including an initialization fallback) and by
+    /// runtime CPU fallbacks, so the reported identity never blocks on the
+    /// load lock or misses a completed fallback.
+    provider_code: Arc<AtomicU8>,
 }
 
 struct LoadedTransformersModel {
@@ -70,6 +76,8 @@ struct SessionPool {
     changed: Condvar,
     fallback: StdMutex<()>,
     coreml_batcher: CoreMlBatcher,
+    /// Shared with the model; updated on initialization and CPU fallbacks.
+    provider_code: Arc<AtomicU8>,
 }
 
 struct SessionPoolState {
@@ -139,6 +147,9 @@ impl TransformersEmbeddingModel {
         // `backend_identity`).
         let identity =
             transformers_backend_identity(resolve_execution_provider(options.device), entry.dtype);
+        let provider_code = Arc::new(AtomicU8::new(
+            resolve_execution_provider(options.device).code(),
+        ));
         Self {
             entry,
             info: EmbeddingModelInfo {
@@ -160,6 +171,7 @@ impl TransformersEmbeddingModel {
             compute_runtime,
             client: ArtifactHttpClient::new(),
             state: Mutex::new(None),
+            provider_code,
         }
     }
 
@@ -175,14 +187,6 @@ impl TransformersEmbeddingModel {
         let loaded = Arc::new(self.load(on_progress, signal).await?);
         *state = Some(Arc::clone(&loaded));
         Ok(loaded)
-    }
-
-    /// The provider of the currently loaded session pool, when loaded. The
-    /// pool's provider is updated by initialization and runtime CPU fallbacks,
-    /// so this reports the execution path actually in use.
-    fn loaded_provider(&self) -> Option<TransformersExecutionProvider> {
-        let state = self.state.try_lock().ok()?;
-        state.as_ref().map(|loaded| loaded.sessions.provider())
     }
 
     async fn load(
@@ -254,9 +258,12 @@ impl TransformersEmbeddingModel {
         let tokenizers = prepare_tokenizers(tokenizer, self.entry)?;
         let device = self.device;
         let reporter_for_session = reporter.clone();
+        let provider_code = Arc::clone(&self.provider_code);
         let sessions = self
             .compute_runtime
-            .run(move || SessionPool::load(model_path, device, &reporter_for_session))
+            .run(move || {
+                SessionPool::load(model_path, device, &reporter_for_session, provider_code)
+            })
             .await??;
         reporter.finish();
         Ok(LoadedTransformersModel {
@@ -273,13 +280,16 @@ impl EmbeddingModel for TransformersEmbeddingModel {
     }
 
     fn backend_identity(&self) -> Option<BackendIdentity> {
-        // Prefer the loaded session pool's actual provider: an initialization
-        // or inference failure that fell back to CPU must not keep publishing
-        // the accelerated provider it no longer uses. Before load, the
-        // feature-aware resolution is the prediction the constructor recorded.
-        let provider = self
-            .loaded_provider()
-            .unwrap_or_else(|| resolve_execution_provider(self.device));
+        // Read the lock-free provider snapshot: the session pool updates it
+        // after load (including an initialization fallback) and on runtime CPU
+        // fallbacks, so this reports the execution path actually in use
+        // without contending the load lock. Before load, the snapshot holds
+        // the feature-aware resolution the constructor recorded.
+        let provider = TransformersExecutionProvider::from_code(
+            self.provider_code
+                .load(std::sync::atomic::Ordering::Acquire),
+        )
+        .unwrap_or_else(|| resolve_execution_provider(self.device));
         Some(transformers_backend_identity(provider, self.entry.dtype))
     }
 
@@ -339,6 +349,7 @@ impl EmbeddingModel for TransformersEmbeddingModel {
         let signal = options.signal;
         let on_progress = options.on_progress;
         let execution_concurrency = options.execution_concurrency.max(1);
+        let allow_provider_fallback = options.allow_provider_fallback;
         let result = self
             .compute_runtime
             .run(move || {
@@ -349,6 +360,7 @@ impl EmbeddingModel for TransformersEmbeddingModel {
                     execution_concurrency,
                     signal.as_ref(),
                     on_progress.as_ref(),
+                    allow_provider_fallback,
                 )
             })
             .await??;
@@ -362,6 +374,7 @@ impl SessionPool {
         model_path: PathBuf,
         device: Option<Device>,
         reporter: &ModelDownloadProgressReporter,
+        provider_code: Arc<AtomicU8>,
     ) -> Result<Self, ModelError> {
         let prepacked_weights = PrepackedWeights::new();
         let requested = resolve_execution_provider(device);
@@ -371,6 +384,19 @@ impl SessionPool {
         {
             let warning = "Metal was requested for the Transformers ONNX model, but the available CoreML path regresses throughput and memory; using ORT CPU instead.";
             if !reporter.warning(warning) {
+                tracing::warn!("{warning}");
+            }
+        } else if requested == TransformersExecutionProvider::Cpu
+            && matches!(device, Some(Device::Cuda | Device::Vulkan))
+        {
+            // Resolution already downgraded to CPU because this build cannot
+            // initialize the requested provider; say so instead of failing an
+            // initialization that was never going to succeed.
+            let warning = format!(
+                "{} was requested for the Transformers ONNX model, but this build cannot initialize it; using ORT CPU instead.",
+                requested_device_name(device)
+            );
+            if !reporter.warning(warning.clone()) {
                 tracing::warn!("{warning}");
             }
         }
@@ -402,6 +428,9 @@ impl SessionPool {
                 }
             }
         };
+        // Publish the provider that produced this pool, including any
+        // initialization fallback, to the lock-free identity snapshot.
+        provider_code.store(provider.code(), Ordering::Release);
         Ok(Self {
             model_path,
             prepacked_weights,
@@ -417,6 +446,7 @@ impl SessionPool {
             changed: Condvar::new(),
             fallback: StdMutex::new(()),
             coreml_batcher: CoreMlBatcher::default(),
+            provider_code,
         })
     }
 
@@ -628,6 +658,10 @@ impl SessionPool {
             session: StdMutex::new(session),
         })];
         self.changed.notify_all();
+        // The identity snapshot must follow the switch: vectors produced
+        // after this point are CPU vectors.
+        self.provider_code
+            .store(TransformersExecutionProvider::Cpu.code(), Ordering::Release);
         Ok(true)
     }
 }
@@ -655,6 +689,28 @@ impl TransformersExecutionProvider {
             Self::DirectMl => "dml",
         }
     }
+
+    /// Stable lock-free encoding for the shared identity snapshot.
+    const fn code(self) -> u8 {
+        match self {
+            Self::Cpu => 0,
+            Self::CoreMl => 1,
+            Self::WebGpu => 2,
+            Self::Cuda => 3,
+            Self::DirectMl => 4,
+        }
+    }
+
+    const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Cpu),
+            1 => Some(Self::CoreMl),
+            2 => Some(Self::WebGpu),
+            3 => Some(Self::Cuda),
+            4 => Some(Self::DirectMl),
+            _ => None,
+        }
+    }
 }
 
 /// Backend identity for the provider that produces this model's vectors.
@@ -667,6 +723,16 @@ fn transformers_backend_identity(
     BackendIdentity {
         backend: format!("onnx-{}", provider.name()),
         dtype: dtype.to_owned(),
+    }
+}
+
+const fn requested_device_name(device: Option<Device>) -> &'static str {
+    match device {
+        Some(Device::Auto) => "auto",
+        Some(Device::Metal) => "metal",
+        Some(Device::Vulkan) => "vulkan",
+        Some(Device::Cuda) => "cuda",
+        None | Some(Device::Cpu) => "cpu",
     }
 }
 
@@ -844,6 +910,7 @@ fn embed_batch(
     execution_concurrency: usize,
     signal: Option<&CancellationToken>,
     on_progress: Option<&Arc<dyn Fn(ModelProgress) + Send + Sync>>,
+    allow_provider_fallback: bool,
 ) -> Result<EmbeddingResult, ModelError> {
     check_cancelled(signal)?;
     let prepared = prepare_batch(&loaded.tokenizers, texts, entry)?;
@@ -860,7 +927,10 @@ fn embed_batch(
     };
     match first {
         Ok(result) => Ok(result),
-        Err(error) if provider != TransformersExecutionProvider::Cpu => {
+        // Query embedding refuses the fallback: CPU-produced query vectors
+        // must not be served against a generation recorded under the
+        // accelerated provider, so the inference error propagates instead.
+        Err(error) if allow_provider_fallback && provider != TransformersExecutionProvider::Cpu => {
             let warning = format!(
                 "Transformers {} embedding inference failed ({}), falling back to CPU.",
                 provider.name(),

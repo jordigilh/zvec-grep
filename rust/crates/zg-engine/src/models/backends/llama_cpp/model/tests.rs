@@ -42,6 +42,53 @@ fn quant_labels_come_from_the_pinned_artifact_name() {
 }
 
 #[test]
+fn backend_labels_name_the_execution_device() {
+    assert_eq!(llama_backend_label(None, false), "llama-cpp-cpu");
+    assert_eq!(
+        llama_backend_label(Some(Device::Cpu), false),
+        "llama-cpp-cpu"
+    );
+    assert_eq!(
+        llama_backend_label(Some(Device::Metal), true),
+        "llama-cpp-metal"
+    );
+    assert_eq!(
+        llama_backend_label(Some(Device::Cuda), true),
+        "llama-cpp-cuda"
+    );
+    assert_eq!(
+        llama_backend_label(Some(Device::Vulkan), true),
+        "llama-cpp-vulkan"
+    );
+    assert_eq!(
+        llama_backend_label(Some(Device::Auto), true),
+        "llama-cpp-gpu"
+    );
+    // A GPU request whose load or inference fell back to CPU reports CPU, so
+    // a CPU-built generation is never confused with a GPU-built one.
+    assert_eq!(
+        llama_backend_label(Some(Device::Metal), false),
+        "llama-cpp-cpu"
+    );
+    assert!(!wants_gpu(None) && !wants_gpu(Some(Device::Cpu)));
+    assert!(wants_gpu(Some(Device::Metal)) && wants_gpu(Some(Device::Auto)));
+    // Before load, the model reports the predicted label of its device.
+    let model = LlamaCppEmbeddingModel::new(
+        entry("local/embeddinggemma-300m"),
+        ModelConfig {
+            device: Some(Device::Cpu),
+            ..ModelConfig::default()
+        },
+        crate::models::runtime::ModelComputeRuntime::shared(),
+    )
+    .expect("model");
+    assert_eq!(
+        model.backend_identity().expect("identity").backend.as_str(),
+        "llama-cpp-cpu"
+    );
+}
+
+#[test]
 fn formats_embeddinggemma_and_qwen_inputs_like_main() {
     assert_eq!(
         format_text("hello", EmbeddingPurpose::Query, "embeddinggemma"),

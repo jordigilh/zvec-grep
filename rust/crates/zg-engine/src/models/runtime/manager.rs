@@ -140,7 +140,7 @@ impl ModelRuntimeManager {
         })
     }
 
-    fn with_factory(
+    pub(crate) fn with_factory(
         factory: impl Fn(
             &str,
             ModelConfig,

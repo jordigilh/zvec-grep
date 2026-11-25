@@ -116,11 +116,14 @@ pub(crate) async fn context(
             "workspace index has not been built",
         ));
     }
-    let acquired = query_models(models, &manifest, options, &location.root, &request).await?;
+    // Open the index storage before acquiring the embedding model: a missing
+    // or unreadable generation must fail fast instead of after a potentially
+    // large model download.
     let storage = match read_sessions {
         Some(cache) => cache.acquire(&location.home, &manifest.storage_home())?,
         None => ReadSessionLease::open(&manifest.storage_home())?,
     };
+    let acquired = query_models(models, &manifest, options, &location.root, &request).await?;
     let result = query_storage(
         &acquired,
         &location.root,
@@ -222,16 +225,22 @@ async fn query_models(
         options,
         root,
     )?;
-    // Cheap constructor-identity check first, so a foreign generation refuses
-    // without paying a model load.
-    assert_embedding_compatible(Some(manifest), &model)?;
-    // Load the runtime before serving vectors: the live identity must reflect
-    // the provider that will actually embed. A session that fell back to CPU
-    // must not serve a generation recorded under its accelerated provider.
-    // Preparation stays lazy: it only runs for vector requests, which embed
-    // immediately after, and is idempotent for an already-loaded runtime.
+    // Load the runtime before checking compatibility: the live identity must
+    // reflect the provider that will actually embed, so a session that fell
+    // back to CPU serves only generations recorded under CPU. Preparation
+    // stays lazy — it only runs for vector requests, which embed immediately
+    // after, and is idempotent for an already-loaded runtime.
     model
-        .prepare(crate::models::EmbeddingPrepareOptions::default(), None)
+        .prepare(
+            crate::models::EmbeddingPrepareOptions {
+                signal: options.signal.clone(),
+                on_progress: None,
+            },
+            options
+                .on_progress
+                .clone()
+                .map(crate::pipelines::indexing::model_progress::for_index),
+        )
         .await
         .map_err(ModelError::into_engine_error)?;
     assert_embedding_compatible(Some(manifest), &model)?;

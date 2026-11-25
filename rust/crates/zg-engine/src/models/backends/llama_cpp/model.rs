@@ -26,8 +26,8 @@ use tokio::{fs, sync::Mutex};
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::model::{
-    Device, EmbeddingModelInfo, EmbeddingPurpose, EmbeddingResult, ModelConfig, ModelInfo,
-    ModelProgress,
+    BackendIdentity, Device, EmbeddingModelInfo, EmbeddingPurpose, EmbeddingResult, ModelConfig,
+    ModelInfo, ModelProgress,
 };
 use crate::models::{
     artifacts::{
@@ -52,6 +52,11 @@ pub(crate) struct LlamaCppEmbeddingModel {
     compute_runtime: ModelComputeRuntime,
     client: ArtifactHttpClient,
     state: Mutex<Option<Arc<LoadedLlamaModel>>>,
+    /// Lock-free snapshot of whether the loaded model executes on a GPU.
+    /// Initialized from the requested device, corrected after load and by
+    /// runtime CPU fallbacks, so the reported identity never blocks on the
+    /// load lock or misses a completed fallback.
+    gpu: Arc<AtomicBool>,
 }
 
 struct LoadedLlamaModel {
@@ -142,7 +147,9 @@ impl LlamaCppEmbeddingModel {
                 max_batch_size: entry.max_batch_size,
                 max_input_tokens: Some(entry.context_size),
                 max_image_bytes: None,
-                backend: Some("llama-cpp".to_owned()),
+                backend: Some(
+                    llama_backend_label(options.device, wants_gpu(options.device)).to_owned(),
+                ),
                 dtype: Some(llama_cpp_dtype(entry)?),
             },
             model_cache_dir,
@@ -150,6 +157,7 @@ impl LlamaCppEmbeddingModel {
             compute_runtime,
             client: ArtifactHttpClient::new(),
             state: Mutex::new(None),
+            gpu: Arc::new(AtomicBool::new(wants_gpu(options.device))),
         })
     }
 
@@ -214,9 +222,18 @@ impl LlamaCppEmbeddingModel {
         validate_gguf_file(&path, self.entry.uri).await?;
         let device = self.device;
         let reporter_for_load = reporter.clone();
+        let gpu_snapshot = Arc::clone(&self.gpu);
         let model = self
             .compute_runtime
-            .run(move || load_model_with_fallback(&path, device, &reporter_for_load))
+            .run(move || {
+                let model = load_model_with_fallback(&path, device, &reporter_for_load);
+                // Publish the execution device the pool actually obtained,
+                // including an initialization fallback to CPU.
+                if let Ok(model) = &model {
+                    gpu_snapshot.store(model.gpu, Ordering::Release);
+                }
+                model
+            })
             .await??;
         reporter.finish();
         Ok(model)
@@ -247,6 +264,9 @@ impl LlamaCppEmbeddingModel {
                 .await??,
         );
         *state = Some(Arc::clone(&loaded));
+        // The identity snapshot must follow the switch: vectors produced
+        // after this point are CPU vectors.
+        self.gpu.store(false, Ordering::Release);
         Ok(loaded)
     }
 }
@@ -255,6 +275,17 @@ impl LlamaCppEmbeddingModel {
 impl EmbeddingModel for LlamaCppEmbeddingModel {
     fn info(&self) -> &EmbeddingModelInfo {
         &self.info
+    }
+
+    fn backend_identity(&self) -> Option<BackendIdentity> {
+        // Read the lock-free execution-device snapshot: a GPU load that fell
+        // back to CPU reports cpu, so a generation is never served by a
+        // runtime running on a different device than the one that built it.
+        let backend = llama_backend_label(self.device, self.gpu.load(Ordering::Acquire));
+        Some(BackendIdentity {
+            backend: backend.to_owned(),
+            dtype: self.info.dtype.clone()?,
+        })
     }
 
     async fn prepare(&self, options: EmbeddingPrepareOptions) -> Result<(), ModelError> {
@@ -285,6 +316,7 @@ impl EmbeddingModel for LlamaCppEmbeddingModel {
         let entry = self.entry;
         let signal = options.signal;
         let execution_concurrency = options.execution_concurrency.max(1);
+        let allow_provider_fallback = options.allow_provider_fallback;
         let loaded = Arc::clone(&model);
         let texts_for_first_attempt = texts.clone();
         let signal_for_first_attempt = signal.clone();
@@ -302,7 +334,10 @@ impl EmbeddingModel for LlamaCppEmbeddingModel {
             .await?;
         let result = match first {
             Ok(result) => result,
-            Err(error) if model.gpu => {
+            // Query embedding refuses the fallback: CPU-produced query
+            // vectors must not be served against a GPU-built generation,
+            // so the inference error propagates instead.
+            Err(error) if allow_provider_fallback && model.gpu => {
                 let cpu = self
                     .fallback_to_cpu(model, on_progress, &error)
                     .await
@@ -424,6 +459,24 @@ const fn requested_device_name(device: Option<Device>) -> &'static str {
         Some(Device::Cuda) => "cuda",
         None | Some(Device::Cpu) => "cpu",
     }
+}
+
+/// Backend label naming the execution device. The catalog's default local
+/// models run llama.cpp with a Metal/Auto device request, so the device is
+/// part of the identity: CPU- and GPU-built generations must not mix.
+fn llama_backend_label(device: Option<Device>, gpu: bool) -> &'static str {
+    match (device, gpu) {
+        (_, false) => "llama-cpp-cpu",
+        (Some(Device::Metal), true) => "llama-cpp-metal",
+        (Some(Device::Cuda), true) => "llama-cpp-cuda",
+        (Some(Device::Vulkan), true) => "llama-cpp-vulkan",
+        (None | Some(Device::Cpu | Device::Auto), true) => "llama-cpp-gpu",
+    }
+}
+
+/// Whether the requested device asks for GPU execution at all.
+const fn wants_gpu(device: Option<Device>) -> bool {
+    !matches!(device, None | Some(Device::Cpu))
 }
 
 /// Quantization label of the pinned GGUF artifact, e.g. `Q8_0` -> `q8_0`.

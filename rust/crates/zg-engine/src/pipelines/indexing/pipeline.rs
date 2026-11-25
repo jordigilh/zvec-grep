@@ -1902,7 +1902,11 @@ fn validate_context(context: &IndexingContext<'_>) -> Result<(), EngineError> {
             .ok_or_else(|| {
                 EngineError::invalid_argument("runtime model is not in workspace index")
             })?;
-        schema.ensure_index_compatible(model.info())?;
+        // Capsle only: the recorded identity was already checked when the
+        // storage opened against this manifest target, and a provider
+        // fallback during this build is corrected at publication, so the
+        // pipeline itself never compares a mid-build live identity.
+        schema.ensure_model_compatible(model.info())?;
         let _ =
             resolve_embedding_policy(context.embedding_concurrency, model.concurrency_defaults())?;
     }
