@@ -14,12 +14,24 @@ pub(super) struct StaticEmbeddingTable {
     pub(super) values: Vec<f32>,
     pub(super) dimension: usize,
     pub(super) rows: usize,
+    /// Numeric dtype of the pinned tensor, e.g. `f16`; part of the backend
+    /// identity, so the loader reports what the artifact header really says.
+    pub(super) dtype: &'static str,
 }
 
 #[derive(Clone, Copy)]
 enum TensorDtype {
     F16,
     F32,
+}
+
+impl TensorDtype {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::F16 => "f16",
+            Self::F32 => "f32",
+        }
+    }
 }
 
 struct TensorLocation {
@@ -111,6 +123,7 @@ pub(super) async fn load_static_embedding_table(
         values,
         dimension: location.dimension,
         rows: location.rows,
+        dtype: location.dtype.label(),
     })
 }
 
@@ -236,6 +249,7 @@ mod tests {
                 .expect("fixture table should parse");
             assert_eq!(table.rows, 2);
             assert_eq!(table.dimension, 2);
+            assert_eq!(table.dtype, name);
             assert_eq!(table.values, [1.0, 2.0, 3.0, 4.0]);
         }
     }

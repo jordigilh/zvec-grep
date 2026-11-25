@@ -27,10 +27,22 @@ fn quant_labels_come_from_the_pinned_artifact_name() {
         ("model-F16.gguf", Some("f16")),
         ("model-BF16.gguf", Some("bf16")),
         ("Qwen3-Embedding-0.6B-Q8_0.gguf", Some("q8_0")),
+        // Separator boundaries beyond '-' are recognized: dot-separated
+        // quant segments and lowercase tokens resolve like dash-separated
+        // uppercase ones.
+        ("model.Q8_0.gguf", Some("q8_0")),
+        ("model.q8_0.gguf", Some("q8_0")),
+        ("model.q4_k_m.gguf", Some("q4_k_m")),
+        ("model-iq4_xs.gguf", Some("iq4_xs")),
+        ("model.f16.gguf", Some("f16")),
+        ("model.bf16.gguf", Some("bf16")),
+        ("Mistral-7B-v0.1.Q4_K_M.gguf", Some("q4_k_m")),
         // A quant-less name yields no label instead of a generic one: two
         // different such artifacts must never share a dtype identity.
         ("Qwen3-Embedding-0.6B.gguf", None),
         ("Falcon-7B.gguf", None),
+        ("qwen3-embedding-0.6b.gguf", None),
+        ("falcon-7b.gguf", None),
         ("model", None),
     ] {
         assert_eq!(

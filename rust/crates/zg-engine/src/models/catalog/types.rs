@@ -143,6 +143,9 @@ pub(crate) struct Model2VecConfig {
     pub(crate) repo: &'static str,
     pub(crate) revision: &'static str,
     pub(crate) download: &'static ArtifactDownloadConfig,
+    /// Numeric dtype of the pinned safetensors tensor (`f16`/`f32`), part of
+    /// the backend identity like the transformers and llama.cpp dtype labels.
+    pub(crate) dtype: &'static str,
     pub(crate) model_file: &'static str,
     pub(crate) embedding_tensor: &'static str,
     pub(crate) tokenizer_file: &'static str,

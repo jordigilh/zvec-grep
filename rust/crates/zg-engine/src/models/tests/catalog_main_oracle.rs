@@ -164,6 +164,9 @@ fn entry_value(entry: EmbeddingCatalogEntry) -> Value {
             repo,
             revision,
             download,
+            // The TS oracle predates the model2vec dtype field (#84);
+            // refresh the fixture when main's catalog gains it.
+            dtype: _,
             model_file,
             embedding_tensor,
             tokenizer_file,
