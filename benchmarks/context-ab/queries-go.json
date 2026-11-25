@@ -1,0 +1,24 @@
+{
+  "queries": [
+    {"id": "q01", "query": "how is a DNSPolicy reconciled into DNS records"},
+    {"id": "q02", "query": "where is the rate limiting limitador deployment managed"},
+    {"id": "q03", "query": "how does the auth policy status get updated with conditions"},
+    {"id": "q04", "query": "how are effective auth policies discovered from gateway listeners"},
+    {"id": "q05", "query": "where does the controller watch istio extension resources"},
+    {"id": "q06", "query": "how is the TLS policy workflow validated before issuing certificates"},
+    {"id": "q07", "query": "what happens when a kuadrant CR is created at startup"},
+    {"id": "q08", "query": "how are network policies created for the operator components"},
+    {"id": "q09", "query": "where are policy metrics exported for dns and ratelimit policies"},
+    {"id": "q10", "query": "how does the envoy gateway extension reconciler configure auth clusters"},
+    {"id": "q11", "query": "where is the state of the world for policy reconciliation assembled"},
+    {"id": "q12", "query": "how does token rate limit policy enforce limits per token"},
+    {"id": "q13", "query": "how are reconciliation errors classified and wrapped"},
+    {"id": "q14", "query": "where is topology spread configured across gateway clusters"},
+    {"id": "q15", "query": "how does the console plugin reconciler deploy the console service"},
+    {"id": "q16", "query": "how does observability add metrics and tracing to components"},
+    {"id": "q17", "query": "where are DNS records cleaned up when a dnspolicy is deleted"},
+    {"id": "q18", "query": "how is the authorino deployment reconciled and scaled"},
+    {"id": "q19", "query": "where does the validator reject invalid ratelimit policy specs"},
+    {"id": "q20", "query": "how do gateway policy discoverability watchers find attachable policies"}
+  ]
+}

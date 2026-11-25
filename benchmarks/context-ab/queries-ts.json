@@ -1,0 +1,14 @@
+{
+  "queries": [
+    {"id": "q01", "query": "how does the console plugin register backstage pages and routes"},
+    {"id": "q02", "query": "where are ocm cluster resources fetched and normalized"},
+    {"id": "q03", "query": "how are managed clusters listed with their status"},
+    {"id": "q04", "query": "where does ui-core provide shared react hooks for data fetching"},
+    {"id": "q05", "query": "how are console components styled with patternfly"},
+    {"id": "q06", "query": "where is the standalone dev app configured for local development"},
+    {"id": "q07", "query": "how are api requests authenticated against the kubernetes cluster"},
+    {"id": "q08", "query": "where are table components for cluster inventory rendered"},
+    {"id": "q09", "query": "how does the plugin handle loading and error states"},
+    {"id": "q10", "query": "where are unit tests for the ocm provider mocks"}
+  ]
+}
