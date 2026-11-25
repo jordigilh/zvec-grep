@@ -30,7 +30,15 @@
       "dirty_at_capture": true,
       "model": "local/gte-modernbert-base",
       "role": "treatment",
-      "excludes": ["/node_modules", "/dist", "/dist-dynamic", "/storybook-static", "/test-results", "/playwright-report", "/coverage"],
+      "excludes": [
+        "/node_modules",
+        "/dist",
+        "/dist-dynamic",
+        "/storybook-static",
+        "/test-results",
+        "/playwright-report",
+        "/coverage"
+      ],
       "queries": "queries-ts.json",
       "pair_work_roots": ["ts-old-work", "ts-new-work"],
       "notes": "Mockup HTML with giant files — the chunk-flooding stress case."

@@ -1,16 +1,46 @@
 {
   "queries": [
-    {"id": "q01", "query": "how are java classes parsed into an analysis model"},
-    {"id": "q02", "query": "where is the callgraph built from method invocations"},
-    {"id": "q03", "query": "how does the adapter expose analysis results over http"},
-    {"id": "q04", "query": "where are maven dependencies resolved for analysis"},
-    {"id": "q05", "query": "how are java source files discovered and filtered"},
-    {"id": "q06", "query": "where does the adapter handle analysis failures and retries"},
-    {"id": "q07", "query": "how is the analysis result serialized to json"},
-    {"id": "q08", "query": "where are tests validating the callgraph extraction"},
-    {"id": "q09", "query": "how does the adapter configure thread pools for parallel analysis"},
-    {"id": "q10", "query": "where are class hierarchy and inheritance relations extracted"},
-    {"id": "q11", "query": "how is the health of the adapter service reported"},
-    {"id": "q12", "query": "where are analysis findings scored or ranked"}
+    {
+      "id": "q01",
+      "query": "how are java classes parsed into an analysis model"
+    },
+    {
+      "id": "q02",
+      "query": "where is the callgraph built from method invocations"
+    },
+    {
+      "id": "q03",
+      "query": "how does the adapter expose analysis results over http"
+    },
+    {
+      "id": "q04",
+      "query": "where are maven dependencies resolved for analysis"
+    },
+    {
+      "id": "q05",
+      "query": "how are java source files discovered and filtered"
+    },
+    {
+      "id": "q06",
+      "query": "where does the adapter handle analysis failures and retries"
+    },
+    { "id": "q07", "query": "how is the analysis result serialized to json" },
+    {
+      "id": "q08",
+      "query": "where are tests validating the callgraph extraction"
+    },
+    {
+      "id": "q09",
+      "query": "how does the adapter configure thread pools for parallel analysis"
+    },
+    {
+      "id": "q10",
+      "query": "where are class hierarchy and inheritance relations extracted"
+    },
+    {
+      "id": "q11",
+      "query": "how is the health of the adapter service reported"
+    },
+    { "id": "q12", "query": "where are analysis findings scored or ranked" }
   ]
 }
