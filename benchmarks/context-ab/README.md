@@ -120,10 +120,13 @@ affordable, run the cap as the only variable:
    backend (CPU/ORT -> MLX), so a pre-#74 baseline vs a post-#74 cap arm
    would mix cap and backend in every delta. Run a same-cap invariance
    pair — gte and jina at 1024, pre-#74 binary vs post-#74 1024 binary —
-   and require ordered-equal or near-identical rankings before any cap
-   arm is interpreted. The qwen3 control only proves the llama-cpp path;
-   it says nothing about MLX numerics for gte/jina. Then use the
-   **post-#74 1024 binary** as side A for every cap arm.
+   gated on file overlap >= 9/10 on every gte/jina corpus. The qwen3
+   control only proves the llama-cpp path; it says nothing about MLX
+   numerics for gte/jina. If the gate fails, cap-arm deltas remain valid
+   (both sides are post-#74) but absolute overlap numbers are not
+   comparable to the 2026-11-24 CPU run; record that in the results.
+   Either way, use the **post-#74 1024 binary** as side A for every cap
+   arm.
 3. For each corpus × cap: `pair.sh` with the post-#74 1024 binary as
    side A and the cap binary as side B, same model, same queries. Keep
    the qwen3 control pair to prove harness invariance.
@@ -142,8 +145,7 @@ affordable, run the cap as the only variable:
    with the largest overlap drop per corpus are inspected and none is
    judged clearly worse; "flooding does not regress" means mean
    max-hits-per-file in the top-10 stays at or below the 1024 baseline
-   (target for H1: at most half the 1024 value on the ts corpus, i.e.
-   from 7/10 down to <=4).
+   (target for H1: at most 4 of 10 on the ts corpus, down from 7).
 
 ### Spike arms (added 2026-11-24): adaptive chunking vs query-time merging
 
