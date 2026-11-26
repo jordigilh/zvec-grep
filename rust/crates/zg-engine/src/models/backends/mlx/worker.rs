@@ -16,6 +16,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
+use mlx_rs::DeviceType;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -76,6 +77,12 @@ enum Command {
         signal: Option<CancellationToken>,
         reply: oneshot::Sender<Result<Vec<Vec<f32>>, ModelError>>,
     },
+    /// Reports the device the worker actually runs on, for the GPU assertion
+    /// in the numerics gate.
+    #[cfg(test)]
+    Device {
+        reply: oneshot::Sender<Result<DeviceType, ModelError>>,
+    },
     Shutdown,
 }
 
@@ -99,7 +106,7 @@ impl MlxWorker {
     where
         F: MlxForward,
     {
-        Self::try_spawn(loader, max_batch_size).expect("MLX worker thread spawns")
+        Self::try_spawn(loader, max_batch_size, DeviceType::Cpu).expect("MLX worker thread spawns")
     }
 
     /// Fallible constructor used by the backend, so a thread-spawn failure
@@ -107,6 +114,7 @@ impl MlxWorker {
     pub(super) fn try_spawn<F>(
         loader: impl Fn(&CancellationToken) -> Result<F, ModelError> + Send + 'static,
         max_batch_size: usize,
+        device: DeviceType,
     ) -> Result<Self, ModelError>
     where
         F: MlxForward,
@@ -115,43 +123,58 @@ impl MlxWorker {
         let thread = thread::Builder::new()
             .name("zg-mlx-embed".to_owned())
             .spawn(move || {
-                let mut forward: Option<F> = None;
-                let max_batch_size = max_batch_size.max(1);
-                while let Some(command) = receiver.blocking_recv() {
-                    match command {
-                        Command::Prepare { signal, reply } => {
-                            if forward.is_some() {
-                                let _ = reply.send(Ok(()));
-                                continue;
-                            }
-                            // The loader runs here, on the array-owning thread,
-                            // so weights and compiled graphs never cross a
-                            // thread boundary. A failed or cancelled load stays
-                            // retryable: `forward` is only replaced on success.
-                            match load(&loader, signal.as_ref()) {
-                                Ok(prepared) => {
-                                    forward = Some(prepared);
+                // Pin the model-owning thread to the resolved device, so the
+                // arrays and compiled graphs it creates use exactly that device.
+                mlx_rs::with_device(mlx_rs::Device::new(device, 0), || {
+                    let mut forward: Option<F> = None;
+                    let max_batch_size = max_batch_size.max(1);
+                    while let Some(command) = receiver.blocking_recv() {
+                        match command {
+                            Command::Prepare { signal, reply } => {
+                                if forward.is_some() {
                                     let _ = reply.send(Ok(()));
+                                    continue;
                                 }
-                                Err(error) => {
-                                    let _ = reply.send(Err(error));
+                                // The loader runs here, on the array-owning thread,
+                                // so weights and compiled graphs never cross a
+                                // thread boundary. A failed or cancelled load stays
+                                // retryable: `forward` is only replaced on success.
+                                match load(&loader, signal.as_ref()) {
+                                    Ok(prepared) => {
+                                        forward = Some(prepared);
+                                        let _ = reply.send(Ok(()));
+                                    }
+                                    Err(error) => {
+                                        let _ = reply.send(Err(error));
+                                    }
                                 }
                             }
+                            Command::Embed { ids, signal, reply } => {
+                                let result = match forward.as_mut() {
+                                    Some(forward) => {
+                                        embed(forward, &ids, signal.as_ref(), max_batch_size)
+                                    }
+                                    None => Err(ModelError::internal(
+                                        "MLX embedding model is not prepared",
+                                    )),
+                                };
+                                let _ = reply.send(result);
+                            }
+                            #[cfg(test)]
+                            Command::Device { reply } => {
+                                let device = mlx_rs::Stream::thread_local_or_default()
+                                    .device()
+                                    .and_then(|device| device.get_type())
+                                    .map_err(|error| {
+                                        ModelError::internal("MLX device query failed")
+                                            .with_cause(error)
+                                    });
+                                let _ = reply.send(device);
+                            }
+                            Command::Shutdown => break,
                         }
-                        Command::Embed { ids, signal, reply } => {
-                            let result = match forward.as_mut() {
-                                Some(forward) => {
-                                    embed(forward, &ids, signal.as_ref(), max_batch_size)
-                                }
-                                None => {
-                                    Err(ModelError::internal("MLX embedding model is not prepared"))
-                                }
-                            };
-                            let _ = reply.send(result);
-                        }
-                        Command::Shutdown => break,
                     }
-                }
+                });
             })
             .map_err(|error| {
                 ModelError::internal("MLX worker thread failed to start").with_cause(error)
@@ -180,6 +203,16 @@ impl MlxWorker {
     ) -> Result<Vec<Vec<f32>>, ModelError> {
         let (reply, receiver) = oneshot::channel();
         self.send(Command::Embed { ids, signal, reply })?;
+        receiver
+            .await
+            .map_err(|error| ModelError::internal("MLX worker stopped").with_cause(error))?
+    }
+
+    /// Device the worker actually runs on, queried on the owning thread.
+    #[cfg(test)]
+    pub(super) async fn device_type(&self) -> Result<DeviceType, ModelError> {
+        let (reply, receiver) = oneshot::channel();
+        self.send(Command::Device { reply })?;
         receiver
             .await
             .map_err(|error| ModelError::internal("MLX worker stopped").with_cause(error))?

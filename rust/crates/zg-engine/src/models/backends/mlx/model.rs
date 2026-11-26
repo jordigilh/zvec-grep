@@ -14,7 +14,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     domain::Content,
-    domain::model::{EmbeddingModelInfo, EmbeddingResult, ModelConfig, ModelInfo, ModelProgress},
+    domain::model::{
+        Device, EmbeddingModelInfo, EmbeddingResult, ModelConfig, ModelInfo, ModelProgress,
+    },
     models::{
         artifacts::{
             ArtifactHttpClient, ArtifactSource, ModelDownloadProgressReporter, ResolveArtifacts,
@@ -42,6 +44,9 @@ pub(crate) struct MlxEmbeddingModel {
     compute_runtime: ModelComputeRuntime,
     client: ArtifactHttpClient,
     state: Mutex<Option<Arc<LoadedMlxModel>>>,
+    /// Device resolved from `ModelConfig::device`; also the device the worker
+    /// thread is pinned to, so `info.backend` never overstates the execution path.
+    device: mlx_rs::DeviceType,
 }
 
 struct LoadedMlxModel {
@@ -49,17 +54,35 @@ struct LoadedMlxModel {
     worker: MlxWorker,
 }
 
+/// MLX runs on the Apple GPU or the CPU; the other device kinds have no MLX
+/// backend, so an explicit request for them is a caller error rather than a
+/// silent downgrade.
+fn resolve_device(device: Option<Device>) -> Result<mlx_rs::DeviceType, ModelError> {
+    match device {
+        None | Some(Device::Auto | Device::Metal) => Ok(mlx_rs::DeviceType::Gpu),
+        Some(Device::Cpu) => Ok(mlx_rs::DeviceType::Cpu),
+        Some(Device::Cuda | Device::Vulkan) => Err(ModelError::invalid_argument(
+            "The MLX backend supports only CPU and Apple GPU execution",
+        )),
+    }
+}
+
 impl MlxEmbeddingModel {
     pub(crate) fn new(
         entry: TransformersConfig,
         options: ModelConfig,
         compute_runtime: ModelComputeRuntime,
-    ) -> Self {
+    ) -> Result<Self, ModelError> {
+        let device = resolve_device(options.device)?;
+        let backend = match device {
+            mlx_rs::DeviceType::Gpu => "mlx-gpu",
+            mlx_rs::DeviceType::Cpu => "mlx-cpu",
+        };
         let model_cache_dir = options
             .cache_dir
             .or_else(|| env::var_os("ZVEC_GREP_MODEL_CACHE").map(PathBuf::from))
             .unwrap_or_else(default_model_cache_dir);
-        Self {
+        Ok(Self {
             entry,
             info: EmbeddingModelInfo {
                 model: ModelInfo {
@@ -72,14 +95,23 @@ impl MlxEmbeddingModel {
                 max_batch_size: entry.max_batch_size,
                 max_input_tokens: Some(entry.max_input_tokens),
                 max_image_bytes: None,
-                backend: Some("mlx-gpu".to_owned()),
+                backend: Some(backend.to_owned()),
                 dtype: Some(entry.dtype.to_owned()),
             },
             model_cache_dir,
             compute_runtime,
             client: ArtifactHttpClient::new(),
             state: Mutex::new(None),
-        }
+            device,
+        })
+    }
+
+    /// Device the worker actually runs on, queried on the owning thread. The
+    /// numerics gate uses it to prove the test ran on Metal, not a CPU fallback.
+    #[cfg(test)]
+    pub(crate) async fn device_type(&self) -> Result<mlx_rs::DeviceType, ModelError> {
+        let loaded = self.ensure_loaded(None, None, 0).await?;
+        loaded.worker.device_type().await
     }
 
     async fn ensure_loaded(
@@ -160,6 +192,7 @@ impl MlxEmbeddingModel {
         let worker = MlxWorker::try_spawn(
             move |_signal| JinaMlxForward::load(&weights_path),
             self.entry.max_batch_size,
+            self.device,
         )?;
         worker.prepare(signal.cloned()).await?;
         reporter.finish();

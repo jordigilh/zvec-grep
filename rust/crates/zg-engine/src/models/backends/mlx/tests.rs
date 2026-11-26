@@ -28,7 +28,8 @@ fn catalog_entry_reports_its_own_backend_identity() {
         config,
         ModelConfig::default(),
         ModelComputeRuntime::shared(),
-    );
+    )
+    .expect("model");
     let info = model.info();
     info.validate().expect("valid model info");
     assert_eq!(info.backend.as_deref(), Some("mlx-gpu"));
@@ -41,6 +42,31 @@ fn catalog_entry_reports_its_own_backend_identity() {
     );
 }
 
+#[test]
+fn the_requested_device_is_honoured_or_rejected() {
+    let build = |device: crate::domain::model::Device| {
+        MlxEmbeddingModel::new(
+            entry(),
+            ModelConfig {
+                device: Some(device),
+                ..ModelConfig::default()
+            },
+            ModelComputeRuntime::shared(),
+        )
+    };
+
+    let cpu = build(crate::domain::model::Device::Cpu).expect("cpu model");
+    assert_eq!(cpu.info().backend.as_deref(), Some("mlx-cpu"));
+
+    let gpu = build(crate::domain::model::Device::Metal).expect("gpu model");
+    assert_eq!(gpu.info().backend.as_deref(), Some("mlx-gpu"));
+
+    let error = build(crate::domain::model::Device::Cuda)
+        .err()
+        .expect("CUDA has no MLX backend");
+    assert_eq!(error.code(), crate::EngineError::INVALID_ARGUMENT);
+}
+
 #[tokio::test]
 async fn cancelled_prepare_preserves_the_cancellation_code() {
     let cache = tempfile::tempdir().expect("model cache");
@@ -51,7 +77,8 @@ async fn cancelled_prepare_preserves_the_cancellation_code() {
             ..ModelConfig::default()
         },
         ModelComputeRuntime::shared(),
-    );
+    )
+    .expect("model");
     let signal = CancellationToken::new();
     signal.cancel();
     let error = model
@@ -70,7 +97,8 @@ async fn empty_embed_is_rejected_before_loading() {
         entry(),
         ModelConfig::default(),
         ModelComputeRuntime::shared(),
-    );
+    )
+    .expect("model");
     let error = model
         .embed(&[], crate::models::spi::EmbeddingOptions::default())
         .await
@@ -84,7 +112,8 @@ async fn non_text_content_is_rejected_before_loading() {
         entry(),
         ModelConfig::default(),
         ModelComputeRuntime::shared(),
-    );
+    )
+    .expect("model");
     let image = crate::domain::ImageContent::new(vec![1, 2, 3], crate::domain::FileFormat::Png)
         .expect("image");
     let error = model
@@ -126,11 +155,19 @@ async fn cached_jina_mlx() {
             ..ModelConfig::default()
         },
         ModelComputeRuntime::shared(),
-    );
+    )
+    .expect("model");
     model
         .prepare(EmbeddingPrepareOptions::default())
         .await
         .expect("prepare real MLX model");
+    assert!(
+        matches!(
+            model.device_type().await.expect("worker device"),
+            mlx_rs::DeviceType::Gpu
+        ),
+        "the numerics gate must run on Metal, not a CPU fallback"
+    );
 
     let fixtures = read_fixtures(&fixtures_path);
     let sequences = fixtures
