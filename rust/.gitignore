@@ -40,3 +40,6 @@ __pycache__/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local read-only copy of mlx-rs/mlx-sys sources for code search
+.vendor-search/
