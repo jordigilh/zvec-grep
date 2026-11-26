@@ -199,24 +199,20 @@ TDD plan for the jina slice. Estimated 3-4 days.
 6. **gte-modernbert** is out of scope for the first slice; follow-up issue
    with its own spike (rotary + sliding-window attention port).
 
-## CI gating (decided: ubuntu CPU gate + hosted macOS lane)
+## CI gating (decided 2026-11-25, corrected 2026-11-26: macOS lane)
 
-Decision (2026-11-25): the implementation ships **two lanes**, and no
+Decision (2026-11-25): the implementation ships CI lanes, and no
 self-hosted runner is required unless the hosted macOS spike fails. This
 repository has no macOS lane today; it was removed, and the workflows now
-run on `ubuntu-latest` only, so both lanes are new work.
+run on `ubuntu-latest` only, so this lane is new work.
 
-1. **Ubuntu lane — mandatory, gates everything that is not Metal
-   execution.** `mlx-sys` builds with `default-features = false`
-   (`MLX_BUILD_METAL=OFF`, `MLX_BUILD_CPU=ON`), and MLX publishes a CPU-only
-   build for Linux (`pip install mlx[cpu]`), so the `mlx` feature can be
-   compiled and its non-GPU tests run on `ubuntu-latest`: worker-thread
-   design (`Array` is `!Send`), token-budget packing, mean-pool/normalize,
-   model identity, cancellation, execution-budget handling, catalog and
-   oracle fixtures. **Prerequisite spike (30 min):** confirm `mlx-sys`
-   builds CPU-only on `ubuntu-latest` (CMake, C++20, libblas/liblapack
-   headers). If it does not, the lane compiles the feature against a stub
-   backend and the macOS lane carries every MLX execution test.
+1. **Linux lane — ruled out by the dependency.** `mlx-sys` 0.7 emits
+   `-lobjc` and `-framework Foundation` unconditionally, so `--features mlx`
+   fails to link on Linux even with MLX's CPU backend. The non-GPU logic
+   (worker-thread design, token-budget packing, mean-pool/normalize, identity,
+   cancellation, budget handling, cancellation/panic paths) is therefore
+   covered by unit tests on the macOS runner, pinned to the CPU device so they
+   do not need a GPU.
 2. **Hosted macOS lane — gates the Metal kernels.** `runs-on: macos-26`
    (arm64, 3-core M1, 7 GB). Standard GitHub-hosted runners are **free and
    unlimited on public repositories**, macOS included, so this lane costs
@@ -238,19 +234,28 @@ run on `ubuntu-latest` only, so both lanes are new work.
    maintainer's Mac replaces (2) with identical jobs; only the `runs-on:`
    label changes and the acceptance criteria stay the same.
 
-**Acceptance criteria for the implementation PR:** the ubuntu lane is green
-with `--features mlx` (all non-GPU logic) **and** the macOS lane runs the
-MLX numerics test plus a smoke embedding on a confirmed Metal device.
-Local-only verification does not satisfy this.
+**Acceptance criteria for the implementation PR:** the macOS lane is green
+with `--features mlx` (unit tests, CPU-pinned where they do not need the GPU)
+**and** the MLX numerics test plus a smoke embedding run on a confirmed Metal
+device — on a self-hosted runner, or on a hosted one once a run proves it can
+allocate the device. Local-only verification does not satisfy this.
+
+> **Linux correction (2026-11-26).** The Ubuntu CPU leg this section originally
+> required cannot exist: `mlx-sys` 0.7 emits `-lobjc` and
+> `-framework Foundation` unconditionally (`build.rs`), so `--features mlx`
+> fails to link on Linux even though MLX itself has a CPU backend. The lane is
+> therefore macOS-only, and the non-GPU logic is covered there by unit tests
+> that pin the CPU device.
 
 ## Landing policy (decided 2026-11-25)
 
 MLX ships **opt-in**; the ORT CPU path stays the default everywhere.
 
 - One cargo feature `mlx` on `zg-engine`. On macOS the dependency builds with
-  metal + accelerate; on every other target it is declared CPU-only so the
-  Ubuntu CI lane compiles and unit-tests the feature (MLX supports a CPU
-  backend). Selecting `local/jina-embeddings-v2-base-code-mlx` is
+  metal + accelerate; other targets declare it CPU-only, which keeps the
+  feature resolvable but does not make it linkable there (`mlx-sys` always
+  links Apple frameworks). Selecting `local/jina-embeddings-v2-base-code-mlx`
+  is
   the only way to reach it: no automatic promotion, and no silent fallback in
   either direction — an MLX index never mixes with an ONNX one.
 - Build it with `cargo build -p zg --features zg-engine/mlx`.

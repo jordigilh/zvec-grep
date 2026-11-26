@@ -112,11 +112,10 @@ jobs:
       - name: Smoke test the CLI
         run: cargo run --locked -p zg -- --rg "zvec-grep Rust rewrite" README.md
 
-  # Opt-in Apple-GPU backend (issue #74). Two lanes: ubuntu builds and tests the
-  # feature against the MLX CPU backend (the CI baseline that keeps the non-GPU
-  # logic covered), macOS builds it against Metal and runs the same unit tests.
-  # The #[ignore]d numerics gate still needs committed fixtures, so it is not
-  # wired here yet.
+  # Opt-in Apple-GPU backend (issue #74). One lane, on macOS: mlx-sys 0.7 links
+  # Apple frameworks unconditionally (-lobjc, -framework Foundation), so the
+  # feature cannot link on Linux even with MLX's CPU backend. Non-GPU logic is
+  # covered here by the unit tests, which pin the CPU device.
   mlx:
     name: rust mlx (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -131,19 +130,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [macos-latest]
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: rustup show active-toolchain
-      - name: Install MLX build prerequisites
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libblas-dev liblapack-dev liblapacke-dev cmake ninja-build
       - name: Ensure the Metal toolchain
         if: runner.os == 'macOS'
         run: |

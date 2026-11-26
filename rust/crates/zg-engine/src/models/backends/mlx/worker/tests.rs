@@ -298,6 +298,17 @@ fn padding_rounds_up_to_bucket_boundaries_so_compiled_shapes_repeat() {
 }
 
 #[tokio::test]
+async fn the_worker_reports_the_device_it_was_pinned_to() {
+    let worker = MlxWorker::try_spawn(|_| Ok(EchoForward::new().0), 2, mlx_rs::DeviceType::Cpu)
+        .expect("worker");
+    worker.prepare(None).await.expect("prepare");
+    assert!(matches!(
+        worker.device_type().await.expect("device"),
+        mlx_rs::DeviceType::Cpu
+    ));
+}
+
+#[tokio::test]
 async fn already_cancelled_embed_returns_cancelled_without_running_the_forward() {
     let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
     let loader_calls = Arc::clone(&calls);

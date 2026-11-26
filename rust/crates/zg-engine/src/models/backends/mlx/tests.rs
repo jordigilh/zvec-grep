@@ -61,10 +61,19 @@ fn the_requested_device_is_honoured_or_rejected() {
     let gpu = build(crate::domain::model::Device::Metal).expect("gpu model");
     assert_eq!(gpu.info().backend.as_deref(), Some("mlx-gpu"));
 
-    let error = build(crate::domain::model::Device::Cuda)
-        .err()
-        .expect("CUDA has no MLX backend");
-    assert_eq!(error.code(), crate::EngineError::INVALID_ARGUMENT);
+    for unsupported in [
+        crate::domain::model::Device::Cuda,
+        crate::domain::model::Device::Vulkan,
+    ] {
+        let model = build(unsupported).expect("unsupported devices fall back to CPU");
+        assert_eq!(model.info().backend.as_deref(), Some("mlx-cpu"));
+    }
+
+    let auto = build(crate::domain::model::Device::Auto).expect("auto resolves");
+    assert!(matches!(
+        auto.info().backend.as_deref(),
+        Some("mlx-cpu" | "mlx-gpu")
+    ));
 }
 
 #[tokio::test]

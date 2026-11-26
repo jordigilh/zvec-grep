@@ -120,12 +120,19 @@ impl MlxWorker {
         F: MlxForward,
     {
         let (commands, mut receiver) = mpsc::unbounded_channel();
+        // The device and its stream are created inside the thread. Report
+        // readiness so a failure there becomes a structured error instead of a
+        // panic that `Builder::spawn` has already returned past.
+        let (ready, device_ready) = std::sync::mpsc::channel();
         let thread = thread::Builder::new()
             .name("zg-mlx-embed".to_owned())
             .spawn(move || {
                 // Pin the model-owning thread to the resolved device, so the
                 // arrays and compiled graphs it creates use exactly that device.
                 mlx_rs::with_device(mlx_rs::Device::new(device, 0), || {
+                    if ready.send(()).is_err() {
+                        return;
+                    }
                     let mut forward: Option<F> = None;
                     let max_batch_size = max_batch_size.max(1);
                     while let Some(command) = receiver.blocking_recv() {
@@ -179,6 +186,14 @@ impl MlxWorker {
             .map_err(|error| {
                 ModelError::internal("MLX worker thread failed to start").with_cause(error)
             })?;
+        // A panic during stream creation closes the channel without a ready
+        // signal, which is exactly the case this catches.
+        if device_ready.recv().is_err() {
+            let _ = thread.join();
+            return Err(ModelError::internal(
+                "MLX device initialization failed on the worker thread",
+            ));
+        }
         Ok(Self {
             commands,
             thread: Some(thread),

@@ -41,9 +41,10 @@ type MlxResult<T> = Result<T, Exception>;
 type CompiledForward = Box<dyn for<'a> FnMut(&'a [Array]) -> Result<Vec<Array>, Exception>>;
 
 /// How many compiled graphs to keep. Sequence lengths are bucketed by
-/// `TokenBatch::pad`, so a handful of entries cover the realistic shapes and
-/// every call inside a bucket reuses the graph (and MLX's internal trace cache).
-const COMPILED_CACHE_ENTRIES: usize = 4;
+/// `TokenBatch::pad`, and the batch dimension is bounded by `max_batch_size`
+/// (8 for the catalog entry), so eight entries cover every batch size for the
+/// current sequence bucket without re-tracing.
+const COMPILED_CACHE_ENTRIES: usize = 8;
 
 /// Small LRU-ish cache of compiled graphs keyed by exact `(batch, sequence)`.
 ///

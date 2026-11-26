@@ -59,11 +59,18 @@ struct LoadedMlxModel {
 /// silent downgrade.
 fn resolve_device(device: Option<Device>) -> Result<mlx_rs::DeviceType, ModelError> {
     match device {
-        None | Some(Device::Auto | Device::Metal) => Ok(mlx_rs::DeviceType::Gpu),
-        Some(Device::Cpu) => Ok(mlx_rs::DeviceType::Cpu),
-        Some(Device::Cuda | Device::Vulkan) => Err(ModelError::invalid_argument(
-            "The MLX backend supports only CPU and Apple GPU execution",
-        )),
+        // Ask MLX itself: with the metal feature this is the GPU, and on a
+        // CPU-only build the same call resolves to the CPU, so neither choice
+        // is hard-coded from the request.
+        None | Some(Device::Auto) => mlx_rs::Device::try_default()
+            .and_then(|device| device.get_type())
+            .map_err(|error| {
+                ModelError::internal("Unable to resolve the MLX default device").with_cause(error)
+            }),
+        Some(Device::Metal) => Ok(mlx_rs::DeviceType::Gpu),
+        // No MLX backend for these; fall back to CPU like the other local
+        // backends do rather than failing the operation.
+        Some(Device::Cpu | Device::Cuda | Device::Vulkan) => Ok(mlx_rs::DeviceType::Cpu),
     }
 }
 

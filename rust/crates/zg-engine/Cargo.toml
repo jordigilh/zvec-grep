@@ -12,8 +12,9 @@ default = []
 # Opt-in Apple-GPU backend (issue #74). The Metal path needs Xcode plus the
 # separate Metal Toolchain component at build time, so it never participates in
 # the default build; the ORT CPU path stays the default everywhere. On macOS the
-# dependency builds with metal+accelerate; elsewhere it builds CPU-only so the
-# Ubuntu CI lane can compile and unit-test the feature.
+# dependency builds with metal+accelerate; mlx-sys links Apple frameworks
+# unconditionally, so the feature is not linkable on other targets even though
+# the dependency is declared for them (see benchmarks/mlx-gpu/README.md).
 mlx = ["dep:mlx-rs"]
 # CUDA and Vulkan require their native toolchains at build time. Platform
 # release builds enable the matching feature, while unsupported requests keep
