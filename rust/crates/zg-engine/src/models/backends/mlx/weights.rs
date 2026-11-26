@@ -74,6 +74,12 @@ impl JinaWeights {
     /// Flattens every weight into the exact order the compiled forward expects
     /// as graph inputs: embedding tensors first, then each layer in
     /// [`JinaLayerWeights::flatten`] order.
+    ///
+    /// The first [`EMBEDDING_INPUTS`] arrays are used *outside* the compiled
+    /// graph (`run` does the embedding lookup and embedding `LayerNorm` before
+    /// compiling), so the graph receives them but only reads from
+    /// [`FIRST_LAYER_INPUT`] onwards. They stay in the flat layout so the
+    /// ordering has a single definition shared by loader, forward and tests.
     pub(super) fn flatten(&self) -> Vec<Array> {
         let mut inputs =
             Vec::with_capacity(EMBEDDING_INPUTS + LAYER_COUNT * JinaLayerWeights::INPUTS);

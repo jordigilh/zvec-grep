@@ -296,3 +296,87 @@ fn padding_rounds_up_to_bucket_boundaries_so_compiled_shapes_repeat() {
     let short = super::TokenBatch::pad(&[vec![1, 2, 3]]);
     assert_eq!(short.sequence_length, 128, "short inputs share one bucket");
 }
+
+#[tokio::test]
+async fn already_cancelled_embed_returns_cancelled_without_running_the_forward() {
+    let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let loader_calls = Arc::clone(&calls);
+    let worker = MlxWorker::spawn(
+        move |_| {
+            Ok(EchoForward {
+                calls: Arc::clone(&loader_calls),
+            })
+        },
+        2,
+    );
+    worker.prepare(None).await.expect("prepare");
+
+    let signal = CancellationToken::new();
+    signal.cancel();
+    let error = worker
+        .embed(vec![vec![1], vec![2]], Some(signal))
+        .await
+        .expect_err("a token cancelled before submit must not run the forward");
+    assert_eq!(error.code(), crate::EngineError::CANCELLED);
+    assert!(
+        calls.lock().expect("calls").is_empty(),
+        "the forward must not be called for an already-cancelled request"
+    );
+}
+
+#[tokio::test]
+async fn embed_still_works_after_a_cancelled_prepare() {
+    let worker = spawn_echo(2);
+    let signal = CancellationToken::new();
+    signal.cancel();
+    let error = worker
+        .prepare(Some(signal))
+        .await
+        .expect_err("cancelled prepare");
+    assert_eq!(error.code(), crate::EngineError::CANCELLED);
+
+    worker
+        .prepare(None)
+        .await
+        .expect("retry after cancellation");
+    let vectors = worker.embed(vec![vec![7]], None).await.expect("embed");
+    assert_eq!(vectors, vec![vec![7.0]]);
+}
+
+#[tokio::test]
+async fn dropping_the_worker_frees_the_model_on_its_own_thread() {
+    struct DropTracking {
+        dropped: Arc<AtomicUsize>,
+    }
+
+    impl super::MlxForward for DropTracking {
+        fn forward(&mut self, _batch: &TokenBatch) -> Result<Vec<Vec<f32>>, ModelError> {
+            Ok(Vec::new())
+        }
+    }
+
+    impl Drop for DropTracking {
+        fn drop(&mut self) {
+            self.dropped.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let loader_dropped = Arc::clone(&dropped);
+    let worker = MlxWorker::spawn(
+        move |_| {
+            Ok(DropTracking {
+                dropped: Arc::clone(&loader_dropped),
+            })
+        },
+        2,
+    );
+    worker.prepare(None).await.expect("prepare");
+    assert_eq!(dropped.load(Ordering::SeqCst), 0);
+    drop(worker);
+    assert_eq!(
+        dropped.load(Ordering::SeqCst),
+        1,
+        "the model is dropped with the worker thread, not left behind"
+    );
+}
