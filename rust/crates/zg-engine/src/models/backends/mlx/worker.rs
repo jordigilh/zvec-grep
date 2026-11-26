@@ -97,13 +97,11 @@ pub(super) struct MlxWorker {
     /// Set when readiness timed out: the thread may still be stuck in device
     /// initialization, so `Drop` must not join it.
     abandoned: std::sync::atomic::AtomicBool,
+    /// How long `prepare` waits for the device. Only the delayed-initializer
+    /// test overrides it; production and other tests use the full window.
+    ready_timeout: std::time::Duration,
 }
 
-/// How long `prepare` waits for the worker to create its device. Test builds
-/// use a short window so the timeout branch is exercised deterministically.
-#[cfg(test)]
-const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(50);
-#[cfg(not(test))]
 const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl MlxWorker {
@@ -133,7 +131,7 @@ impl MlxWorker {
     where
         F: MlxForward,
     {
-        Self::try_spawn_impl(loader, max_batch_size, device, false, false)
+        Self::try_spawn_impl(loader, max_batch_size, device, false, false, READY_TIMEOUT)
     }
 
     /// Test-only constructor that fails device initialization, so the
@@ -146,7 +144,14 @@ impl MlxWorker {
     where
         F: MlxForward,
     {
-        Self::try_spawn_impl(loader, max_batch_size, DeviceType::Cpu, true, false)
+        Self::try_spawn_impl(
+            loader,
+            max_batch_size,
+            DeviceType::Cpu,
+            true,
+            false,
+            READY_TIMEOUT,
+        )
     }
 
     /// Test-only constructor whose device comes up later than `READY_TIMEOUT`,
@@ -159,7 +164,14 @@ impl MlxWorker {
     where
         F: MlxForward,
     {
-        Self::try_spawn_impl(loader, max_batch_size, DeviceType::Cpu, false, true)
+        Self::try_spawn_impl(
+            loader,
+            max_batch_size,
+            DeviceType::Cpu,
+            false,
+            true,
+            std::time::Duration::from_millis(50),
+        )
     }
 
     fn try_spawn_impl<F>(
@@ -168,6 +180,7 @@ impl MlxWorker {
         device: DeviceType,
         fail_device: bool,
         delay_ready: bool,
+        ready_timeout: std::time::Duration,
     ) -> Result<Self, ModelError>
     where
         F: MlxForward,
@@ -255,6 +268,7 @@ impl MlxWorker {
             thread: Some(thread),
             ready: std::sync::Mutex::new(Some(device_ready)),
             abandoned: std::sync::atomic::AtomicBool::new(false),
+            ready_timeout,
         })
     }
 
@@ -270,7 +284,7 @@ impl MlxWorker {
         let Some(receiver) = receiver else {
             return Ok(());
         };
-        match tokio::time::timeout(READY_TIMEOUT, receiver).await {
+        match tokio::time::timeout(self.ready_timeout, receiver).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(_)) => Err(ModelError::internal(
                 "MLX device initialization failed on the worker thread",

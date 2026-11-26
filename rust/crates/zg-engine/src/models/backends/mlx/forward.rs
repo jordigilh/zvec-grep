@@ -96,9 +96,18 @@ impl JinaMlxForward {
         path: &Path,
         signal: &tokio_util::sync::CancellationToken,
     ) -> Result<Self, ModelError> {
-        let weights = JinaWeights::load(path, signal)?;
+        // The safetensors reader produces lazy `Load` primitives that have no
+        // GPU eval implementation ("Load::eval_gpu Not implemented"), so the
+        // whole load runs on a CPU stream; the materialized arrays are then used
+        // from the GPU stream, which is fine because MLX copies on access.
+        let weight_inputs = mlx_rs::with_device(mlx_rs::Device::cpu(), || {
+            let weights = JinaWeights::load(path, signal)?;
+            let weight_inputs = weights.flatten();
+            mlx_rs::transforms::eval(weight_inputs.iter()).map_err(mlx_error)?;
+            Ok::<_, ModelError>(weight_inputs)
+        })?;
         Ok(Self {
-            weight_inputs: weights.flatten(),
+            weight_inputs,
             compiled: ShapeCache::new(COMPILED_CACHE_ENTRIES),
         })
     }
