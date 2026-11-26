@@ -248,6 +248,8 @@ fn cow_copy_file(source: &Path, destination: &Path) -> io::Result<()> {
         use std::os::fd::AsRawFd;
         // Reflink on XFS/btrfs/ZFS; falls back to a full copy on ext4. The
         // ioctl does not carry the source's mode bits, so apply them after.
+        // The request encoding below is the generic (x86-64/aarch64) one;
+        // exotic architectures fail the ioctl and degrade to a full copy.
         const FICLONE: std::os::raw::c_ulong = 0x40049409;
         let input = fs::File::open(source)?;
         let output = fs::File::create(destination)?;

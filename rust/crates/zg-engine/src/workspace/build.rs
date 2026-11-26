@@ -139,7 +139,7 @@ pub(crate) fn prepare_adopted_build(
     mut target: WorkspaceManifest,
     expected_identity: crate::domain::model::BackendIdentity,
     seed_storage: &Path,
-    copy: &impl Fn(&Path, &Path) -> Result<(), EngineError>,
+    copy: &(impl Fn(&Path, &Path) -> Result<(), EngineError> + ?Sized),
 ) -> Result<WorkspaceBuild, EngineError> {
     let previous_manifest = read_optional(&target.path.join(WORKSPACE_MANIFEST_FILE))?;
     target.storage_generation = Some(Uuid::new_v4().to_string());

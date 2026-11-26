@@ -62,6 +62,10 @@ pub(crate) struct WorkspaceIndexService {
     _registry_directory: Option<Arc<tempfile::TempDir>>,
     #[cfg(test)]
     fail_index_completion: bool,
+    /// Test hook: fail the seed copy after the seed's storage was opened,
+    /// exercising the full-build fallback (issue #72).
+    #[cfg(test)]
+    fail_seed_copy: bool,
 }
 
 impl WorkspaceIndexService {
@@ -74,6 +78,8 @@ impl WorkspaceIndexService {
             _registry_directory: None,
             #[cfg(test)]
             fail_index_completion: false,
+            #[cfg(test)]
+            fail_seed_copy: false,
         }
     }
 
@@ -89,6 +95,7 @@ impl WorkspaceIndexService {
             ),
             _registry_directory: Some(directory),
             fail_index_completion: false,
+            fail_seed_copy: false,
         }
     }
 
@@ -365,11 +372,20 @@ impl WorkspaceIndexService {
         // index request.
         let mut adopted = target.clone();
         adopted.workspace.index = seed.manifest.workspace.index.clone();
+        #[cfg(test)]
+        let copy: &dyn Fn(&Path, &Path) -> Result<(), EngineError> = if self.fail_seed_copy {
+            &|_source, _destination| Err(EngineError::storage_failure("injected seed copy failure"))
+        } else {
+            &crate::workspace::seed::copy_tree_cow
+        };
+        #[cfg(not(test))]
+        let copy: &dyn Fn(&Path, &Path) -> Result<(), EngineError> =
+            &crate::workspace::seed::copy_tree_cow;
         let build = crate::workspace::build::prepare_adopted_build(
             adopted,
             live,
             &seed.storage_home(),
-            &crate::workspace::seed::copy_tree_cow,
+            copy,
         );
         // Release the seed's shared storage lock before the run starts; the
         // handle also drops, so a close failure never discards a staged build.
@@ -3862,6 +3878,41 @@ mod tests {
             "the repo-root seed was preferred: both files were already present"
         );
         assert_eq!(result.files_unchanged, 2);
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn a_failed_seed_copy_falls_back_to_a_full_build() {
+        let directory = tempdir().expect("repository parent");
+        let (main, worktree) = git_repo_fixture(directory.path());
+        std::fs::write(main.join("one.txt"), "orchard rows and orchard vines").expect("source");
+        let mut service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("main checkout index");
+        std::fs::write(worktree.join("one.txt"), "orchard rows and orchard vines").expect("same");
+        service.fail_seed_copy = true;
+        let result = service
+            .index(&models, empty_index_options(&worktree))
+            .await
+            .expect("a failed seed copy is not a failed index");
+        assert!(
+            !result.seeded,
+            "the copy failure falls back to a full build"
+        );
+        assert_eq!(result.files_added, 1);
+        let home = worktree.join(".zvec-grep");
+        // The discarded adoption left no build state behind.
+        assert!(!super::has_build(&home));
+        assert!(
+            super::read_workspace_manifest(&home)
+                .expect("manifest read")
+                .expect("published full build")
+                .storage_generation
+                .is_some()
+        );
         models.close();
     }
 
