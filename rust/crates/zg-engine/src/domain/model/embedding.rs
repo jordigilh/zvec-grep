@@ -170,6 +170,29 @@ pub(crate) fn mid_run_backend_mismatch(
     ))
 }
 
+/// Refusal for a build whose runtime identity changed between its first
+/// batch and a later one. The staged build is discarded, so the recovery is
+/// retrying the build — not the unconditional `--rebuild` hint that targets
+/// a live generation. A first or unindexed build retries plainly; an
+/// explicit `--rebuild` repeats its command, because the generation it was
+/// replacing is still active and typically incompatible.
+pub(crate) fn fresh_build_identity_flip(
+    started: Option<&BackendIdentity>,
+    current: Option<&BackendIdentity>,
+) -> EngineError {
+    let describe = |identity: Option<&BackendIdentity>| {
+        identity.map_or_else(|| "no recorded identity".to_owned(), ToString::to_string)
+    };
+    EngineError::index_backend_mismatch(format!(
+        "workspace index embedding backend identity changed during the build: \
+         the build started with {}, but this runtime reports {}; \
+         the staged build was discarded — retry the index build, \
+         repeating `--rebuild` if this run replaced an existing index",
+        describe(started),
+        describe(current)
+    ))
+}
+
 /// Structured refusal when the serving runtime differs from the stored one.
 ///
 /// Indexes built before backend recording have no identity; every such index
@@ -356,6 +379,54 @@ mod tests {
                 .expect_err("current identity must refuse to serve an unknown index")
                 .code(),
             EngineError::INDEX_BACKEND_MISMATCH
+        );
+    }
+
+    #[test]
+    fn a_build_identity_flip_points_at_retrying_the_build() {
+        // A mid-run flip during a build discards the staging generation, so
+        // the recovery is retrying the build — never `--rebuild`, which
+        // targets a live generation.
+        let started = BackendIdentity {
+            backend: "stub-gpu".to_owned(),
+            dtype: "q8".to_owned(),
+        };
+        let current = BackendIdentity {
+            backend: "stub-cpu".to_owned(),
+            dtype: "q8".to_owned(),
+        };
+        let error = fresh_build_identity_flip(Some(&started), Some(&current));
+        assert_eq!(error.code(), EngineError::INDEX_BACKEND_MISMATCH);
+        assert!(!error.is_retryable());
+        for part in [
+            "stub-gpu",
+            "stub-cpu",
+            "retry the index build",
+            "repeating `--rebuild` if this run replaced an existing index",
+        ] {
+            assert!(error.message().contains(part), "{}", error.message());
+        }
+        // The recovery is a retry, never the unconditional rebuild hint that
+        // targets a live generation.
+        assert!(
+            !error.message().contains("rebuild the index with"),
+            "{}",
+            error.message()
+        );
+        // Both sides of the sentence stay accurate when an identity is absent.
+        let absent = fresh_build_identity_flip(None, Some(&current));
+        assert_eq!(absent.code(), EngineError::INDEX_BACKEND_MISMATCH);
+        assert!(
+            absent.message().contains("no recorded identity"),
+            "{}",
+            absent.message()
+        );
+        let stopped = fresh_build_identity_flip(Some(&started), None);
+        assert_eq!(stopped.code(), EngineError::INDEX_BACKEND_MISMATCH);
+        assert!(
+            stopped.message().contains("no recorded identity"),
+            "{}",
+            stopped.message()
         );
     }
 }

@@ -3355,4 +3355,102 @@ mod tests {
         );
         manager.close();
     }
+
+    /// A mid-run identity flip during a build refuses with a retry hint, not
+    /// the `--rebuild` hint that targets a live generation: the staged build
+    /// is discarded, nothing is published, and a plain retry recovers once
+    /// the provider is stable again.
+    #[tokio::test]
+    async fn a_build_mid_run_identity_flip_discards_the_staging_and_suggests_retry() {
+        let directory = tempdir().expect("workspace");
+        let root = std::fs::canonicalize(directory.path()).expect("root");
+        std::fs::write(root.join("one.txt"), "orchard vines and orchard rows").expect("source");
+        std::fs::write(root.join("two.txt"), "orchard rows extended again").expect("source");
+        let embeds = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        // The provider falls back after the first embed, so the first batch's
+        // identity check accepts the gpu start and the second batch flips.
+        let fallback_after = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(1));
+        let manager = {
+            let embeds = std::sync::Arc::clone(&embeds);
+            let fallback_after = std::sync::Arc::clone(&fallback_after);
+            ModelRuntimeManager::with_factory(move |_reference, _options, _compute| {
+                Ok(std::sync::Arc::new(MidRunFallbackStub {
+                    // One input per embed call, so each single-file batch is
+                    // its own embed and the flip lands between identity checks.
+                    info: crate::domain::model::EmbeddingModelInfo {
+                        model: crate::domain::model::ModelInfo {
+                            provider: "local".into(),
+                            name: "potion-code-16m-v2".into(),
+                            endpoint: None,
+                        },
+                        dimension: 8,
+                        metric: crate::domain::model::Metric::Cosine,
+                        max_batch_size: 1,
+                        max_input_tokens: Some(64),
+                        max_image_bytes: None,
+                        backend: Some("stub-gpu".into()),
+                        dtype: Some("q8".into()),
+                    },
+                    embeds: std::sync::Arc::clone(&embeds),
+                    fallback_after: std::sync::Arc::clone(&fallback_after),
+                }))
+            })
+        };
+        let service = WorkspaceIndexService::with_test_registry();
+        let mut options = empty_index_options(&root);
+        // Serialize the batches so the second batch's identity check observes
+        // the flip instead of both batches embedding concurrently.
+        options.embedding_concurrency = Some(1);
+        let error = service
+            .index(&manager, options)
+            .await
+            .expect_err("a build mid-run flip must refuse");
+        assert_eq!(error.code(), crate::EngineError::INDEX_BACKEND_MISMATCH);
+        for part in [
+            "changed during the build",
+            "retry the index build",
+            "stub-gpu",
+            "stub-cpu",
+        ] {
+            assert!(error.message().contains(part), "{}", error.message());
+        }
+        assert!(
+            !error.message().contains("rebuild the index with"),
+            "a discarded build has no live generation to rebuild unconditionally: {}",
+            error.message()
+        );
+        // The staged build was discarded: nothing was published.
+        let home = root.join(".zvec-grep");
+        assert!(
+            super::read_workspace_manifest(&home)
+                .expect("manifest read")
+                .is_none(),
+            "no manifest may be published for a refused build"
+        );
+        // Once the provider is stable again, a plain retry — no `--rebuild` —
+        // builds and publishes the index.
+        fallback_after.store(u32::MAX, std::sync::atomic::Ordering::Release);
+        let mut retry = empty_index_options(&root);
+        retry.embedding_concurrency = Some(1);
+        service
+            .index(&manager, retry)
+            .await
+            .expect("a stable runtime retries the build successfully");
+        let recovered = super::read_workspace_manifest(&home)
+            .expect("manifest")
+            .expect("active");
+        assert_eq!(
+            recovered.embedding().expect("embedding").backend.as_deref(),
+            Some("stub-gpu")
+        );
+        assert_eq!(
+            indexed_file_state(&recovered.storage_home(), "one.txt"),
+            Some(true)
+        );
+        assert_eq!(
+            indexed_file_state(&recovered.storage_home(), "two.txt"),
+            Some(true)
+        );
+        manager.close();
+    }
 }

@@ -227,18 +227,26 @@ recorded ORT version differs from the new binary's, and any index rebuilt by
 a pre-#94 binary (which records `onnx-cpu` with no version — the same
 mismatch the rollback section describes).
 
-The refusal is terminal, not retryable: over MCP the error renders as
-`ZG.ENGINE.INDEX_BACKEND_MISMATCH` with `retryable: false`, naming both
-identities and the recovery. Two message shapes exist (same code, same
-remedy); both share the prefix "workspace index embedding backend identity
-does not match this runtime", which is the reliable grep anchor:
+The refusal is terminal for automatic retries: over MCP the error renders
+as `ZG.ENGINE.INDEX_BACKEND_MISMATCH` with `retryable: false`, meaning the
+caller must not re-send the same request unchanged — recovery is the manual
+action the message names. Three message shapes exist (same code); all
+share the prefix "workspace index embedding backend identity", which is the
+reliable grep anchor:
 
 - at open time: "workspace index embedding backend identity does not match
   this runtime: index has no recorded identity (built before backend
   recording), this runtime has backend=… dtype=…; rebuild the index with
   `zg --index --rebuild`"
-- mid-run: "… the storage opened with …, but the runtime produced vectors
-  with …; rebuild the index with `zg --index --rebuild`"
+- mid-run, incremental: "… the storage opened with …, but this runtime
+  reports …; rebuild the index with `zg --index --rebuild`"
+- mid-run, during a build: "workspace index embedding backend identity
+  changed during the build: the build started with …, but this runtime
+  reports …; the staged build was discarded — retry the index build,
+  repeating `--rebuild` if this run replaced an existing index" (a first or
+  unindexed build retries plainly; an explicit `--rebuild` repeats its
+  command, because the generation it was replacing is still active and
+  typically incompatible)
 
 ### Runbook
 
