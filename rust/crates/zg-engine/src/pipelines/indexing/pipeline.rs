@@ -140,11 +140,13 @@ pub(crate) struct IndexingContext<'context> {
     /// presence of an expected identity, which is also absent from
     /// identity-less incremental generations.
     pub is_build: bool,
-    /// The recorded backend identity an incremental update must not deviate
-    /// from, checked per embedding batch before any record is committed.
-    /// `None` for builds, which accept their starting identity and relabel
-    /// the staging generation at publication, and for incremental runs on
-    /// generations that recorded no identity.
+    /// The recorded backend identity a run must not deviate from, checked per
+    /// embedding batch before any record is committed. `None` for ordinary
+    /// builds, which accept their starting identity and relabel the staging
+    /// generation at publication, and for incremental runs on generations
+    /// that recorded no identity. An adopted (seeded) build sets it to the
+    /// seed's recorded identity: like an incremental update it must not mix
+    /// runtimes, so provider fallback is disabled for it too.
     pub expected_backend_identity: Option<crate::domain::model::BackendIdentity>,
 }
 
@@ -909,8 +911,10 @@ fn push_embedding<'context>(
         context.on_progress.clone(),
         // An incremental update must not append fallback-runtime vectors to
         // a live generation; a fresh build may fall back and relabel itself
-        // at publication. The run mode is explicit on the context.
-        context.is_build,
+        // at publication. An adopted seed is a build that must keep the
+        // seed's identity, so fallback stays disabled for it. The run mode
+        // is explicit on the context.
+        context.is_build && context.expected_backend_identity.is_none(),
     )));
 }
 
@@ -960,14 +964,17 @@ fn ensure_runtime_identity(
         // First batch of this run: an incremental update must start from
         // the generation's recorded identity. A fresh build accepts its
         // starting point and relabels the staging generation at
-        // publication.
+        // publication. An adopted build's staging is discarded on failure,
+        // so its recovery is retrying (and re-adopting), not rebuilding a
+        // live generation.
         if let Some(expected) = context.expected_backend_identity.as_ref()
             && current.as_ref() != Some(expected)
         {
-            return Err(crate::domain::model::mid_run_backend_mismatch(
-                Some(expected),
-                current.as_ref(),
-            ));
+            return Err(if context.is_build {
+                crate::domain::model::fresh_build_identity_flip(Some(expected), current.as_ref())
+            } else {
+                crate::domain::model::mid_run_backend_mismatch(Some(expected), current.as_ref())
+            });
         }
         observed.identity = current;
         observed.saw_batch = true;
@@ -2472,6 +2479,7 @@ fn build_index_result(
         timings: timings.entries,
         skipped: first.skipped.clone(),
         skipped_counts: first.skipped_counts.clone(),
+        seeded: false,
     }
 }
 

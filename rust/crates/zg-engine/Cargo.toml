@@ -79,6 +79,10 @@ zvec-rust.workspace = true
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.4", features = ["fs"] }
 
+# FICLONE (reflink) for seeding indexes on Linux copy-on-write filesystems.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["coreml"] }
 # Opt-in Apple-GPU runtime (issue #74). Default features keep metal + accelerate;

@@ -105,6 +105,17 @@ impl WorkspaceRegistry {
             .map(|entry| entry.root))
     }
 
+    /// Snapshot of every registration, for cross-workspace lookups such as
+    /// seed selection. Read-only over the atomically replaced document.
+    pub(crate) fn entries(&self) -> EngineResult<Vec<(String, PathBuf)>> {
+        Ok(self
+            .read()?
+            .workspaces
+            .into_iter()
+            .map(|entry| (entry.name, entry.root))
+            .collect())
+    }
+
     /// Commit the authoritative name before updating the local manifest.
     /// A retry also succeeds after another workspace has reused the old name.
     pub(crate) fn rename(&self, old_name: &str, new_name: &str, root: &Path) -> EngineResult<()> {

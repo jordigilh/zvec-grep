@@ -22,6 +22,10 @@ const BUILD_FILE: &str = "build.json";
 pub(crate) struct WorkspaceBuild {
     pub target: WorkspaceManifest,
     previous_manifest: Option<Vec<u8>>,
+    /// The backend identity an adopted (seeded) build must keep. `None` for
+    /// ordinary builds, which accept their starting identity and may relabel
+    /// the staging generation at publication.
+    pub expected_identity: Option<crate::domain::model::BackendIdentity>,
 }
 
 /// Recovery needs ownership and registration only, never an index schema.
@@ -116,9 +120,53 @@ pub(crate) fn prepare_build(mut target: WorkspaceManifest) -> Result<WorkspaceBu
     let build = WorkspaceBuild {
         target,
         previous_manifest,
+        expected_identity: None,
     };
     // Record ownership before creating storage so a crash cannot orphan a stage.
     if let Err(error) = write_build(&build).and_then(|()| ensure_stage(&build)) {
+        let _ = discard_build(&build);
+        return Err(error);
+    }
+    Ok(build)
+}
+
+/// Start a build by adopting a seed's generation storage: the staging
+/// generation is a copy (the caller's `copy` performs it copy-on-write) of
+/// `seed_storage`, and the build must keep the seed's recorded backend
+/// identity. Ownership is recorded before the copy so a crash mid-copy cannot
+/// orphan a stage; a failed copy discards the build.
+pub(crate) fn prepare_adopted_build(
+    mut target: WorkspaceManifest,
+    expected_identity: crate::domain::model::BackendIdentity,
+    seed_storage: &Path,
+    copy: &impl Fn(&Path, &Path) -> Result<(), EngineError>,
+) -> Result<WorkspaceBuild, EngineError> {
+    let previous_manifest = read_optional(&target.path.join(WORKSPACE_MANIFEST_FILE))?;
+    target.storage_generation = Some(Uuid::new_v4().to_string());
+    let build = WorkspaceBuild {
+        target,
+        previous_manifest,
+        expected_identity: Some(expected_identity),
+    };
+    if let Err(error) = write_build(&build) {
+        let _ = discard_build(&build);
+        return Err(error);
+    }
+    let stage = build.target.storage_home();
+    let generations = &build.target.path.join("generations");
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    let staged = builder
+        .create(generations)
+        .map_err(build_io)
+        .and_then(|()| copy(seed_storage, &stage))
+        .and_then(|()| sync_directory(&stage));
+    if let Err(error) = staged {
         let _ = discard_build(&build);
         return Err(error);
     }
