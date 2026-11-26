@@ -150,9 +150,9 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-rust-mlx-v1-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-rust-mlx-v1-
-      - name: Verify the MLX metallib exists
-        run: test -f "$MLX_RS_METAL_PATH/mlx.metallib"
       - name: Check the opt-in MLX feature
         run: cargo clippy --locked -p zg-engine --all-targets --features mlx -- -D warnings
+      - name: Verify the MLX metallib exists
+        run: test -f "$MLX_RS_METAL_PATH/mlx.metallib"
       - name: Test the opt-in MLX feature
         run: cargo test --locked -p zg-engine --lib --features mlx
