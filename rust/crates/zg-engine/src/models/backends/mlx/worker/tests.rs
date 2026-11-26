@@ -558,7 +558,12 @@ async fn dropping_the_worker_frees_the_model_on_its_own_thread() {
     assert_eq!(dropped.load(Ordering::SeqCst), 0);
     drop(worker);
     assert!(
-        wait_for(|| dropped.load(Ordering::SeqCst) == 1),
+        wait_for(|| observed.lock().expect("drop thread").is_some()),
+        "the worker thread never finished teardown"
+    );
+    assert_eq!(
+        dropped.load(Ordering::SeqCst),
+        1,
         "the model is dropped with the worker thread, not left behind"
     );
     let (created_on, dropped_on) = observed
