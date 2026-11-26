@@ -1,11 +1,38 @@
 use mlx_rs::{Array, transforms::eval};
 
 use super::super::weights::HEAD_COUNT;
-use super::{ShapeCache, alibi, layer_norm, mask_bias};
+use super::{ShapeCache, alibi, gated_activation, layer_norm, mask_bias, pool_and_normalize};
 
 fn values(array: &Array) -> Vec<f32> {
     eval([array]).expect("evaluate");
     array.as_slice::<f32>().to_vec()
+}
+
+#[test]
+fn gated_activation_multiplies_the_gate_by_gelu_of_the_up_projection() {
+    // gate = 2, up = 1 -> 2 * gelu(1) = 2 * 0.8413447 = 1.6826895.
+    // The common swapped form gelu(gate) * up would give 1.9544997 instead, so
+    // this asserts the ordering, not just "some activation happened".
+    let gate = Array::from_slice(&[2.0_f32], &[1]);
+    let up = Array::from_slice(&[1.0_f32], &[1]);
+    let value = values(&gated_activation(&gate, &up).expect("gated activation"));
+    assert!(
+        (value[0] - 1.682_689_5).abs() < 1e-5,
+        "expected gate * gelu(up) = 1.6826895, got {}",
+        value[0]
+    );
+}
+
+#[test]
+fn pool_and_normalize_averages_masked_positions_and_scales_to_unit_length() {
+    // Two positions, the second masked out: pooled = [3, 4], |pooled| = 5.
+    let hidden = Array::from_slice(&[3.0_f32, 4.0, 99.0, 99.0], &[1, 2, 2]);
+    let mask_pool = Array::from_slice(&[1.0_f32, 0.0], &[1, 2, 1]);
+    let mask_sum = Array::from_slice(&[1.0_f32], &[1, 1, 1]);
+    let pooled = values(&pool_and_normalize(&hidden, &mask_pool, &mask_sum).expect("pooled"));
+    assert_eq!(pooled.len(), 2);
+    assert!((pooled[0] - 0.6).abs() < 1e-6, "got {:?}", pooled);
+    assert!((pooled[1] - 0.8).abs() < 1e-6, "got {:?}", pooled);
 }
 
 #[test]

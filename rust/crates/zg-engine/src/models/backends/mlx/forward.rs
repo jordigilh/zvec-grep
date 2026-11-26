@@ -188,13 +188,8 @@ fn build_compiled() -> CompiledForward {
         )?;
         // Mean-pool over the mask, then L2-normalize in fp32 (the spike's
         // `pooled`), matching the ONNX sentence-embedding pipeline.
-        let pooled = hidden
-            .multiply(mask_pool)?
-            .sum_axis(1, Some(true))?
-            .divide(mask_sum)?
-            .as_type::<f32>()?;
-        let norm = pooled.multiply(&pooled)?.sum_axis(-1, Some(true))?.sqrt()?;
-        Ok(vec![pooled.divide(&norm)?])
+        let pooled = pool_and_normalize(&hidden, &mask_pool, &mask_sum)?;
+        Ok(vec![pooled])
     };
     Box::new(compile(function, true))
 }
@@ -258,13 +253,36 @@ fn transformer_layer(
     // no shape-inferring slice: `gate` is rows[:3072], `up` rows[3072:].
     let gate = first.matmul(&layer[16].transpose_axes(&[1, 0])?)?;
     let up = first.matmul(&layer[17].transpose_axes(&[1, 0])?)?;
+    let down = dense(&gated_activation(&gate, &up)?, &layer[18], &layer[19])?;
+    layer_norm(&first.add(&down)?, &layer[20], &layer[21])
+}
+
+/// `gate * gelu(up)`, with the erf form of GELU the validated spike uses.
+///
+/// Kept separate from the layer so the gate/up ordering — swapping the two is
+/// a silent quality regression, not a crash — is covered by a deterministic
+/// test that needs neither Metal nor a downloaded model.
+fn gated_activation(gate: &Array, up: &Array) -> MlxResult<Array> {
     let scaled = up.divide(Array::from_f32(std::f32::consts::SQRT_2))?;
     let activated = ops::erf(&scaled)?
         .add(Array::from_f32(1.0))?
-        .multiply(&up)?
+        .multiply(up)?
         .multiply(Array::from_f32(0.5))?;
-    let down = dense(&gate.multiply(&activated)?, &layer[18], &layer[19])?;
-    layer_norm(&first.add(&down)?, &layer[20], &layer[21])
+    gate.multiply(&activated)
+}
+
+/// Mean-pool over the attention mask, then L2-normalize in fp32.
+///
+/// The spike's `pooled`/`normalized` pair; extracted for the same reason as
+/// [`gated_activation`].
+fn pool_and_normalize(hidden: &Array, mask_pool: &Array, mask_sum: &Array) -> MlxResult<Array> {
+    let pooled = hidden
+        .multiply(mask_pool)?
+        .sum_axis(1, Some(true))?
+        .divide(mask_sum)?
+        .as_type::<f32>()?;
+    let norm = pooled.multiply(&pooled)?.sum_axis(-1, Some(true))?.sqrt()?;
+    pooled.divide(&norm)
 }
 
 /// `x @ Wᵀ + b` for a `[out, in]` projection.
