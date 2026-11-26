@@ -227,9 +227,10 @@ recorded ORT version differs from the new binary's, and any index rebuilt by
 a pre-#94 binary (which records `onnx-cpu` with no version — the same
 mismatch the rollback section describes).
 
-The refusal is terminal, not retryable: over MCP the error renders as
-`ZG.ENGINE.INDEX_BACKEND_MISMATCH` with `retryable: false`, naming both
-identities and the recovery. Three message shapes exist (same code); all
+The refusal is terminal for automatic retries: over MCP the error renders
+as `ZG.ENGINE.INDEX_BACKEND_MISMATCH` with `retryable: false`, meaning the
+caller must not re-send the same request unchanged — recovery is the manual
+action the message names. Three message shapes exist (same code); all
 share the prefix "workspace index embedding backend identity", which is the
 reliable grep anchor:
 
