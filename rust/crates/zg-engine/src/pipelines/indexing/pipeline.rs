@@ -965,10 +965,16 @@ fn ensure_runtime_identity(
         observed.identity = current;
         observed.saw_batch = true;
     } else if current.as_ref() != observed.identity.as_ref() {
-        return Err(crate::domain::model::mid_run_backend_mismatch(
-            observed.identity.as_ref(),
-            current.as_ref(),
-        ));
+        // A mid-run flip. A build has no live generation to rebuild: its
+        // staging is discarded and the recovery is retrying the build. An
+        // incremental update keeps its live generation's identity, so a
+        // rebuild remains the guaranteed recovery there.
+        let started = observed.identity.as_ref();
+        return Err(if context.expected_backend_identity.is_none() {
+            crate::domain::model::fresh_build_identity_flip(started, current.as_ref())
+        } else {
+            crate::domain::model::mid_run_backend_mismatch(started, current.as_ref())
+        });
     }
     Ok(())
 }

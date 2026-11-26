@@ -229,16 +229,20 @@ mismatch the rollback section describes).
 
 The refusal is terminal, not retryable: over MCP the error renders as
 `ZG.ENGINE.INDEX_BACKEND_MISMATCH` with `retryable: false`, naming both
-identities and the recovery. Two message shapes exist (same code, same
-remedy); both share the prefix "workspace index embedding backend identity
-does not match this runtime", which is the reliable grep anchor:
+identities and the recovery. Three message shapes exist (same code); all
+share the prefix "workspace index embedding backend identity", which is the
+reliable grep anchor:
 
 - at open time: "workspace index embedding backend identity does not match
   this runtime: index has no recorded identity (built before backend
   recording), this runtime has backend=… dtype=…; rebuild the index with
   `zg --index --rebuild`"
-- mid-run: "… the storage opened with …, but the runtime produced vectors
-  with …; rebuild the index with `zg --index --rebuild`"
+- mid-run, incremental: "… the storage opened with …, but this runtime
+  reports …; rebuild the index with `zg --index --rebuild`"
+- mid-run, during a build: "workspace index embedding backend identity
+  changed during the build: the build started with …, but this runtime
+  reports …; the staged build was discarded — retry the index build" (no
+  `--rebuild`: the discarded staging has no live generation to rebuild)
 
 ### Runbook
 
