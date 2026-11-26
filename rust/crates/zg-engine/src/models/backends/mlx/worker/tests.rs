@@ -504,6 +504,19 @@ async fn embed_still_works_after_a_cancelled_prepare() {
     assert_eq!(vectors, vec![vec![7.0]]);
 }
 
+/// Waits for a detached worker to finish, so ownership assertions do not race
+/// with the thread's exit.
+fn wait_for(mut condition: impl FnMut() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if condition() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    condition()
+}
+
 #[tokio::test]
 async fn dropping_the_worker_frees_the_model_on_its_own_thread() {
     struct DropTracking {
@@ -544,9 +557,8 @@ async fn dropping_the_worker_frees_the_model_on_its_own_thread() {
     worker.prepare(None).await.expect("prepare");
     assert_eq!(dropped.load(Ordering::SeqCst), 0);
     drop(worker);
-    assert_eq!(
-        dropped.load(Ordering::SeqCst),
-        1,
+    assert!(
+        wait_for(|| dropped.load(Ordering::SeqCst) == 1),
         "the model is dropped with the worker thread, not left behind"
     );
     let (created_on, dropped_on) = observed

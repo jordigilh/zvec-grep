@@ -97,13 +97,9 @@ pub(super) struct MlxWorker {
     /// How long `prepare` waits for the device. Only the delayed-initializer
     /// test overrides it; production and other tests use the full window.
     ready_timeout: std::time::Duration,
-    /// How long `Drop` waits for the worker to exit before detaching it. Bounded
-    /// so a stuck device can never block an async thread indefinitely.
-    drop_wait: std::time::Duration,
 }
 
 const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-const DROP_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl MlxWorker {
     /// Spawns the worker. `loader` runs on the worker thread on the first
@@ -132,15 +128,7 @@ impl MlxWorker {
     where
         F: MlxForward,
     {
-        Self::try_spawn_impl(
-            loader,
-            max_batch_size,
-            device,
-            false,
-            false,
-            READY_TIMEOUT,
-            DROP_WAIT,
-        )
+        Self::try_spawn_impl(loader, max_batch_size, device, false, false, READY_TIMEOUT)
     }
 
     /// Test-only constructor that fails device initialization, so the
@@ -160,7 +148,6 @@ impl MlxWorker {
             true,
             false,
             READY_TIMEOUT,
-            DROP_WAIT,
         )
     }
 
@@ -181,7 +168,6 @@ impl MlxWorker {
             false,
             true,
             std::time::Duration::from_millis(50),
-            std::time::Duration::from_millis(25),
         )
     }
 
@@ -192,7 +178,6 @@ impl MlxWorker {
         fail_device: bool,
         delay_ready: bool,
         ready_timeout: std::time::Duration,
-        drop_wait: std::time::Duration,
     ) -> Result<Self, ModelError>
     where
         F: MlxForward,
@@ -281,7 +266,6 @@ impl MlxWorker {
             thread: Some(thread),
             ready: std::sync::Mutex::new(Some(device_ready)),
             ready_timeout,
-            drop_wait,
         })
     }
 
@@ -362,22 +346,15 @@ impl MlxWorker {
 
 impl Drop for MlxWorker {
     fn drop(&mut self) {
+        // Signal shutdown and detach. Joining here would block whatever thread
+        // releases the model — often an async runtime thread — for as long as
+        // device initialization or an in-flight forward takes, and a device that
+        // never finishes initializing would block it forever. Dropping the
+        // `JoinHandle` lets the worker exit on its own once it sees `Shutdown`
+        // or the closed command channel; the arrays are still freed on the
+        // owning thread.
         let _ = self.commands.send(Command::Shutdown);
-        let Some(thread) = self.thread.take() else {
-            return;
-        };
-        // A device that never finishes initializing must not block the caller
-        // (which may be an async runtime thread): wait briefly, then detach. The
-        // worker still exits on its own once initialization returns, because its
-        // command channel is closed.
-        let deadline = std::time::Instant::now() + self.drop_wait;
-        while !thread.is_finished() {
-            if std::time::Instant::now() >= deadline {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        let _ = thread.join();
+        self.thread.take();
     }
 }
 
