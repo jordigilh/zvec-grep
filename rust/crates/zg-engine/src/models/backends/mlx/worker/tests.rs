@@ -267,7 +267,32 @@ async fn embed_before_prepare_is_a_structured_error() {
 fn padding_derives_the_attention_mask_from_real_lengths() {
     let batch = TokenBatch::pad(&[vec![1, 2, 3], vec![4]]);
     assert_eq!(batch.batch_size, 2);
-    assert_eq!(batch.sequence_length, 3);
-    assert_eq!(batch.input_ids, vec![1, 2, 3, 4, 0, 0]);
-    assert_eq!(batch.attention_mask, vec![1.0, 1.0, 1.0, 1.0, 0.0, 0.0]);
+    assert_eq!(batch.sequence_length, 128, "padded to the first bucket");
+    // Row 0 keeps its three tokens, row 1 starts at the second row offset.
+    assert_eq!(&batch.input_ids[..3], &[1, 2, 3]);
+    assert_eq!(batch.input_ids[3], 0, "row 0 padding");
+    assert_eq!(batch.input_ids[128], 4);
+    assert_eq!(batch.input_ids[129], 0, "row 1 padding");
+    assert_eq!(&batch.attention_mask[..3], &[1.0, 1.0, 1.0]);
+    assert!(batch.attention_mask[3].abs() <= f32::EPSILON);
+    assert!((batch.attention_mask[128] - 1.0).abs() <= f32::EPSILON);
+    assert!(batch.attention_mask[129].abs() <= f32::EPSILON);
+}
+
+#[test]
+fn padding_rounds_up_to_bucket_boundaries_so_compiled_shapes_repeat() {
+    let batch = super::TokenBatch::pad(&[vec![1, 2, 3], vec![4; 129]]);
+    assert_eq!(batch.batch_size, 2);
+    assert_eq!(
+        batch.sequence_length, 256,
+        "129 tokens round up to two buckets"
+    );
+    assert_eq!(&batch.attention_mask[..3], &[1.0, 1.0, 1.0]);
+    assert!(
+        batch.attention_mask[3].abs() <= f32::EPSILON,
+        "bucket padding stays masked out"
+    );
+
+    let short = super::TokenBatch::pad(&[vec![1, 2, 3]]);
+    assert_eq!(short.sequence_length, 128, "short inputs share one bucket");
 }

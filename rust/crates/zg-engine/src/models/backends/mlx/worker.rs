@@ -30,11 +30,20 @@ pub(super) struct TokenBatch {
     pub(super) sequence_length: usize,
 }
 
+/// Padded sequence lengths round up to this multiple so the compiled forward
+/// sees a small, repeating set of shapes instead of one per input length.
+const SEQUENCE_BUCKET: usize = 128;
+
 impl TokenBatch {
     /// Pads right with token id 0 and derives the attention mask from the real
     /// lengths. Every sequence must be non-empty (the SPI rejects empty input).
     fn pad(sequences: &[Vec<u32>]) -> Self {
-        let sequence_length = sequences.iter().map(Vec::len).max().unwrap_or(0).max(1);
+        let longest = sequences.iter().map(Vec::len).max().unwrap_or(0).max(1);
+        // Bucket the padded length so shapes repeat across calls: the compiled
+        // forward keeps one graph per exact (batch, sequence) shape, and an
+        // unbucketed length would rebuild the graph on nearly every call.
+        // Bucket padding is masked out, so it cannot change the embeddings.
+        let sequence_length = longest.div_ceil(SEQUENCE_BUCKET) * SEQUENCE_BUCKET;
         let mut input_ids = Vec::with_capacity(sequences.len() * sequence_length);
         let mut attention_mask = Vec::with_capacity(sequences.len() * sequence_length);
         for sequence in sequences {

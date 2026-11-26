@@ -11,9 +11,9 @@ publish.workspace = true
 default = []
 # Opt-in Apple-GPU backend (issue #74). The Metal path needs Xcode plus the
 # separate Metal Toolchain component at build time, so it never participates in
-# the default build; the ORT CPU path stays the default everywhere. The
-# `mlx-rs` lands under the macOS target table; enabling this feature on another
-# target is a build error by design (the backend is macOS-only).
+# the default build; the ORT CPU path stays the default everywhere. On macOS the
+# dependency builds with metal+accelerate; elsewhere it builds CPU-only so the
+# Ubuntu CI lane can compile and unit-test the feature.
 mlx = ["dep:mlx-rs"]
 # CUDA and Vulkan require their native toolchains at build time. Platform
 # release builds enable the matching feature, while unsupported requests keep
@@ -82,8 +82,14 @@ rustix = { version = "1.1.4", features = ["fs"] }
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["coreml"] }
 # Opt-in Apple-GPU runtime (issue #74). Default features keep metal + accelerate;
 # `safetensors` provides `Array::load_safetensors`. Only compiled when the `mlx`
-# feature is enabled, and only for macOS.
+# feature is enabled.
 mlx-rs = { version = "0.34", optional = true, features = ["safetensors"] }
+
+# Same dependency on every other target, CPU-only, so `--features mlx` still
+# compiles and unit-tests on the Ubuntu CI lane (MLX supports a CPU backend).
+# Without this the feature would enable code whose crate is unavailable here.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+mlx-rs = { version = "0.34", optional = true, default-features = false, features = ["safetensors"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 dunce = "1.0.5"

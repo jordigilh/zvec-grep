@@ -1,11 +1,55 @@
 use mlx_rs::{Array, transforms::eval};
 
 use super::super::weights::HEAD_COUNT;
-use super::{alibi, layer_norm, mask_bias};
+use super::{ShapeCache, alibi, layer_norm, mask_bias};
 
 fn values(array: &Array) -> Vec<f32> {
     eval([array]).expect("evaluate");
     array.as_slice::<f32>().to_vec()
+}
+
+#[test]
+fn compiled_shape_cache_reuses_one_graph_per_shape() {
+    let mut cache = ShapeCache::new(4);
+    let mut builds = 0;
+    for _ in 0..3 {
+        let _value = *cache.slot((8, 256), || {
+            builds += 1;
+            builds
+        });
+    }
+    assert_eq!(builds, 1, "the same shape must not rebuild the graph");
+
+    let _other = *cache.slot((1, 128), || {
+        builds += 1;
+        builds
+    });
+    assert_eq!(builds, 2, "a new shape builds once");
+    let _again = *cache.slot((8, 256), || {
+        builds += 1;
+        builds
+    });
+    assert_eq!(builds, 2, "a cached shape is still a hit after a new one");
+}
+
+#[test]
+fn compiled_shape_cache_evicts_the_oldest_entry_at_capacity() {
+    let mut cache = ShapeCache::new(2);
+    for key in [(1, 128), (2, 128), (3, 128)] {
+        let _value = *cache.slot(key, || 0);
+    }
+    let mut rebuilt = false;
+    let _evicted = *cache.slot((1, 128), || {
+        rebuilt = true;
+        0
+    });
+    assert!(rebuilt, "the oldest shape is evicted at capacity");
+    let mut kept_rebuilt = false;
+    let _kept = *cache.slot((3, 128), || {
+        kept_rebuilt = true;
+        0
+    });
+    assert!(!kept_rebuilt, "the newest shape survives eviction");
 }
 
 #[test]

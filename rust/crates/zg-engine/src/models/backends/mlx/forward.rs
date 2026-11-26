@@ -40,15 +40,54 @@ const WEIGHT_INPUTS: usize = EMBEDDING_INPUTS + LAYER_COUNT * JinaLayerWeights::
 type MlxResult<T> = Result<T, Exception>;
 type CompiledForward = Box<dyn for<'a> FnMut(&'a [Array]) -> Result<Vec<Array>, Exception>>;
 
-struct CompiledEntry {
-    batch_size: i32,
-    sequence_length: i32,
-    function: CompiledForward,
+/// How many compiled graphs to keep. Sequence lengths are bucketed by
+/// `TokenBatch::pad`, so a handful of entries cover the realistic shapes and
+/// every call inside a bucket reuses the graph (and MLX's internal trace cache).
+const COMPILED_CACHE_ENTRIES: usize = 4;
+
+/// Small LRU-ish cache of compiled graphs keyed by exact `(batch, sequence)`.
+///
+/// `transforms::compile` keeps a per-shape trace cache inside the returned
+/// closure, so the closure has to outlive a single call: rebuilding it on every
+/// call throws that cache away and pays a full trace each time.
+struct ShapeCache<T> {
+    capacity: usize,
+    entries: Vec<((i32, i32), T)>,
+}
+
+impl<T> ShapeCache<T> {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            entries: Vec::new(),
+        }
+    }
+
+    fn slot(&mut self, key: (i32, i32), build: impl FnOnce() -> T) -> &mut T {
+        if let Some(position) = self
+            .entries
+            .iter()
+            .position(|(existing, _)| *existing == key)
+        {
+            let entry = self.entries.remove(position);
+            self.entries.push(entry);
+        } else {
+            if self.entries.len() >= self.capacity {
+                self.entries.remove(0);
+            }
+            self.entries.push((key, build()));
+        }
+        &mut self
+            .entries
+            .last_mut()
+            .expect("shape cache entry was just installed")
+            .1
+    }
 }
 
 pub(super) struct JinaMlxForward {
     weight_inputs: Vec<Array>,
-    compiled: Option<CompiledEntry>,
+    compiled: ShapeCache<CompiledForward>,
 }
 
 impl JinaMlxForward {
@@ -56,7 +95,7 @@ impl JinaMlxForward {
         let weights = JinaWeights::load(path)?;
         Ok(Self {
             weight_inputs: weights.flatten(),
-            compiled: None,
+            compiled: ShapeCache::new(COMPILED_CACHE_ENTRIES),
         })
     }
 
@@ -92,21 +131,6 @@ impl JinaMlxForward {
             .reshape(&[batch_size, 1, 1])
             .map_err(mlx_error)?;
 
-        let stale = self.compiled.as_ref().is_none_or(|entry| {
-            entry.batch_size != batch_size || entry.sequence_length != sequence_length
-        });
-        if stale {
-            self.compiled = Some(CompiledEntry {
-                batch_size,
-                sequence_length,
-                function: build_compiled(),
-            });
-        }
-        let entry = self
-            .compiled
-            .as_mut()
-            .expect("compiled MLX forward was just installed");
-
         let mut inputs = Vec::with_capacity(WEIGHT_INPUTS + 5);
         inputs.push(hidden);
         inputs.push(alibi);
@@ -114,7 +138,10 @@ impl JinaMlxForward {
         inputs.push(mask_pool);
         inputs.push(mask_sum);
         inputs.extend(self.weight_inputs.iter().cloned());
-        let mut outputs = (entry.function)(&inputs).map_err(mlx_error)?;
+        let function = self
+            .compiled
+            .slot((batch_size, sequence_length), build_compiled);
+        let mut outputs = function(&inputs).map_err(mlx_error)?;
         let output = outputs
             .pop()
             .ok_or_else(|| ModelError::internal("MLX forward returned no output"))?;
