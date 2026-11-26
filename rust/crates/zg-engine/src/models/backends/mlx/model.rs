@@ -128,7 +128,21 @@ impl MlxEmbeddingModel {
         signal: Option<&CancellationToken>,
         _execution_concurrency: usize,
     ) -> Result<Arc<LoadedMlxModel>, ModelError> {
-        let mut state = self.state.lock().await;
+        // Waiting for another caller's load must stay cancellable: a cancelled
+        // waiter returns without cancelling the load it was waiting on.
+        let mut state = match signal {
+            Some(signal) => tokio::select! {
+                biased;
+                () = signal.cancelled() => {
+                    return Err(ModelError::cancelled("MLX model preparation was cancelled"));
+                }
+                state = self.state.lock() => state,
+            },
+            None => self.state.lock().await,
+        };
+        if signal.is_some_and(CancellationToken::is_cancelled) {
+            return Err(ModelError::cancelled("MLX model preparation was cancelled"));
+        }
         if let Some(loaded) = &*state {
             return Ok(Arc::clone(loaded));
         }
@@ -198,7 +212,7 @@ impl MlxEmbeddingModel {
         let tokenizer = Arc::new(prepare_tokenizer(&bytes, self.entry)?);
 
         let worker = MlxWorker::try_spawn(
-            move |_signal| JinaMlxForward::load(&weights_path),
+            move |signal| JinaMlxForward::load(&weights_path, signal),
             self.entry.max_batch_size,
             self.device,
         )?;
@@ -269,13 +283,15 @@ impl EmbeddingModel for MlxEmbeddingModel {
             )
             .await
             .map_err(|error| {
-                error.wrap(
-                    "MLX embedding failed",
-                    Some(format!(
-                        "model={} repo={}",
-                        self.entry.reference, self.entry.repo
-                    )),
-                )
+                error
+                    .wrap(
+                        "MLX embedding failed",
+                        Some(format!(
+                            "model={} repo={}",
+                            self.entry.reference, self.entry.repo
+                        )),
+                    )
+                    .shared()
             })?;
         let prefix = match options.purpose {
             crate::domain::model::EmbeddingPurpose::Document => self.entry.document_prefix,
@@ -308,11 +324,13 @@ fn prepare_tokenizer(bytes: &[u8], entry: TransformersConfig) -> Result<Tokenize
     let mut tokenizer =
         Tokenizer::from_bytes(bytes).map_err(|error| tokenization_error(entry, error))?;
     tokenizer.with_padding(None);
-    // One token past the cap lets `encode_texts` both detect truncation and
-    // keep exactly the capped prefix, matching the transformers backend.
+    // Truncate to the cap before the post-processor adds special tokens, which
+    // is what the transformers/ORT path does. Truncation leaves the dropped
+    // remainder in `Encoding::get_overflowing`, which `encode_texts` uses to
+    // flag the input instead of slicing tokens after the fact.
     tokenizer
         .with_truncation(Some(TruncationParams {
-            max_length: entry.max_input_tokens.saturating_add(1),
+            max_length: entry.max_input_tokens,
             direction: TruncationDirection::Right,
             ..TruncationParams::default()
         }))
@@ -331,17 +349,10 @@ fn encode_texts(
     let mut ids = Vec::with_capacity(encodings.len());
     let mut truncated = Vec::new();
     for (index, encoding) in encodings.iter().enumerate() {
-        let tokens = encoding.get_ids();
-        if tokens.len() > entry.max_input_tokens {
+        if !encoding.get_overflowing().is_empty() {
             truncated.push(index);
         }
-        ids.push(
-            tokens
-                .iter()
-                .take(entry.max_input_tokens)
-                .copied()
-                .collect(),
-        );
+        ids.push(encoding.get_ids().to_vec());
     }
     Ok((ids, truncated))
 }

@@ -92,8 +92,11 @@ pub(super) struct JinaMlxForward {
 }
 
 impl JinaMlxForward {
-    pub(super) fn load(path: &Path) -> Result<Self, ModelError> {
-        let weights = JinaWeights::load(path)?;
+    pub(super) fn load(
+        path: &Path,
+        signal: &tokio_util::sync::CancellationToken,
+    ) -> Result<Self, ModelError> {
+        let weights = JinaWeights::load(path, signal)?;
         Ok(Self {
             weight_inputs: weights.flatten(),
             compiled: ShapeCache::new(COMPILED_CACHE_ENTRIES),
@@ -264,12 +267,20 @@ fn transformer_layer(
 /// a silent quality regression, not a crash — is covered by a deterministic
 /// test that needs neither Metal nor a downloaded model.
 fn gated_activation(gate: &Array, up: &Array) -> MlxResult<Array> {
+    // Constants are fp32, so the GELU math runs promoted; the result is cast
+    // back to the activation dtype. Without this the fp16 gate product would
+    // promote the following down projection to fp32, outside the declared
+    // precision policy.
     let scaled = up.divide(Array::from_f32(std::f32::consts::SQRT_2))?;
     let activated = ops::erf(&scaled)?
         .add(Array::from_f32(1.0))?
         .multiply(up)?
         .multiply(Array::from_f32(0.5))?;
-    gate.multiply(&activated)
+    let gated = gate.multiply(&activated)?;
+    match up.dtype() {
+        mlx_rs::Dtype::Float16 => gated.as_type::<f16>(),
+        _ => Ok(gated),
+    }
 }
 
 /// Mean-pool over the attention mask, then L2-normalize in fp32.

@@ -4,6 +4,7 @@ use std::{collections::HashMap, path::Path};
 
 use half::f16;
 use mlx_rs::{Array, ops::indexing::IndexOp};
+use tokio_util::sync::CancellationToken;
 
 use crate::models::spi::ModelError;
 
@@ -94,17 +95,33 @@ impl JinaWeights {
     }
 
     /// Loads and validates the fp16 `JinaBERT` tensors from a safetensors file.
-    pub(super) fn load(path: &Path) -> Result<Self, ModelError> {
+    ///
+    /// The file read cannot be interrupted, so cancellation is checked before
+    /// it and again before any conversion work starts.
+    pub(super) fn load(path: &Path, signal: &CancellationToken) -> Result<Self, ModelError> {
+        if signal.is_cancelled() {
+            return Err(ModelError::cancelled("MLX weight load was cancelled"));
+        }
         let tensors = Array::load_safetensors(path).map_err(|error| {
             ModelError::storage_failure("Unable to load MLX safetensors weights").with_cause(error)
         })?;
-        Self::from_tensors(&tensors)
+        if signal.is_cancelled() {
+            return Err(ModelError::cancelled("MLX weight load was cancelled"));
+        }
+        Self::from_tensors(&tensors, signal)
     }
 
-    fn from_tensors(tensors: &HashMap<String, Array>) -> Result<Self, ModelError> {
-        let layers = (0..LAYER_COUNT)
-            .map(|index| JinaLayerWeights::from_tensors(tensors, index))
-            .collect::<Result<Vec<_>, _>>()?;
+    fn from_tensors(
+        tensors: &HashMap<String, Array>,
+        signal: &CancellationToken,
+    ) -> Result<Self, ModelError> {
+        let mut layers = Vec::with_capacity(LAYER_COUNT);
+        for index in 0..LAYER_COUNT {
+            if signal.is_cancelled() {
+                return Err(ModelError::cancelled("MLX weight load was cancelled"));
+            }
+            layers.push(JinaLayerWeights::from_tensors(tensors, index)?);
+        }
         Ok(Self {
             word_embeddings: tensor(
                 tensors,

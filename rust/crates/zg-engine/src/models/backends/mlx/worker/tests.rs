@@ -168,7 +168,16 @@ async fn cancellation_during_prepare_reports_cancelled() {
 
 #[tokio::test]
 async fn sub_batches_run_in_order_and_reassemble_one_to_one() {
-    let worker = spawn_echo(2);
+    let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let loader_calls = Arc::clone(&calls);
+    let worker = MlxWorker::spawn(
+        move |_| {
+            Ok(EchoForward {
+                calls: Arc::clone(&loader_calls),
+            })
+        },
+        2,
+    );
     worker.prepare(None).await.expect("prepare");
     let result = worker
         .embed(vec![vec![10], vec![11], vec![12], vec![13], vec![14]], None)
@@ -177,6 +186,25 @@ async fn sub_batches_run_in_order_and_reassemble_one_to_one() {
     assert_eq!(
         result,
         vec![vec![10.0], vec![11.0], vec![12.0], vec![13.0], vec![14.0]]
+    );
+    // The echo would produce the same output if all five arrived in one call,
+    // so assert the batching itself: three calls holding 2, 2 and 1 real tokens.
+    let calls = calls.lock().expect("call log");
+    assert_eq!(
+        calls.len(),
+        3,
+        "five inputs with batch 2 must be three calls"
+    );
+    assert_eq!(
+        calls.iter().map(|ids| ids[0]).collect::<Vec<_>>(),
+        vec![10, 12, 14]
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .map(|ids| ids.iter().filter(|id| **id != 0).count())
+            .collect::<Vec<_>>(),
+        vec![2, 2, 1]
     );
 }
 
@@ -297,12 +325,22 @@ fn padding_rounds_up_to_bucket_boundaries_so_compiled_shapes_repeat() {
     assert_eq!(short.sequence_length, 128, "short inputs share one bucket");
 }
 
-#[test]
-fn a_device_initialization_failure_is_a_structured_error() {
-    let error = MlxWorker::try_spawn_with_failing_device(|_| Ok(EchoForward::new().0), 2)
-        .err()
-        .expect("a failed device must not yield a worker");
+#[tokio::test]
+async fn a_device_initialization_failure_is_a_structured_error() {
+    let worker = MlxWorker::try_spawn_with_failing_device(|_| Ok(EchoForward::new().0), 2)
+        .expect("spawn succeeds; failure surfaces on prepare");
+    let error = worker.prepare(None).await.expect_err("device failure");
     assert_eq!(error.code(), crate::EngineError::INTERNAL);
+}
+
+#[tokio::test]
+async fn a_late_device_initialization_times_out_without_joining() {
+    let worker = MlxWorker::try_spawn_with_delayed_device(|_| Ok(EchoForward::new().0), 2)
+        .expect("spawn succeeds");
+    let error = worker.prepare(None).await.expect_err("readiness times out");
+    assert_eq!(error.code(), crate::EngineError::INTERNAL);
+    // Dropping must return even though the worker thread is still starting up.
+    drop(worker);
 }
 
 #[tokio::test]
@@ -366,6 +404,8 @@ async fn embed_still_works_after_a_cancelled_prepare() {
 async fn dropping_the_worker_frees_the_model_on_its_own_thread() {
     struct DropTracking {
         dropped: Arc<AtomicUsize>,
+        created_on: std::thread::ThreadId,
+        observed: Arc<std::sync::Mutex<Option<(std::thread::ThreadId, std::thread::ThreadId)>>>,
     }
 
     impl super::MlxForward for DropTracking {
@@ -377,15 +417,22 @@ async fn dropping_the_worker_frees_the_model_on_its_own_thread() {
     impl Drop for DropTracking {
         fn drop(&mut self) {
             self.dropped.fetch_add(1, Ordering::SeqCst);
+            *self.observed.lock().expect("drop thread") =
+                Some((self.created_on, std::thread::current().id()));
         }
     }
 
     let dropped = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::new(std::sync::Mutex::new(None));
     let loader_dropped = Arc::clone(&dropped);
+    let loader_observed = Arc::clone(&observed);
+    let caller = std::thread::current().id();
     let worker = MlxWorker::spawn(
         move |_| {
             Ok(DropTracking {
                 dropped: Arc::clone(&loader_dropped),
+                created_on: std::thread::current().id(),
+                observed: Arc::clone(&loader_observed),
             })
         },
         2,
@@ -398,4 +445,13 @@ async fn dropping_the_worker_frees_the_model_on_its_own_thread() {
         1,
         "the model is dropped with the worker thread, not left behind"
     );
+    let (created_on, dropped_on) = observed
+        .lock()
+        .expect("drop thread")
+        .expect("model dropped");
+    assert_eq!(
+        created_on, dropped_on,
+        "the model must be dropped on the thread that created it"
+    );
+    assert_ne!(dropped_on, caller, "the caller must not drop the model");
 }

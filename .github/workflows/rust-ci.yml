@@ -156,3 +156,12 @@ jobs:
         run: test -f "$MLX_RS_METAL_PATH/mlx.metallib"
       - name: Test the opt-in MLX feature
         run: cargo test --locked -p zg-engine --lib --features mlx
+      - name: Restore the MLX model cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/zvec-grep-mlx
+          key: mlx-jina-516f4ba-v1
+      - name: Metal vs CPU parity gate
+        env:
+          ZVEC_GREP_TEST_MODEL_CACHE: ~/.cache/zvec-grep-mlx
+        run: cargo test --locked -p zg-engine --lib --features mlx -- --ignored cached_jina_mlx_gpu_matches_cpu

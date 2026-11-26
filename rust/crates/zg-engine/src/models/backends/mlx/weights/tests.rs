@@ -11,16 +11,19 @@ fn code(error: &ModelError) -> &'static str {
 
 #[test]
 fn a_missing_file_is_a_structured_storage_failure() {
-    let error = JinaWeights::load(Path::new("/nonexistent/model.safetensors"))
-        .err()
-        .expect("missing weights");
+    let error = JinaWeights::load(
+        Path::new("/nonexistent/model.safetensors"),
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .err()
+    .expect("missing weights");
     assert_eq!(code(&error), crate::EngineError::STORAGE_FAILURE);
 }
 
 #[test]
 fn a_missing_tensor_is_a_structured_storage_failure() {
     let tensors = HashMap::new();
-    let error = JinaWeights::from_tensors(&tensors)
+    let error = JinaWeights::from_tensors(&tensors, &tokio_util::sync::CancellationToken::new())
         .err()
         .expect("empty tensor map");
     assert_eq!(code(&error), crate::EngineError::STORAGE_FAILURE);

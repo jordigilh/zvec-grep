@@ -187,6 +187,13 @@ async fn cached_jina_mlx() {
     );
 
     let fixtures = read_fixtures(&fixtures_path);
+    assert!(
+        !fixtures.ids.is_empty()
+            && fixtures.ids.len() == fixtures.attention_mask.len()
+            && fixtures.ids.len() == fixtures.reference.len(),
+        "fixtures must have the same nonzero number of ids, masks and references"
+    );
+    let expected_inputs = fixtures.ids.len();
     let sequences = fixtures
         .ids
         .iter()
@@ -204,13 +211,13 @@ async fn cached_jina_mlx() {
         .embed_token_ids(sequences)
         .await
         .expect("real MLX inference");
-    assert_eq!(vectors.len(), fixtures.reference.len());
+    assert_eq!(vectors.len(), expected_inputs);
 
     let result = EmbeddingResult {
         vectors: vectors.clone(),
         truncated: Vec::new(),
     };
-    crate::models::spi::validate_result(model.info(), vectors.len(), &result)
+    crate::models::spi::validate_result(model.info(), expected_inputs, &result)
         .expect("validated MLX result");
 
     for (index, (vector, reference)) in vectors.iter().zip(&fixtures.reference).enumerate() {
@@ -267,6 +274,73 @@ fn read_fixtures(path: &std::path::Path) -> Fixtures {
         ids: rows_i64("ids"),
         attention_mask: rows_i64("attention_mask"),
         reference,
+    }
+}
+
+/// Metal-vs-CPU parity gate: the same token ids must produce the same
+/// embeddings on both devices. This is the CI-runnable GPU gate — it needs the
+/// pinned artifacts but no fixtures, and it fails if Metal silently falls back
+/// or the kernels disagree with the reference CPU path.
+#[tokio::test]
+#[ignore = "requires ZVEC_GREP_TEST_MODEL_CACHE with the pinned jina MLX artifacts and a Metal GPU"]
+async fn cached_jina_mlx_gpu_matches_cpu() {
+    let cache_dir = PathBuf::from(
+        env::var_os("ZVEC_GREP_TEST_MODEL_CACHE")
+            .expect("ZVEC_GREP_TEST_MODEL_CACHE must point at the model cache"),
+    );
+    let build = |device: crate::domain::model::Device| {
+        MlxEmbeddingModel::new(
+            entry(),
+            ModelConfig {
+                cache_dir: Some(cache_dir.clone()),
+                device: Some(device),
+                ..ModelConfig::default()
+            },
+            ModelComputeRuntime::shared(),
+        )
+        .expect("model")
+    };
+    let gpu = build(crate::domain::model::Device::Metal);
+    let cpu = build(crate::domain::model::Device::Cpu);
+    for model in [&gpu, &cpu] {
+        model
+            .prepare(EmbeddingPrepareOptions::default())
+            .await
+            .expect("prepare real MLX model");
+    }
+    assert!(
+        matches!(
+            gpu.device_type().await.expect("gpu device"),
+            mlx_rs::DeviceType::Gpu
+        ),
+        "the parity gate must run the GPU model on Metal"
+    );
+    assert!(
+        matches!(
+            cpu.device_type().await.expect("cpu device"),
+            mlx_rs::DeviceType::Cpu
+        ),
+        "the reference model must run on the CPU"
+    );
+
+    let sequences = vec![
+        vec![1, 2345, 678, 2],
+        vec![1, 99, 100, 101, 102, 2],
+        vec![1, 7, 2],
+    ];
+    let gpu_vectors = gpu
+        .embed_token_ids(sequences.clone())
+        .await
+        .expect("gpu inference");
+    let cpu_vectors = cpu.embed_token_ids(sequences).await.expect("cpu inference");
+    assert_eq!(gpu_vectors.len(), cpu_vectors.len());
+    for (index, (gpu_vector, cpu_vector)) in gpu_vectors.iter().zip(&cpu_vectors).enumerate() {
+        let cosine = cosine_similarity(gpu_vector, cpu_vector);
+        println!("input {index}: GPU-vs-CPU cosine {cosine:.8}");
+        assert!(
+            cosine >= 0.9999,
+            "input {index}: Metal and CPU disagree (cosine {cosine})"
+        );
     }
 }
 

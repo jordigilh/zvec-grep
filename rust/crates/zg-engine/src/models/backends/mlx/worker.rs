@@ -90,7 +90,21 @@ enum Command {
 pub(super) struct MlxWorker {
     commands: mpsc::UnboundedSender<Command>,
     thread: Option<JoinHandle<()>>,
+    /// Fired once the worker thread has created its device and stream. Awaited
+    /// by `prepare`, so neither the constructor nor an async caller blocks on
+    /// device initialization.
+    ready: std::sync::Mutex<Option<oneshot::Receiver<()>>>,
+    /// Set when readiness timed out: the thread may still be stuck in device
+    /// initialization, so `Drop` must not join it.
+    abandoned: std::sync::atomic::AtomicBool,
 }
+
+/// How long `prepare` waits for the worker to create its device. Test builds
+/// use a short window so the timeout branch is exercised deterministically.
+#[cfg(test)]
+const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(50);
+#[cfg(not(test))]
+const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl MlxWorker {
     /// Spawns the worker. `loader` runs on the worker thread on the first
@@ -119,7 +133,7 @@ impl MlxWorker {
     where
         F: MlxForward,
     {
-        Self::try_spawn_impl(loader, max_batch_size, device, false)
+        Self::try_spawn_impl(loader, max_batch_size, device, false, false)
     }
 
     /// Test-only constructor that fails device initialization, so the
@@ -132,7 +146,20 @@ impl MlxWorker {
     where
         F: MlxForward,
     {
-        Self::try_spawn_impl(loader, max_batch_size, DeviceType::Cpu, true)
+        Self::try_spawn_impl(loader, max_batch_size, DeviceType::Cpu, true, false)
+    }
+
+    /// Test-only constructor whose device comes up later than `READY_TIMEOUT`,
+    /// so the timeout and no-join paths are exercised deterministically.
+    #[cfg(test)]
+    pub(super) fn try_spawn_with_delayed_device<F>(
+        loader: impl Fn(&CancellationToken) -> Result<F, ModelError> + Send + 'static,
+        max_batch_size: usize,
+    ) -> Result<Self, ModelError>
+    where
+        F: MlxForward,
+    {
+        Self::try_spawn_impl(loader, max_batch_size, DeviceType::Cpu, false, true)
     }
 
     fn try_spawn_impl<F>(
@@ -140,15 +167,15 @@ impl MlxWorker {
         max_batch_size: usize,
         device: DeviceType,
         fail_device: bool,
+        delay_ready: bool,
     ) -> Result<Self, ModelError>
     where
         F: MlxForward,
     {
         let (commands, mut receiver) = mpsc::unbounded_channel();
-        // The device and its stream are created inside the thread. Report
-        // readiness so a failure there becomes a structured error instead of a
-        // panic that `Builder::spawn` has already returned past.
-        let (ready, device_ready) = std::sync::mpsc::channel();
+        // The device and its stream are created inside the thread; readiness is
+        // awaited by `prepare`, so nothing blocks here.
+        let (ready, device_ready) = oneshot::channel();
         let thread = thread::Builder::new()
             .name("zg-mlx-embed".to_owned())
             .spawn(move || {
@@ -156,6 +183,9 @@ impl MlxWorker {
                     // No readiness signal is sent, so the caller reports a
                     // structured initialization error.
                     return;
+                }
+                if delay_ready {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
                 }
                 // Pin the model-owning thread to the resolved device, so the
                 // arrays and compiled graphs it creates use exactly that device.
@@ -188,9 +218,13 @@ impl MlxWorker {
                             }
                             Command::Embed { ids, signal, reply } => {
                                 let result = match forward.as_mut() {
-                                    Some(forward) => {
-                                        embed(forward, &ids, signal.as_ref(), max_batch_size)
-                                    }
+                                    Some(forward) => embed(
+                                        forward,
+                                        &ids,
+                                        signal.as_ref(),
+                                        max_batch_size,
+                                        || reply.is_closed(),
+                                    ),
                                     None => Err(ModelError::internal(
                                         "MLX embedding model is not prepared",
                                     )),
@@ -216,28 +250,46 @@ impl MlxWorker {
             .map_err(|error| {
                 ModelError::internal("MLX worker thread failed to start").with_cause(error)
             })?;
-        // A panic during stream creation closes the channel without a ready
-        // signal, which is exactly the case this catches. The timeout keeps a
-        // stalled driver from blocking a runtime thread forever.
-        if device_ready
-            .recv_timeout(std::time::Duration::from_secs(30))
-            .is_err()
-        {
-            let _ = thread.join();
-            return Err(ModelError::internal(
-                "MLX device initialization failed on the worker thread",
-            ));
-        }
         Ok(Self {
             commands,
             thread: Some(thread),
+            ready: std::sync::Mutex::new(Some(device_ready)),
+            abandoned: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// Waits once for the worker's device to come up. A timed-out or failed
+    /// initialization is a structured error, and the worker is marked
+    /// abandoned so dropping the handle never joins a stuck thread.
+    async fn await_ready(&self) -> Result<(), ModelError> {
+        let receiver = self
+            .ready
+            .lock()
+            .expect("MLX readiness lock is not poisoned")
+            .take();
+        let Some(receiver) = receiver else {
+            return Ok(());
+        };
+        match tokio::time::timeout(READY_TIMEOUT, receiver).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(ModelError::internal(
+                "MLX device initialization failed on the worker thread",
+            )),
+            Err(_) => {
+                self.abandoned
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                Err(ModelError::internal(
+                    "MLX device initialization timed out on the worker thread",
+                ))
+            }
+        }
     }
 
     pub(super) async fn prepare(
         &self,
         signal: Option<CancellationToken>,
     ) -> Result<(), ModelError> {
+        self.await_ready().await?;
         let (reply, receiver) = oneshot::channel();
         self.send(Command::Prepare { signal, reply })?;
         receiver
@@ -277,6 +329,12 @@ impl MlxWorker {
 impl Drop for MlxWorker {
     fn drop(&mut self) {
         let _ = self.commands.send(Command::Shutdown);
+        if self.abandoned.load(std::sync::atomic::Ordering::Relaxed) {
+            // Device initialization never completed; joining here could block
+            // forever, so the handle is detached instead.
+            self.thread.take();
+            return;
+        }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -302,14 +360,30 @@ fn embed<F: MlxForward>(
     ids: &[Vec<u32>],
     signal: Option<&CancellationToken>,
     max_batch_size: usize,
+    abandoned: impl Fn() -> bool,
 ) -> Result<Vec<Vec<f32>>, ModelError> {
     let mut vectors = Vec::with_capacity(ids.len());
     for sequences in ids.chunks(max_batch_size) {
         check_cancelled(signal)?;
+        // A caller that dropped its future releases the admission permit, so
+        // the worker must stop rather than compute a batch nobody receives.
+        if abandoned() {
+            return Err(ModelError::cancelled(
+                "MLX embedding caller stopped waiting for the result",
+            ));
+        }
         let batch = TokenBatch::pad(sequences);
         let result = catch_unwind(AssertUnwindSafe(|| forward.forward(&batch)))
             .map_err(|panic| panic_error("forward pass", &*panic))?;
         let sub_vectors = result?;
+        // The final chunk has no next iteration, so cancellation during the
+        // last forward would otherwise return vectors as if it succeeded.
+        check_cancelled(signal)?;
+        if abandoned() {
+            return Err(ModelError::cancelled(
+                "MLX embedding caller stopped waiting for the result",
+            ));
+        }
         if sub_vectors.len() != sequences.len() {
             return Err(ModelError::internal(format!(
                 "MLX forward returned {} vectors for {} inputs",

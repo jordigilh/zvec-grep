@@ -4,7 +4,12 @@ use super::super::weights::HEAD_COUNT;
 use super::{ShapeCache, alibi, gated_activation, layer_norm, mask_bias, pool_and_normalize};
 
 fn values(array: &Array) -> Vec<f32> {
-    eval([array]).expect("evaluate");
+    let array = if matches!(array.dtype(), mlx_rs::Dtype::Float16) {
+        array.as_type::<f32>().expect("promote fp16 for assertions")
+    } else {
+        array.clone()
+    };
+    eval([&array]).expect("evaluate");
     array.as_slice::<f32>().to_vec()
 }
 
@@ -21,12 +26,22 @@ fn gated_activation_multiplies_the_gate_by_gelu_of_the_up_projection() {
         // gate = 2, up = 1 -> 2 * gelu(1) = 2 * 0.8413447 = 1.6826895.
         // The common swapped form gelu(gate) * up would give 1.9544997 instead, so
         // this asserts the ordering, not just "some activation happened".
-        let gate = Array::from_slice(&[2.0_f32], &[1]);
-        let up = Array::from_slice(&[1.0_f32], &[1]);
-        let value = values(&gated_activation(&gate, &up).expect("gated activation"));
+        let gate = Array::from_slice(&[2.0_f32], &[1])
+            .as_type::<half::f16>()
+            .expect("fp16 gate");
+        let up = Array::from_slice(&[1.0_f32], &[1])
+            .as_type::<half::f16>()
+            .expect("fp16 up");
+        let gated = gated_activation(&gate, &up).expect("gated activation");
+        assert_eq!(
+            gated.dtype(),
+            mlx_rs::Dtype::Float16,
+            "the gate product must stay fp16 so the down projection stays fp16"
+        );
+        let value = values(&gated);
         assert!(
-            (value[0] - 1.682_689_5).abs() < 1e-5,
-            "expected gate * gelu(up) = 1.6826895, got {}",
+            (value[0] - 1.682_689_5).abs() < 1e-3,
+            "expected gate * gelu(up) = 1.6826895 (fp16 precision), got {}",
             value[0]
         );
     });
@@ -122,7 +137,9 @@ fn mask_bias_masks_padded_positions_additively() {
 #[test]
 fn layer_norm_computes_statistics_in_fp32_and_returns_fp16() {
     on_cpu(|| {
-        let input = Array::from_slice(&[1.0_f32, 3.0], &[1, 2])
+        // [-512, 512] distinguishes fp32 statistics from fp16 statistics: the
+        // squared deviations overflow fp16 here, while fp32 gives ±1.
+        let input = Array::from_slice(&[-512.0_f32, 512.0], &[1, 2])
             .as_type::<half::f16>()
             .expect("fp16");
         let weight = Array::from_slice(&[1.0_f32], &[1]);
