@@ -3415,8 +3415,8 @@ mod tests {
             assert!(error.message().contains(part), "{}", error.message());
         }
         assert!(
-            !error.message().contains("--rebuild"),
-            "a discarded build has no live generation to rebuild: {}",
+            !error.message().contains("rebuild the index with"),
+            "a discarded build has no live generation to rebuild unconditionally: {}",
             error.message()
         );
         // The staged build was discarded: nothing was published.

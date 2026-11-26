@@ -241,8 +241,11 @@ reliable grep anchor:
   reports …; rebuild the index with `zg --index --rebuild`"
 - mid-run, during a build: "workspace index embedding backend identity
   changed during the build: the build started with …, but this runtime
-  reports …; the staged build was discarded — retry the index build" (no
-  `--rebuild`: the discarded staging has no live generation to rebuild)
+  reports …; the staged build was discarded — retry the index build,
+  repeating `--rebuild` if this run replaced an existing index" (a first or
+  unindexed build retries plainly; an explicit `--rebuild` repeats its
+  command, because the generation it was replacing is still active and
+  typically incompatible)
 
 ### Runbook
 

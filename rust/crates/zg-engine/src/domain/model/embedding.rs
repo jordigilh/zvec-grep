@@ -172,7 +172,10 @@ pub(crate) fn mid_run_backend_mismatch(
 
 /// Refusal for a build whose runtime identity changed between its first
 /// batch and a later one. The staged build is discarded, so the recovery is
-/// retrying the build — never `--rebuild`, which targets a live generation.
+/// retrying the build — not the unconditional `--rebuild` hint that targets
+/// a live generation. A first or unindexed build retries plainly; an
+/// explicit `--rebuild` repeats its command, because the generation it was
+/// replacing is still active and typically incompatible.
 pub(crate) fn fresh_build_identity_flip(
     started: Option<&BackendIdentity>,
     current: Option<&BackendIdentity>,
@@ -183,7 +186,8 @@ pub(crate) fn fresh_build_identity_flip(
     EngineError::index_backend_mismatch(format!(
         "workspace index embedding backend identity changed during the build: \
          the build started with {}, but this runtime reports {}; \
-         the staged build was discarded — retry the index build",
+         the staged build was discarded — retry the index build, \
+         repeating `--rebuild` if this run replaced an existing index",
         describe(started),
         describe(current)
     ))
@@ -394,11 +398,18 @@ mod tests {
         let error = fresh_build_identity_flip(Some(&started), Some(&current));
         assert_eq!(error.code(), EngineError::INDEX_BACKEND_MISMATCH);
         assert!(!error.is_retryable());
-        for part in ["stub-gpu", "stub-cpu", "retry the index build"] {
+        for part in [
+            "stub-gpu",
+            "stub-cpu",
+            "retry the index build",
+            "repeating `--rebuild` if this run replaced an existing index",
+        ] {
             assert!(error.message().contains(part), "{}", error.message());
         }
+        // The recovery is a retry, never the unconditional rebuild hint that
+        // targets a live generation.
         assert!(
-            !error.message().contains("--rebuild"),
+            !error.message().contains("rebuild the index with"),
             "{}",
             error.message()
         );
