@@ -168,4 +168,4 @@ jobs:
         # committed fp32 ONNX references, and `cached_jina_mlx_gpu_matches_cpu`
         # compares Metal against CPU. Both assert a real Metal device, so a
         # silent CPU fallback fails the lane.
-        run: cargo test --locked -p zg-engine --lib --features mlx -- --ignored cached_jina_mlx
+        run: cargo test --locked -p zg-engine --lib --features mlx -- --ignored --nocapture cached_jina_mlx
