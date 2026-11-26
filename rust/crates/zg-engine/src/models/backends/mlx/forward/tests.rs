@@ -84,10 +84,13 @@ fn layer_norm_computes_statistics_in_fp32_and_returns_fp16() {
         .expect("fp16");
     let weight = Array::from_slice(&[1.0_f32], &[1]);
     let bias = Array::from_slice(&[0.0_f32], &[1]);
-    let normalized = layer_norm(&input, &weight, &bias)
-        .expect("layer norm")
-        .as_type::<f32>()
-        .expect("promote fp16 output");
+    let normalized = layer_norm(&input, &weight, &bias).expect("layer norm");
+    assert_eq!(
+        normalized.dtype(),
+        mlx_rs::Dtype::Float16,
+        "layer-norm output must stay fp16 outside its internal fp32 statistics"
+    );
+    let normalized = normalized.as_type::<f32>().expect("promote fp16 output");
     eval([&normalized]).expect("evaluate");
     let data = normalized.as_slice::<f32>();
     assert!((data[0] - -1.0).abs() < 1e-3);

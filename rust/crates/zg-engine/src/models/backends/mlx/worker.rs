@@ -89,10 +89,25 @@ impl MlxWorker {
     /// Spawns the worker. `loader` runs on the worker thread on the first
     /// successful [`prepare`](Self::prepare); it is retried on a later prepare
     /// if it fails, so a transient load failure leaves the backend usable.
+    /// Test-only constructor: panics if the thread cannot start, which is fine
+    /// for tests but not for `prepare`.
+    #[cfg(test)]
     pub(super) fn spawn<F>(
         loader: impl Fn(&CancellationToken) -> Result<F, ModelError> + Send + 'static,
         max_batch_size: usize,
     ) -> Self
+    where
+        F: MlxForward,
+    {
+        Self::try_spawn(loader, max_batch_size).expect("MLX worker thread spawns")
+    }
+
+    /// Fallible constructor used by the backend, so a thread-spawn failure
+    /// surfaces as a structured error instead of a panic inside `prepare`.
+    pub(super) fn try_spawn<F>(
+        loader: impl Fn(&CancellationToken) -> Result<F, ModelError> + Send + 'static,
+        max_batch_size: usize,
+    ) -> Result<Self, ModelError>
     where
         F: MlxForward,
     {
@@ -138,11 +153,13 @@ impl MlxWorker {
                     }
                 }
             })
-            .expect("MLX worker thread spawns");
-        Self {
+            .map_err(|error| {
+                ModelError::internal("MLX worker thread failed to start").with_cause(error)
+            })?;
+        Ok(Self {
             commands,
             thread: Some(thread),
-        }
+        })
     }
 
     pub(super) async fn prepare(
@@ -190,8 +207,8 @@ fn load<F>(
 ) -> Result<F, ModelError> {
     check_cancelled(signal)?;
     let signal = signal.cloned().unwrap_or_default();
-    let result =
-        catch_unwind(AssertUnwindSafe(|| loader(&signal))).map_err(|panic| panic_error(&*panic))?;
+    let result = catch_unwind(AssertUnwindSafe(|| loader(&signal)))
+        .map_err(|panic| panic_error("weight loading", &*panic))?;
     result.and_then(|forward| {
         check_cancelled(Some(&signal))?;
         Ok(forward)
@@ -209,7 +226,7 @@ fn embed<F: MlxForward>(
         check_cancelled(signal)?;
         let batch = TokenBatch::pad(sequences);
         let result = catch_unwind(AssertUnwindSafe(|| forward.forward(&batch)))
-            .map_err(|panic| panic_error(&*panic))?;
+            .map_err(|panic| panic_error("forward pass", &*panic))?;
         let sub_vectors = result?;
         if sub_vectors.len() != sequences.len() {
             return Err(ModelError::internal(format!(
@@ -230,13 +247,13 @@ fn check_cancelled(signal: Option<&CancellationToken>) -> Result<(), ModelError>
     Ok(())
 }
 
-fn panic_error(panic: &(dyn std::any::Any + Send)) -> ModelError {
+fn panic_error(phase: &str, panic: &(dyn std::any::Any + Send)) -> ModelError {
     let message = panic
         .downcast_ref::<&str>()
         .map(|message| (*message).to_owned())
         .or_else(|| panic.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "non-string panic payload".to_owned());
-    ModelError::internal("MLX forward pass panicked").with_cause(message)
+    ModelError::internal(format!("MLX {phase} panicked")).with_cause(message)
 }
 
 #[cfg(test)]

@@ -33,7 +33,7 @@ use crate::models::spi::ModelError;
 const EPSILON: f32 = 1e-12;
 /// `sqrt(head_size)` with `head_size = 64`.
 const ATTENTION_SCALE: f32 = 8.0;
-const NEGATIVE_INFINITY: f32 = -3.402_823_5e38;
+const MASK_BIAS: f32 = -3.402_823_5e38;
 const FIRST_LAYER_INPUT: usize = EMBEDDING_INPUTS;
 const WEIGHT_INPUTS: usize = EMBEDDING_INPUTS + LAYER_COUNT * JinaLayerWeights::INPUTS;
 
@@ -305,7 +305,7 @@ fn alibi(sequence_length: i32) -> MlxResult<Array> {
 fn mask_bias(mask: &Array, batch_size: i32, sequence_length: i32) -> MlxResult<Array> {
     Array::from_f32(1.0)
         .subtract(mask)?
-        .multiply(Array::from_f32(NEGATIVE_INFINITY))?
+        .multiply(Array::from_f32(MASK_BIAS))?
         .reshape(&[batch_size, 1, 1, sequence_length])
 }
 

@@ -181,11 +181,13 @@ TDD plan for the jina slice. Estimated 3-4 days.
    asserting embedding cosine >= 0.999 against the fixtures written by this
    spike's `--dump-fixtures`, plus dimension and finite-value checks through
    `validate_result`.
-4. **Batching + pooling.** Promote the token-budget sub-batch packing and
+4. **Batching + pooling.** The MLX backend packs its own batches and reuses
+   the tokenizer helpers next to it; promoting the token-budget packing and
    probe-encoding helpers out of `backends/transformers/model.rs` into a
-   backend-neutral `models` helper module (AGENTS.md layout rules) so the
-   MLX backend shares them rather than copying; mean-pool with the
-   attention mask, L2-normalize. Unit tests for packing edge cases run
+   backend-neutral `models` module is **deferred**: upstream has no such
+   module, so creating one now would widen the fork divergence this policy is
+   trying to contain. Revisit when upstream grows a neutral home. Mean-pool
+   with the attention mask, L2-normalize; packing edge cases are covered
    without the MLX feature.
 5. **Gates.** `cargo fmt`, `cargo clippy -p zg-engine --all-targets
    -- -D warnings` with and without `--features mlx`, targeted `zg-engine`
@@ -245,11 +247,13 @@ Local-only verification does not satisfy this.
 
 MLX ships **opt-in**; the ORT CPU path stays the default everywhere.
 
-- One cargo feature `mlx` on `zg-engine`, declared only under
-  `[target.'cfg(target_os = "macos")'.dependencies]`, so it cannot be enabled
-  on Linux or Windows. Selecting `local/jina-embeddings-v2-base-code-mlx` is
+- One cargo feature `mlx` on `zg-engine`. On macOS the dependency builds with
+  metal + accelerate; on every other target it is declared CPU-only so the
+  Ubuntu CI lane compiles and unit-tests the feature (MLX supports a CPU
+  backend). Selecting `local/jina-embeddings-v2-base-code-mlx` is
   the only way to reach it: no automatic promotion, and no silent fallback in
   either direction — an MLX index never mixes with an ONNX one.
+- Build it with `cargo build -p zg --features zg-engine/mlx`.
 - Rationale: this fork already diverges from upstream (#73, #75, #77 are fork
   work), and upstream cannot adopt MLX without a second runtime for models it
   already runs through ORT. Keeping the *default* path upstream-compatible

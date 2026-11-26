@@ -111,3 +111,53 @@ jobs:
         run: cargo test --locked --workspace --all-targets
       - name: Smoke test the CLI
         run: cargo run --locked -p zg -- --rg "zvec-grep Rust rewrite" README.md
+
+  # Opt-in Apple-GPU backend (issue #74). Two lanes: ubuntu builds and tests the
+  # feature against the MLX CPU backend (the CI baseline that keeps the non-GPU
+  # logic covered), macOS builds it against Metal and runs the same unit tests.
+  # The #[ignore]d numerics gate still needs committed fixtures, so it is not
+  # wired here yet.
+  mlx:
+    name: rust mlx (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Install MLX build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libblas-dev liblapack-dev liblapacke-dev cmake ninja-build
+      - name: Ensure the Metal toolchain
+        if: runner.os == 'macOS'
+        run: |
+          if ! xcrun -sdk macosx metal --version; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun -sdk macosx metal --version
+      - name: Restore Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/target/
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-mlx-v1-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-mlx-v1-
+      - name: Check the opt-in MLX feature
+        run: cargo clippy --locked -p zg-engine --all-targets --features mlx -- -D warnings
+      - name: Test the opt-in MLX feature
+        run: cargo test --locked -p zg-engine --lib --features mlx

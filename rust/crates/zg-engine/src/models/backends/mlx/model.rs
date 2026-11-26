@@ -157,10 +157,10 @@ impl MlxEmbeddingModel {
         })?;
         let tokenizer = Arc::new(prepare_tokenizer(&bytes, self.entry)?);
 
-        let worker = MlxWorker::spawn(
+        let worker = MlxWorker::try_spawn(
             move |_signal| JinaMlxForward::load(&weights_path),
             self.entry.max_batch_size,
-        );
+        )?;
         worker.prepare(signal.cloned()).await?;
         reporter.finish();
         Ok(LoadedMlxModel { tokenizer, worker })
