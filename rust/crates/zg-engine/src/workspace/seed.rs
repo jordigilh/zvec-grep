@@ -246,12 +246,15 @@ fn cow_copy_file(source: &Path, destination: &Path) -> io::Result<()> {
     #[cfg(target_os = "linux")]
     {
         use std::os::fd::AsRawFd;
-        // Reflink on XFS/btrfs/ZFS; falls back to a full copy on ext4.
+        // Reflink on XFS/btrfs/ZFS; falls back to a full copy on ext4. The
+        // ioctl does not carry the source's mode bits, so apply them after.
         const FICLONE: std::os::raw::c_ulong = 0x40049409;
         let input = fs::File::open(source)?;
         let output = fs::File::create(destination)?;
         let result = unsafe { libc::ioctl(output.as_raw_fd(), FICLONE, input.as_raw_fd()) };
         if result == 0 {
+            drop(output);
+            fs::set_permissions(destination, fs::metadata(source)?.permissions())?;
             return Ok(());
         }
     }

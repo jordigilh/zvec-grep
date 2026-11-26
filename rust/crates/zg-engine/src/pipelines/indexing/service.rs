@@ -303,9 +303,13 @@ impl WorkspaceIndexService {
     /// the same repository. Returns the staged adopted build, or `None` when
     /// no seed matches (different repo, model, or backend identity) — the
     /// caller then pays an ordinary full build. The runtime is prepared first
-    /// so its live backend identity is known before a seed is selected; a
+    /// so its live backend identity is known before a seed is adopted; a
     /// mismatched identity refuses adoption rather than silently re-embedding
-    /// with another runtime, mirroring the incremental refusal.
+    /// with another runtime, mirroring the incremental refusal. Preparation
+    /// here precedes the first embedding batch (unlike the pipeline's lazy
+    /// prepare) because the identity must be verified before the copy; a
+    /// workspace whose delta embeds nothing still prepares once, and the
+    /// runtime manager caches the result for the run.
     async fn adopt_seed(
         &self,
         target: &WorkspaceManifest,
@@ -336,7 +340,10 @@ impl WorkspaceIndexService {
                     signal: options.signal.clone(),
                     ..Default::default()
                 },
-                None,
+                options
+                    .on_progress
+                    .clone()
+                    .map(super::model_progress::for_index),
             )
             .await
             .map_err(ModelError::into_engine_error)?;
@@ -353,7 +360,9 @@ impl WorkspaceIndexService {
         };
         // The adopted manifest keeps the seed's index descriptor (identical
         // capsule and identity) while this workspace owns the root, name and
-        // scan rules the caller resolved.
+        // scan rules the caller resolved. Adoption is an optimization: a
+        // failed copy falls back to an ordinary full build, never a failed
+        // index request.
         let mut adopted = target.clone();
         adopted.workspace.index = seed.manifest.workspace.index.clone();
         let build = crate::workspace::build::prepare_adopted_build(
@@ -362,9 +371,26 @@ impl WorkspaceIndexService {
             &seed.storage_home(),
             &crate::workspace::seed::copy_tree_cow,
         );
-        // Release the seed's shared storage lock before the run starts.
-        seed.close()?;
-        build.map(Some)
+        // Release the seed's shared storage lock before the run starts; the
+        // handle also drops, so a close failure never discards a staged build.
+        if let Err(error) = seed.close() {
+            tracing::warn!(
+                code = error.code(),
+                "closing the adopted seed: {}",
+                error.message()
+            );
+        }
+        match build {
+            Ok(build) => Ok(Some(build)),
+            Err(error) => {
+                tracing::warn!(
+                    code = error.code(),
+                    "seed adoption failed, falling back to a full build: {}",
+                    error.message()
+                );
+                Ok(None)
+            }
+        }
     }
 
     async fn run_index(
@@ -3747,6 +3773,95 @@ mod tests {
             .await
             .expect("second index");
         assert!(!result.seeded, "plain directories share no repo identity");
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn a_locked_seed_is_skipped_and_the_worktree_pays_a_full_build() {
+        let directory = tempdir().expect("repository parent");
+        let (main, worktree) = git_repo_fixture(directory.path());
+        std::fs::write(main.join("one.txt"), "orchard rows and orchard vines").expect("source");
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("main checkout index");
+        let main_manifest = super::read_workspace_manifest(&main.join(".zvec-grep"))
+            .expect("main manifest read")
+            .expect("main manifest");
+        // A writer holds the seed's generation exclusively (a concurrent
+        // incremental update); adoption must skip it, not fail or block.
+        let held = super::IndexStore::open(super::WorkspaceIndexStorageOptions::ReadWrite {
+            storage_path: main_manifest.storage_home(),
+            embeddings: main_manifest.embeddings().to_vec(),
+        })
+        .expect("hold the seed's generation");
+        std::fs::write(worktree.join("one.txt"), "orchard rows and orchard vines").expect("same");
+        let result = service
+            .index(&models, empty_index_options(&worktree))
+            .await
+            .expect("worktree index while the seed is busy");
+        assert!(
+            !result.seeded,
+            "a busy seed is skipped and the worktree builds from scratch"
+        );
+        assert_eq!(result.files_added, 1);
+        held.close().expect("release the seed's generation");
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn seed_selection_prefers_the_repository_root_over_a_fresher_worktree() {
+        let directory = tempdir().expect("repository parent");
+        let main = directory.path().join("main");
+        let older = directory.path().join("older");
+        let adopter = directory.path().join("adopter");
+        for root in [&main, &older, &adopter] {
+            std::fs::create_dir(root).expect("worktree root");
+        }
+        std::fs::create_dir_all(main.join(".git/worktrees/older")).expect("gitdir");
+        std::fs::create_dir_all(main.join(".git/worktrees/adopter")).expect("gitdir");
+        for (root, name) in [(&older, "older"), (&adopter, "adopter")] {
+            std::fs::write(
+                root.join(".git"),
+                format!(
+                    "gitdir: {}\n",
+                    main.join(".git/worktrees").join(name).display()
+                ),
+            )
+            .expect("git file");
+        }
+        std::fs::write(main.join("one.txt"), "orchard rows and orchard vines").expect("source");
+        std::fs::write(main.join("two.txt"), "irrigation notes for the orchard").expect("source");
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("repo-root index");
+        // A same-repo worktree indexed later (fresher) but with a narrower
+        // scan: only the repo-root seed covers both files.
+        let mut narrow = empty_index_options(&older);
+        narrow.scan.globs = Some(vec!["one.txt".into()]);
+        for root in [&older, &adopter] {
+            std::fs::write(root.join("one.txt"), "orchard rows and orchard vines").expect("same");
+            std::fs::write(root.join("two.txt"), "irrigation notes for the orchard").expect("same");
+        }
+        service
+            .index(&models, narrow)
+            .await
+            .expect("fresher sibling index");
+        let result = service
+            .index(&models, empty_index_options(&adopter))
+            .await
+            .expect("adopting worktree index");
+        assert!(result.seeded);
+        assert_eq!(
+            result.files_added, 0,
+            "the repo-root seed was preferred: both files were already present"
+        );
+        assert_eq!(result.files_unchanged, 2);
         models.close();
     }
 
