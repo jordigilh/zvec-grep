@@ -8,6 +8,11 @@ pub(crate) enum EmbeddingCatalogEntry {
     Transformers(TransformersConfig),
     Model2Vec(Model2VecConfig),
     Bekko(BekkoConfig),
+    /// Opt-in Apple-GPU backend (issue #74). Present only in `--features mlx`
+    /// builds; shares the transformer config shape but reports its own backend
+    /// identity so an MLX index is never confused with an ONNX one.
+    #[cfg(feature = "mlx")]
+    Mlx(TransformersConfig),
 }
 
 impl EmbeddingCatalogEntry {
@@ -19,6 +24,8 @@ impl EmbeddingCatalogEntry {
             Self::Transformers(_) => "transformers",
             Self::Model2Vec(_) => "model2vec",
             Self::Bekko(_) => "bekko",
+            #[cfg(feature = "mlx")]
+            Self::Mlx(_) => "mlx-gpu",
         }
     }
 
@@ -29,6 +36,8 @@ impl EmbeddingCatalogEntry {
             Self::Transformers(entry) => entry.reference,
             Self::Model2Vec(entry) => entry.reference,
             Self::Bekko(entry) => entry.reference,
+            #[cfg(feature = "mlx")]
+            Self::Mlx(entry) => entry.reference,
         }
     }
 
@@ -40,6 +49,8 @@ impl EmbeddingCatalogEntry {
             Self::Transformers(entry) => entry.dimension,
             Self::Model2Vec(entry) => entry.dimension,
             Self::Bekko(entry) => entry.dimension,
+            #[cfg(feature = "mlx")]
+            Self::Mlx(entry) => entry.dimension,
         }
     }
 

@@ -49,8 +49,12 @@ fn actual_catalog() -> Value {
     Value::Array(
         list_embedding_models()
             .into_iter()
-            // Bekko is a Rust-only addition; keep the historical TS oracle frozen.
-            .filter(|entry| entry.reference() != "local/bekko-256-int8")
+            // Bekko and MLX are Rust-only additions; keep the historical TS
+            // oracle frozen.
+            .filter(|entry| {
+                entry.reference() != "local/bekko-256-int8"
+                    && entry.reference() != "local/jina-embeddings-v2-base-code-mlx"
+            })
             .map(entry_value)
             .collect(),
     )
@@ -69,6 +73,10 @@ fn print_current_catalog_fixture() {
 fn entry_value(entry: EmbeddingCatalogEntry) -> Value {
     match entry {
         EmbeddingCatalogEntry::Bekko(_) => {
+            unreachable!("Rust-only models are excluded from the TS oracle")
+        }
+        #[cfg(feature = "mlx")]
+        EmbeddingCatalogEntry::Mlx(_) => {
             unreachable!("Rust-only models are excluded from the TS oracle")
         }
         EmbeddingCatalogEntry::LlamaCpp(LlamaCppConfig {

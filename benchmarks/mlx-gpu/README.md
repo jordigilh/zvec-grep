@@ -95,8 +95,9 @@ shortcut degrades embedding cosine to ~0.95 on some inputs: fp16 layer-norm
 accumulation loses precision in the variance, and fp16 scores/softmax lose
 it in the ALiBi-biased exponentials. With the policy above the port is exact
 (cosine ~1.0) at the same throughput. `--dump-fixtures DIR` writes the
-ids/mask/reference/MLX embedding set used by the future Rust backend test
-(computed at fp16, stored fp32).
+ids/mask/reference/MLX embedding set used by the Rust backend test (computed at
+fp16, stored fp32); the fp32 references replayed by `cached_jina_mlx` are
+committed at `benchmarks/mlx-gpu/fixtures/jina_mlx_numerics.json`.
 
 The forward pass spec below was recovered from the shipped ONNX graph and
 confirmed numerically, so the eventual Rust port does not need to rediscover
@@ -181,11 +182,13 @@ TDD plan for the jina slice. Estimated 3-4 days.
    asserting embedding cosine >= 0.999 against the fixtures written by this
    spike's `--dump-fixtures`, plus dimension and finite-value checks through
    `validate_result`.
-4. **Batching + pooling.** Promote the token-budget sub-batch packing and
+4. **Batching + pooling.** The MLX backend packs its own batches and reuses
+   the tokenizer helpers next to it; promoting the token-budget packing and
    probe-encoding helpers out of `backends/transformers/model.rs` into a
-   backend-neutral `models` helper module (AGENTS.md layout rules) so the
-   MLX backend shares them rather than copying; mean-pool with the
-   attention mask, L2-normalize. Unit tests for packing edge cases run
+   backend-neutral `models` module is **deferred**: upstream has no such
+   module, so creating one now would widen the fork divergence this policy is
+   trying to contain. Revisit when upstream grows a neutral home. Mean-pool
+   with the attention mask, L2-normalize; packing edge cases are covered
    without the MLX feature.
 5. **Gates.** `cargo fmt`, `cargo clippy -p zg-engine --all-targets
    -- -D warnings` with and without `--features mlx`, targeted `zg-engine`
@@ -197,33 +200,35 @@ TDD plan for the jina slice. Estimated 3-4 days.
 6. **gte-modernbert** is out of scope for the first slice; follow-up issue
    with its own spike (rotary + sliding-window attention port).
 
-## CI gating (decided: ubuntu CPU gate + hosted macOS lane)
+## CI gating (decided 2026-11-25, corrected 2026-11-26: macOS lane)
 
-Decision (2026-11-25): the implementation ships **two lanes**, and no
+Decision (2026-11-25): the implementation ships CI lanes, and no
 self-hosted runner is required unless the hosted macOS spike fails. This
 repository has no macOS lane today; it was removed, and the workflows now
-run on `ubuntu-latest` only, so both lanes are new work.
+run on `ubuntu-latest` only, so this lane is new work.
 
-1. **Ubuntu lane — mandatory, gates everything that is not Metal
-   execution.** `mlx-sys` builds with `default-features = false`
-   (`MLX_BUILD_METAL=OFF`, `MLX_BUILD_CPU=ON`), and MLX publishes a CPU-only
-   build for Linux (`pip install mlx[cpu]`), so the `mlx` feature can be
-   compiled and its non-GPU tests run on `ubuntu-latest`: worker-thread
-   design (`Array` is `!Send`), token-budget packing, mean-pool/normalize,
-   model identity, cancellation, execution-budget handling, catalog and
-   oracle fixtures. **Prerequisite spike (30 min):** confirm `mlx-sys`
-   builds CPU-only on `ubuntu-latest` (CMake, C++20, libblas/liblapack
-   headers). If it does not, the lane compiles the feature against a stub
-   backend and the macOS lane carries every MLX execution test.
-2. **Hosted macOS lane — gates the Metal kernels.** `runs-on: macos-26`
-   (arm64, 3-core M1, 7 GB). Standard GitHub-hosted runners are **free and
-   unlimited on public repositories**, macOS included, so this lane costs
-   nothing and needs no payment method. Steps: run `xcrun -f metal`, and
+1. **Linux lane — ruled out by the dependency.** `mlx-sys` 0.7 emits
+   `-lobjc` and `-framework Foundation` unconditionally, so `--features mlx`
+   fails to link on Linux even with MLX's CPU backend. The non-GPU logic
+   (worker-thread design, token-budget packing, mean-pool/normalize, identity,
+   cancellation, budget handling, cancellation/panic paths) is therefore
+   covered by unit tests on the macOS runner, pinned to the CPU device so they
+   do not need a GPU.
+2. **Hosted macOS lane — builds the feature, runs the unit tests and a GPU
+   parity gate.** `runs-on: macos-latest`. Standard GitHub-hosted runners are
+   **free and unlimited on public repositories**, macOS included, so this lane
+   costs nothing and needs no payment method. Steps: verify
+   `xcrun -sdk macosx metal --version` and run
    `xcodebuild -downloadComponent MetalToolchain` when it fails (Xcode 26+
    ships Metal as a separate downloadable component; CommandLineTools alone
-   never has it), then the `#[ignore]`d `cached_jina_mlx` numerics test
-   (cosine >= 0.999 against the fp32 fixtures from this spike), a smoke
-   embedding, and one end-to-end `zg` run.
+   never has it), check `mlx.metallib` exists, then clippy and
+   `cargo test -p zg-engine --lib --features mlx`, and finally both ignored
+   gates in one step (`-- --ignored cached_jina_mlx` matches both): the fp32
+   reference replay (`cached_jina_mlx`) against
+   `benchmarks/mlx-gpu/fixtures/jina_mlx_numerics.json`, and the Metal-vs-CPU
+   parity gate (`cached_jina_mlx_gpu_matches_cpu`), where the same token ids
+   must agree to cosine >= 0.9999. Both assert that the model runs on a
+   **Metal** device, so a silent CPU fallback fails the lane.
 3. **Hosted Metal must be proven, not assumed.** Metal does execute on
    hosted arm64 macOS VMs — actions/runner-images#14836 (Oct 2026) shows
    Metal command buffers running cleanly on `macos-15`/`macos-26` arm64,
@@ -236,20 +241,32 @@ run on `ubuntu-latest` only, so both lanes are new work.
    maintainer's Mac replaces (2) with identical jobs; only the `runs-on:`
    label changes and the acceptance criteria stay the same.
 
-**Acceptance criteria for the implementation PR:** the ubuntu lane is green
-with `--features mlx` (all non-GPU logic) **and** the macOS lane runs the
-MLX numerics test plus a smoke embedding on a confirmed Metal device.
-Local-only verification does not satisfy this.
+**Acceptance criteria for the implementation PR:** the macOS lane is green
+with `--features mlx` (unit tests, CPU-pinned where they do not need the GPU)
+**and** both Metal gates pass on a hosted macOS runner: the fp32 numerics
+replay and the Metal-vs-CPU parity check (which is also the smoke embedding).
+Neither gate accepts a CPU fallback. Local-only verification does not satisfy
+this requirement.
+
+> **Linux correction (2026-11-26).** The Ubuntu CPU leg this section originally
+> required cannot exist: `mlx-sys` 0.7 emits `-lobjc` and
+> `-framework Foundation` unconditionally (`build.rs`), so `--features mlx`
+> fails to link on Linux even though MLX itself has a CPU backend. The lane is
+> therefore macOS-only, and the non-GPU logic is covered there by unit tests
+> that pin the CPU device.
 
 ## Landing policy (decided 2026-11-25)
 
 MLX ships **opt-in**; the ORT CPU path stays the default everywhere.
 
-- One cargo feature `mlx` on `zg-engine`, declared only under
-  `[target.'cfg(target_os = "macos")'.dependencies]`, so it cannot be enabled
-  on Linux or Windows. Selecting `local/jina-embeddings-v2-base-code-mlx` is
+- One cargo feature `mlx` on `zg-engine`. On macOS the dependency builds with
+  metal + accelerate; other targets declare it CPU-only, which keeps the
+  feature resolvable but does not make it linkable there (`mlx-sys` always
+  links Apple frameworks). Selecting `local/jina-embeddings-v2-base-code-mlx`
+  is
   the only way to reach it: no automatic promotion, and no silent fallback in
   either direction — an MLX index never mixes with an ONNX one.
+- Build it with `cargo build -p zg --features zg-engine/mlx`.
 - Rationale: this fork already diverges from upstream (#73, #75, #77 are fork
   work), and upstream cannot adopt MLX without a second runtime for models it
   already runs through ORT. Keeping the *default* path upstream-compatible
@@ -278,9 +295,9 @@ crate is tolerable, a wrong one fails CI.
 is exposed, so the compiled 3.7-5.2x is the target). Deductions: `Array
 !Send` forces the worker-thread design; the precision policy adds a
 correctness surface (fp32 LN/scores are mandatory, measured); single-maintainer
-crate; the Ubuntu CPU-only `mlx-sys` build the CI baseline depends on is
-unverified on Linux; and hosted macOS runners have not been shown to allocate
-an MLX Metal device (upstream MLX uses self-hosted runners for exactly this
-reason). The toolchain risk that dominated the earlier estimate is gone.
+crate; the numerics gate now runs in the macOS lane against the committed fp32
+fixtures (the first hosted run also exposed two load/readiness defects, both
+fixed). The
+toolchain risk that dominated the earlier estimate is gone.
 Numerics risk is low (spec validated here); scheduling/identity risk is low
 (runtime rules already established in #73/#77).

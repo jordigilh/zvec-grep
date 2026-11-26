@@ -9,6 +9,13 @@ publish.workspace = true
 
 [features]
 default = []
+# Opt-in Apple-GPU backend (issue #74). The Metal path needs Xcode plus the
+# separate Metal Toolchain component at build time, so it never participates in
+# the default build; the ORT CPU path stays the default everywhere. On macOS the
+# dependency builds with metal+accelerate; mlx-sys links Apple frameworks
+# unconditionally, so the feature is not linkable on other targets even though
+# the dependency is declared for them (see benchmarks/mlx-gpu/README.md).
+mlx = ["dep:mlx-rs"]
 # CUDA and Vulkan require their native toolchains at build time. Platform
 # release builds enable the matching feature, while unsupported requests keep
 # the same warning-and-CPU-fallback behavior as main.
@@ -74,6 +81,17 @@ rustix = { version = "1.1.4", features = ["fs"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["coreml"] }
+# Opt-in Apple-GPU runtime (issue #74). Default features keep metal + accelerate;
+# `safetensors` provides `Array::load_safetensors`. Only compiled when the `mlx`
+# feature is enabled.
+mlx-rs = { version = "0.34", optional = true, features = ["safetensors"] }
+
+# Same dependency on every other target, CPU-only: it keeps the feature
+# *resolvable* so metadata and checkouts on other platforms do not hard-fail.
+# It does not make the feature linkable there — mlx-sys always links Apple
+# frameworks (see benchmarks/mlx-gpu/README.md).
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+mlx-rs = { version = "0.34", optional = true, default-features = false, features = ["safetensors"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 dunce = "1.0.5"

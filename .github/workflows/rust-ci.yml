@@ -111,3 +111,62 @@ jobs:
         run: cargo test --locked --workspace --all-targets
       - name: Smoke test the CLI
         run: cargo run --locked -p zg -- --rg "zvec-grep Rust rewrite" README.md
+
+  # Opt-in Apple-GPU backend (issue #74). One lane, on macOS: mlx-sys 0.7 links
+  # Apple frameworks unconditionally (-lobjc, -framework Foundation), so the
+  # feature cannot link on Linux even with MLX's CPU backend. Non-GPU logic is
+  # covered here by the unit tests, which pin the CPU device.
+  mlx:
+    name: rust mlx (macos)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      # The metallib path is compiled into libmlx. Keeping it inside the cached
+      # target dir means a restored cache still finds the file, instead of a
+      # build-script fingerprint that is fresh while $HOME lost the metallib.
+      MLX_RS_METAL_PATH: ${{ github.workspace }}/rust/target/mlx-metallib
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Ensure the Metal toolchain
+        run: |
+          if ! xcrun -sdk macosx metal --version; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun -sdk macosx metal --version
+      - name: Restore Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/target/
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-mlx-v1-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-mlx-v1-
+      - name: Check the opt-in MLX feature
+        run: cargo clippy --locked -p zg-engine --all-targets --features mlx -- -D warnings
+      - name: Verify the MLX metallib exists
+        run: test -f "$MLX_RS_METAL_PATH/mlx.metallib"
+      - name: Test the opt-in MLX feature
+        run: cargo test --locked -p zg-engine --lib --features mlx
+      - name: Restore the MLX model cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/zvec-grep-mlx
+          key: mlx-jina-516f4ba-v1
+      - name: Metal numerics and parity gates
+        # The filter matches both ignored gates: `cached_jina_mlx` replays the
+        # committed fp32 ONNX references, and `cached_jina_mlx_gpu_matches_cpu`
+        # compares Metal against CPU. Both assert a real Metal device, so a
+        # silent CPU fallback fails the lane. `~` is expanded here; GitHub
+        # Actions does not expand it in a step-level `env` value.
+        run: |
+          export ZVEC_GREP_TEST_MODEL_CACHE="$HOME/.cache/zvec-grep-mlx"
+          cargo test --locked -p zg-engine --lib --features mlx -- --ignored --nocapture cached_jina_mlx

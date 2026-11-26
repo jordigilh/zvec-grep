@@ -3,6 +3,8 @@
 mod bekko;
 mod factory;
 mod llama_cpp;
+#[cfg(feature = "mlx")]
+mod mlx;
 mod model2vec;
 mod qwen;
 mod transformers;
