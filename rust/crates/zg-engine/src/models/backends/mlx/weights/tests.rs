@@ -47,6 +47,16 @@ fn an_unexpected_tensor_shape_is_a_structured_storage_failure() {
 }
 
 #[test]
+fn cancellation_before_the_embedding_conversion_stops_the_assemble_step() {
+    let signal = tokio_util::sync::CancellationToken::new();
+    signal.cancel();
+    let error = JinaWeights::assemble(&HashMap::new(), Vec::new(), &signal)
+        .err()
+        .expect("cancelled assembly");
+    assert_eq!(code(&error), crate::EngineError::CANCELLED);
+}
+
+#[test]
 fn loaded_tensors_are_converted_to_fp16() {
     let mut tensors = HashMap::new();
     tensors.insert(

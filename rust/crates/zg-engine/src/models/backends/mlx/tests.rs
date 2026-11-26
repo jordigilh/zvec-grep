@@ -145,13 +145,15 @@ async fn non_text_content_is_rejected_before_loading() {
 
 /// End-to-end numerics gate, mirroring `cached_minilm`.
 ///
-/// Prerequisites (all local, never downloaded by CI):
+/// Prerequisites (the artifacts are downloaded into the model cache on first
+/// run; the fixtures are committed):
 /// 1. `ZVEC_GREP_TEST_MODEL_CACHE` points at a model cache containing the
 ///    pinned `jinaai/jina-embeddings-v2-base-code` artifacts at revision
 ///    `516f4baf13dec4ddddda8631e019b5737c8bc250` (`model.safetensors`,
 ///    `tokenizer.json`, `config.json`, `tokenizer_config.json`).
-/// 2. `ZVEC_GREP_MLX_FIXTURES` points at `jina_mlx_numerics.json`, written by
-///    `benchmarks/mlx-gpu/jina_mlx_spike.py --dump-fixtures DIR`.
+/// 2. The fp32 ONNX references live in
+///    `benchmarks/mlx-gpu/fixtures/jina_mlx_numerics.json`; set
+///    `ZVEC_GREP_MLX_FIXTURES` to replay a freshly dumped sidecar instead.
 /// 3. A working MLX Metal device (Apple Silicon, Xcode + Metal Toolchain).
 #[tokio::test]
 #[ignore = "requires ZVEC_GREP_TEST_MODEL_CACHE with the pinned jina MLX artifacts, \
@@ -161,9 +163,12 @@ async fn cached_jina_mlx() {
         env::var_os("ZVEC_GREP_TEST_MODEL_CACHE")
             .expect("ZVEC_GREP_TEST_MODEL_CACHE must point at the model cache"),
     );
-    let fixtures_path = PathBuf::from(
-        env::var_os("ZVEC_GREP_MLX_FIXTURES")
-            .expect("ZVEC_GREP_MLX_FIXTURES must point at jina_mlx_numerics.json"),
+    let fixtures_path = env::var_os("ZVEC_GREP_MLX_FIXTURES").map_or_else(
+        || {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../benchmarks/mlx-gpu/fixtures/jina_mlx_numerics.json")
+        },
+        PathBuf::from,
     );
     let model = MlxEmbeddingModel::new(
         entry(),

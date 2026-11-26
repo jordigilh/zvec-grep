@@ -291,6 +291,69 @@ async fn embed_before_prepare_is_a_structured_error() {
     assert_eq!(error.code(), crate::EngineError::INTERNAL);
 }
 
+#[tokio::test]
+async fn cancellation_during_the_only_sub_batch_is_reported() {
+    let signal = CancellationToken::new();
+    let calls = Arc::new(std::sync::Mutex::new(0_usize));
+    let signal_for_loader = signal.clone();
+    let calls_for_forward = Arc::clone(&calls);
+    // The whole request fits in one chunk, so only the post-forward check can
+    // observe the cancellation the forward itself raises.
+    let worker = MlxWorker::spawn(
+        move |_| {
+            Ok(CancellingForward {
+                signal: signal_for_loader.clone(),
+                calls: Arc::clone(&calls_for_forward),
+            })
+        },
+        2,
+    );
+    worker.prepare(None).await.expect("prepare");
+    let error = worker
+        .embed(vec![vec![1], vec![2]], Some(signal))
+        .await
+        .expect_err("cancelled during the final forward");
+    assert_eq!(error.code(), crate::EngineError::CANCELLED);
+    assert_eq!(*calls.lock().expect("call count"), 1);
+}
+
+#[test]
+fn a_closed_reply_before_a_chunk_skips_the_forward() {
+    let (mut forward, calls) = EchoForward::new();
+    let error = super::embed(
+        &mut forward,
+        &[vec![1], vec![2]],
+        None,
+        1,
+        // The caller is already gone when the command is dequeued.
+        || true,
+    )
+    .expect_err("closed reply");
+    assert_eq!(error.code(), crate::EngineError::CANCELLED);
+    assert!(
+        calls.lock().expect("call log").is_empty(),
+        "no batch may run for a caller that stopped waiting"
+    );
+}
+
+#[test]
+fn a_reply_that_closes_during_a_forward_stops_the_next_chunk() {
+    let (mut forward, calls) = EchoForward::new();
+    let mut checks = 0;
+    let error = super::embed(&mut forward, &[vec![1], vec![2]], None, 1, || {
+        checks += 1;
+        // Open before the first chunk, closed once its forward returns.
+        checks > 1
+    })
+    .expect_err("closed during the forward");
+    assert_eq!(error.code(), crate::EngineError::CANCELLED);
+    assert_eq!(
+        calls.lock().expect("call log").len(),
+        1,
+        "the second chunk must not run after the caller disappeared"
+    );
+}
+
 #[test]
 fn padding_derives_the_attention_mask_from_real_lengths() {
     let batch = TokenBatch::pad(&[vec![1, 2, 3], vec![4]]);
@@ -340,7 +403,48 @@ async fn a_late_device_initialization_times_out_without_joining() {
     let error = worker.prepare(None).await.expect_err("readiness times out");
     assert_eq!(error.code(), crate::EngineError::INTERNAL);
     // Dropping must return even though the worker thread is still starting up.
+    let dropped_at = std::time::Instant::now();
     drop(worker);
+    assert!(
+        dropped_at.elapsed() < Duration::from_millis(150),
+        "drop joined the still-running device start"
+    );
+}
+
+#[tokio::test]
+async fn cancellation_during_device_startup_returns_cancelled() {
+    let worker = MlxWorker::try_spawn_with_delayed_device(|_| Ok(EchoForward::new().0), 2)
+        .expect("spawn succeeds");
+    let signal = CancellationToken::new();
+    let prepare = worker.prepare(Some(signal.clone()));
+    tokio::pin!(prepare);
+    tokio::select! {
+        result = &mut prepare => panic!("readiness resolved before the device started: {result:?}"),
+        () = tokio::time::sleep(Duration::from_millis(10)) => {}
+    }
+    signal.cancel();
+    let error = prepare.await.expect_err("cancelled readiness wait");
+    assert_eq!(error.code(), crate::EngineError::CANCELLED);
+}
+
+#[tokio::test]
+async fn dropping_the_prepare_future_during_device_start_returns_quickly() {
+    let worker = MlxWorker::try_spawn_with_delayed_device(|_| Ok(EchoForward::new().0), 2)
+        .expect("spawn succeeds");
+    {
+        let prepare = worker.prepare(None);
+        tokio::pin!(prepare);
+        tokio::select! {
+            result = &mut prepare => panic!("readiness resolved before the device started: {result:?}"),
+            () = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+    }
+    let dropped_at = std::time::Instant::now();
+    drop(worker);
+    assert!(
+        dropped_at.elapsed() < Duration::from_millis(150),
+        "drop joined the device start whose waiter was already gone"
+    );
 }
 
 #[tokio::test]

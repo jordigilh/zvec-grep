@@ -122,6 +122,20 @@ impl JinaWeights {
             }
             layers.push(JinaLayerWeights::from_tensors(tensors, index)?);
         }
+        Self::assemble(tensors, layers, signal)
+    }
+
+    /// Completes the weight set once every layer is converted. The cancellation
+    /// check comes first: a token cancelled during the final layer must not
+    /// spend work converting the embedding tensors.
+    fn assemble(
+        tensors: &HashMap<String, Array>,
+        layers: Vec<JinaLayerWeights>,
+        signal: &CancellationToken,
+    ) -> Result<Self, ModelError> {
+        if signal.is_cancelled() {
+            return Err(ModelError::cancelled("MLX weight load was cancelled"));
+        }
         Ok(Self {
             word_embeddings: tensor(
                 tensors,

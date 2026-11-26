@@ -103,6 +103,11 @@ impl JinaMlxForward {
         let weight_inputs = mlx_rs::with_device(mlx_rs::Device::cpu(), || {
             let weights = JinaWeights::load(path, signal)?;
             let weight_inputs = weights.flatten();
+            // Cancellation that arrived during conversion must stop before the
+            // (uninterruptible) materialization of every weight.
+            if signal.is_cancelled() {
+                return Err(ModelError::cancelled("MLX weight load was cancelled"));
+            }
             mlx_rs::transforms::eval(weight_inputs.iter()).map_err(mlx_error)?;
             Ok::<_, ModelError>(weight_inputs)
         })?;

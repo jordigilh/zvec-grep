@@ -161,7 +161,11 @@ jobs:
         with:
           path: ~/.cache/zvec-grep-mlx
           key: mlx-jina-516f4ba-v1
-      - name: Metal vs CPU parity gate
+      - name: Metal numerics and parity gates
         env:
           ZVEC_GREP_TEST_MODEL_CACHE: ~/.cache/zvec-grep-mlx
-        run: cargo test --locked -p zg-engine --lib --features mlx -- --ignored cached_jina_mlx_gpu_matches_cpu
+        # The filter matches both ignored gates: `cached_jina_mlx` replays the
+        # committed fp32 ONNX references, and `cached_jina_mlx_gpu_matches_cpu`
+        # compares Metal against CPU. Both assert a real Metal device, so a
+        # silent CPU fallback fails the lane.
+        run: cargo test --locked -p zg-engine --lib --features mlx -- --ignored cached_jina_mlx

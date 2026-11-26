@@ -94,15 +94,16 @@ pub(super) struct MlxWorker {
     /// by `prepare`, so neither the constructor nor an async caller blocks on
     /// device initialization.
     ready: std::sync::Mutex<Option<oneshot::Receiver<()>>>,
-    /// Set when readiness timed out: the thread may still be stuck in device
-    /// initialization, so `Drop` must not join it.
-    abandoned: std::sync::atomic::AtomicBool,
     /// How long `prepare` waits for the device. Only the delayed-initializer
     /// test overrides it; production and other tests use the full window.
     ready_timeout: std::time::Duration,
+    /// How long `Drop` waits for the worker to exit before detaching it. Bounded
+    /// so a stuck device can never block an async thread indefinitely.
+    drop_wait: std::time::Duration,
 }
 
 const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const DROP_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl MlxWorker {
     /// Spawns the worker. `loader` runs on the worker thread on the first
@@ -131,7 +132,15 @@ impl MlxWorker {
     where
         F: MlxForward,
     {
-        Self::try_spawn_impl(loader, max_batch_size, device, false, false, READY_TIMEOUT)
+        Self::try_spawn_impl(
+            loader,
+            max_batch_size,
+            device,
+            false,
+            false,
+            READY_TIMEOUT,
+            DROP_WAIT,
+        )
     }
 
     /// Test-only constructor that fails device initialization, so the
@@ -151,6 +160,7 @@ impl MlxWorker {
             true,
             false,
             READY_TIMEOUT,
+            DROP_WAIT,
         )
     }
 
@@ -171,6 +181,7 @@ impl MlxWorker {
             false,
             true,
             std::time::Duration::from_millis(50),
+            std::time::Duration::from_millis(25),
         )
     }
 
@@ -181,6 +192,7 @@ impl MlxWorker {
         fail_device: bool,
         delay_ready: bool,
         ready_timeout: std::time::Duration,
+        drop_wait: std::time::Duration,
     ) -> Result<Self, ModelError>
     where
         F: MlxForward,
@@ -203,9 +215,10 @@ impl MlxWorker {
                 // Pin the model-owning thread to the resolved device, so the
                 // arrays and compiled graphs it creates use exactly that device.
                 mlx_rs::with_device(mlx_rs::Device::new(device, 0), || {
-                    if ready.send(()).is_err() {
-                        return;
-                    }
+                    // A cancelled or timed-out waiter drops the receiver. The
+                    // device is ready all the same, so keep serving requests;
+                    // the next prepare only needs the channel, not the signal.
+                    let _ = ready.send(());
                     let mut forward: Option<F> = None;
                     let max_batch_size = max_batch_size.max(1);
                     while let Some(command) = receiver.blocking_recv() {
@@ -267,15 +280,15 @@ impl MlxWorker {
             commands,
             thread: Some(thread),
             ready: std::sync::Mutex::new(Some(device_ready)),
-            abandoned: std::sync::atomic::AtomicBool::new(false),
             ready_timeout,
+            drop_wait,
         })
     }
 
-    /// Waits once for the worker's device to come up. A timed-out or failed
-    /// initialization is a structured error, and the worker is marked
-    /// abandoned so dropping the handle never joins a stuck thread.
-    async fn await_ready(&self) -> Result<(), ModelError> {
+    /// Waits once for the worker's device to come up, observing the caller's
+    /// cancellation token. A timeout or failed initialization is a structured
+    /// error; `Drop` never waits on a stuck initializer.
+    async fn await_ready(&self, signal: Option<&CancellationToken>) -> Result<(), ModelError> {
         let receiver = self
             .ready
             .lock()
@@ -284,18 +297,25 @@ impl MlxWorker {
         let Some(receiver) = receiver else {
             return Ok(());
         };
-        match tokio::time::timeout(self.ready_timeout, receiver).await {
+        let wait = tokio::time::timeout(self.ready_timeout, receiver);
+        let outcome = match signal {
+            Some(signal) => tokio::select! {
+                biased;
+                () = signal.cancelled() => {
+                    return Err(ModelError::cancelled("MLX model preparation was cancelled"));
+                }
+                outcome = wait => outcome,
+            },
+            None => wait.await,
+        };
+        match outcome {
             Ok(Ok(())) => Ok(()),
             Ok(Err(_)) => Err(ModelError::internal(
                 "MLX device initialization failed on the worker thread",
             )),
-            Err(_) => {
-                self.abandoned
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                Err(ModelError::internal(
-                    "MLX device initialization timed out on the worker thread",
-                ))
-            }
+            Err(_) => Err(ModelError::internal(
+                "MLX device initialization timed out on the worker thread",
+            )),
         }
     }
 
@@ -303,7 +323,7 @@ impl MlxWorker {
         &self,
         signal: Option<CancellationToken>,
     ) -> Result<(), ModelError> {
-        self.await_ready().await?;
+        self.await_ready(signal.as_ref()).await?;
         let (reply, receiver) = oneshot::channel();
         self.send(Command::Prepare { signal, reply })?;
         receiver
@@ -343,15 +363,21 @@ impl MlxWorker {
 impl Drop for MlxWorker {
     fn drop(&mut self) {
         let _ = self.commands.send(Command::Shutdown);
-        if self.abandoned.load(std::sync::atomic::Ordering::Relaxed) {
-            // Device initialization never completed; joining here could block
-            // forever, so the handle is detached instead.
-            self.thread.take();
+        let Some(thread) = self.thread.take() else {
             return;
+        };
+        // A device that never finishes initializing must not block the caller
+        // (which may be an async runtime thread): wait briefly, then detach. The
+        // worker still exits on its own once initialization returns, because its
+        // command channel is closed.
+        let deadline = std::time::Instant::now() + self.drop_wait;
+        while !thread.is_finished() {
+            if std::time::Instant::now() >= deadline {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        let _ = thread.join();
     }
 }
 
@@ -374,7 +400,7 @@ fn embed<F: MlxForward>(
     ids: &[Vec<u32>],
     signal: Option<&CancellationToken>,
     max_batch_size: usize,
-    abandoned: impl Fn() -> bool,
+    mut abandoned: impl FnMut() -> bool,
 ) -> Result<Vec<Vec<f32>>, ModelError> {
     let mut vectors = Vec::with_capacity(ids.len());
     for sequences in ids.chunks(max_batch_size) {
