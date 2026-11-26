@@ -134,10 +134,17 @@ pub(crate) struct IndexingContext<'context> {
     pub on_progress: Option<IndexProgressReporter>,
     pub signal: Option<CancellationToken>,
     pub changes: &'context [WorkspaceChange],
+    /// Whether this run stages a new generation (a build: fresh,
+    /// unindexed-existing, or explicit `--rebuild`) instead of appending to
+    /// the live one. Explicit by construction — never inferred from the
+    /// presence of an expected identity, which is also absent from
+    /// identity-less incremental generations.
+    pub is_build: bool,
     /// The recorded backend identity an incremental update must not deviate
     /// from, checked per embedding batch before any record is committed.
-    /// `None` for fresh builds, which accept their starting identity and
-    /// relabel the staging generation at publication.
+    /// `None` for builds, which accept their starting identity and relabel
+    /// the staging generation at publication, and for incremental runs on
+    /// generations that recorded no identity.
     pub expected_backend_identity: Option<crate::domain::model::BackendIdentity>,
 }
 
@@ -902,8 +909,8 @@ fn push_embedding<'context>(
         context.on_progress.clone(),
         // An incremental update must not append fallback-runtime vectors to
         // a live generation; a fresh build may fall back and relabel itself
-        // at publication.
-        context.expected_backend_identity.is_none(),
+        // at publication. The run mode is explicit on the context.
+        context.is_build,
     )));
 }
 
@@ -968,9 +975,11 @@ fn ensure_runtime_identity(
         // A mid-run flip. A build has no live generation to rebuild: its
         // staging is discarded and the recovery is retrying the build. An
         // incremental update keeps its live generation's identity, so a
-        // rebuild remains the guaranteed recovery there.
+        // rebuild remains the guaranteed recovery there. The run mode is
+        // explicit on the context — an identity-less incremental generation
+        // also arrives with no expected identity.
         let started = observed.identity.as_ref();
-        return Err(if context.expected_backend_identity.is_none() {
+        return Err(if context.is_build {
             crate::domain::model::fresh_build_identity_flip(started, current.as_ref())
         } else {
             crate::domain::model::mid_run_backend_mismatch(started, current.as_ref())
@@ -3245,6 +3254,7 @@ mod tests {
                 on_progress: None,
                 signal: None,
                 changes: &[],
+                is_build: true,
                 expected_backend_identity: None,
             })
             .await
@@ -3286,6 +3296,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            is_build: true,
             expected_backend_identity: None,
         })
         .await
@@ -3327,6 +3338,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            is_build: true,
             expected_backend_identity: None,
         };
 
@@ -3373,6 +3385,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            is_build: true,
             expected_backend_identity: None,
         })
         .await
@@ -3409,6 +3422,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            is_build: true,
             expected_backend_identity: None,
         };
         let operation = index_workspace(&context);
@@ -3504,6 +3518,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            is_build: true,
             expected_backend_identity: None,
         })
         .await
@@ -3539,6 +3554,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            is_build: true,
             expected_backend_identity: None,
         })
         .await
@@ -3579,6 +3595,7 @@ mod tests {
             on_progress: None,
             signal: Some(signal),
             changes: &[],
+            is_build: true,
             expected_backend_identity: None,
         })
         .await
@@ -3632,6 +3649,7 @@ mod tests {
                 on_progress: None,
                 signal: None,
                 changes: &[],
+                is_build: true,
                 expected_backend_identity: None,
             };
             index_workspace(&context)
@@ -3667,6 +3685,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            is_build: true,
             expected_backend_identity: None,
         };
         index_workspace(&context).await.expect("initial index");
@@ -3790,6 +3809,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            is_build: true,
             expected_backend_identity: None,
         };
         index_workspace(&context).await.expect("initial index");
@@ -3855,6 +3875,7 @@ mod tests {
             on_progress: Some(reporter),
             signal: None,
             changes: &[],
+            is_build: true,
             expected_backend_identity: None,
         };
 
@@ -3912,6 +3933,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            is_build: true,
             expected_backend_identity: None,
         })
         .await
@@ -3929,6 +3951,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &changes,
+            is_build: true,
             expected_backend_identity: None,
         })
         .await
@@ -3984,6 +4007,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            is_build: true,
             expected_backend_identity: None,
         })
         .await
@@ -4025,6 +4049,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &changes,
+            is_build: true,
             expected_backend_identity: None,
         })
         .await
@@ -4117,6 +4142,7 @@ mod tests {
             on_progress: None,
             signal: None,
             changes: &[],
+            is_build: true,
             expected_backend_identity: None,
         })
         .await
@@ -4399,5 +4425,142 @@ mod tests {
         assert_eq!(error.origin().line, origin_line);
         let invalid = map_host_error(HostError::invalid_argument("bad root"));
         assert_eq!(invalid.code(), EngineError::INVALID_ARGUMENT);
+    }
+
+    /// A runtime that reports a live backend identity which flips after a
+    /// controlled number of embeds, for exercising the identity checks.
+    struct FlippingIdentityModel {
+        info: EmbeddingModelInfo,
+        embeds: std::sync::Arc<std::sync::atomic::AtomicU32>,
+        fallback_after: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    }
+
+    impl FlippingIdentityModel {
+        fn new(
+            embeds: std::sync::Arc<std::sync::atomic::AtomicU32>,
+            fallback_after: std::sync::Arc<std::sync::atomic::AtomicU32>,
+        ) -> Self {
+            Self {
+                info: EmbeddingModelInfo {
+                    model: crate::domain::model::ModelInfo {
+                        provider: "local".to_owned(),
+                        name: "test".to_owned(),
+                        endpoint: None,
+                    },
+                    dimension: 2,
+                    metric: Metric::Cosine,
+                    max_batch_size: 1,
+                    max_input_tokens: Some(64),
+                    max_image_bytes: None,
+                    backend: Some("stub-gpu".to_owned()),
+                    dtype: Some("q8".to_owned()),
+                },
+                embeds,
+                fallback_after,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl IndexEmbeddingRuntime for FlippingIdentityModel {
+        fn info(&self) -> &EmbeddingModelInfo {
+            &self.info
+        }
+
+        fn backend_identity(&self) -> Option<crate::domain::model::BackendIdentity> {
+            let fallen_back =
+                self.embeds.load(Ordering::Acquire) > self.fallback_after.load(Ordering::Acquire);
+            Some(crate::domain::model::BackendIdentity {
+                backend: if fallen_back {
+                    "stub-cpu".to_owned()
+                } else {
+                    "stub-gpu".to_owned()
+                },
+                dtype: "q8".to_owned(),
+            })
+        }
+
+        fn concurrency_defaults(&self) -> EmbeddingConcurrencyDefaults {
+            EmbeddingConcurrencyDefaults {
+                initial: 2,
+                maximum: 2,
+            }
+        }
+
+        async fn prepare(
+            &self,
+            _options: EmbeddingPrepareOptions,
+            _progress: Option<IndexProgressReporter>,
+        ) -> Result<(), ModelError> {
+            Ok(())
+        }
+
+        async fn embed(
+            &self,
+            contents: &[Vec<Content>],
+            _options: EmbeddingOptions,
+            _progress: Option<IndexProgressReporter>,
+        ) -> Result<EmbeddingResult, ModelError> {
+            self.embeds.fetch_add(1, Ordering::AcqRel);
+            Ok(EmbeddingResult {
+                vectors: contents
+                    .iter()
+                    .map(|_| vec![0.25; self.info.dimension])
+                    .collect(),
+                truncated: Vec::new(),
+            })
+        }
+    }
+
+    /// The production-unreachable combination — an incremental run whose
+    /// generation recorded no identity — must keep the incremental flip
+    /// wording: the run mode, not the absent expected identity, selects the
+    /// guidance. Reached only by construction today (the service refuses
+    /// identity-less incremental generations before the pipeline), so this
+    /// locks the semantics in should a future backend make it reachable.
+    #[tokio::test]
+    async fn an_incremental_run_without_recorded_identity_keeps_incremental_flip_wording() {
+        let directory = tempdir().expect("workspace");
+        std::fs::write(directory.path().join("one.txt"), "indexable text").expect("source");
+        std::fs::write(directory.path().join("two.txt"), "more indexable text").expect("source");
+        let workspace = workspace(directory.path());
+        let scanner = RecordingScanner::new();
+        let storage = MemoryStorage::default();
+        let embeds = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        // The identity flips after the first embed, so the first batch's
+        // check accepts the starting identity and the second batch's flips.
+        let fallback_after = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(1));
+        let model = FlippingIdentityModel::new(
+            std::sync::Arc::clone(&embeds),
+            std::sync::Arc::clone(&fallback_after),
+        );
+
+        let error = index_workspace(&IndexingContext {
+            workspace_index: &workspace,
+            storage: &storage,
+            scanner: &scanner,
+            embedding_models: &[&model],
+            // Serialize the batches so the flip lands between identity checks.
+            embedding_concurrency: Some(1),
+            on_progress: None,
+            signal: None,
+            changes: &[],
+            is_build: false,
+            expected_backend_identity: None,
+        })
+        .await
+        .expect_err("a mid-run flip on an incremental run must refuse");
+        assert_eq!(error.code(), EngineError::INDEX_BACKEND_MISMATCH);
+        assert!(
+            error.message().contains("the storage opened with")
+                && error.message().contains("rebuild the index with"),
+            "incremental runs keep the rebuild guidance: {}",
+            error.message()
+        );
+        assert!(
+            !error.message().contains("changed during the build"),
+            "an incremental run never stages a build: {}",
+            error.message()
+        );
     }
 }
