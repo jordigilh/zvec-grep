@@ -31,8 +31,8 @@ fn pool_and_normalize_averages_masked_positions_and_scales_to_unit_length() {
     let mask_sum = Array::from_slice(&[1.0_f32], &[1, 1, 1]);
     let pooled = values(&pool_and_normalize(&hidden, &mask_pool, &mask_sum).expect("pooled"));
     assert_eq!(pooled.len(), 2);
-    assert!((pooled[0] - 0.6).abs() < 1e-6, "got {:?}", pooled);
-    assert!((pooled[1] - 0.8).abs() < 1e-6, "got {:?}", pooled);
+    assert!((pooled[0] - 0.6).abs() < 1e-6, "got {pooled:?}");
+    assert!((pooled[1] - 0.8).abs() < 1e-6, "got {pooled:?}");
 }
 
 #[test]

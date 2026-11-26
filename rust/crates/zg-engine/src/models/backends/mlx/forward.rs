@@ -188,7 +188,7 @@ fn build_compiled() -> CompiledForward {
         )?;
         // Mean-pool over the mask, then L2-normalize in fp32 (the spike's
         // `pooled`), matching the ONNX sentence-embedding pipeline.
-        let pooled = pool_and_normalize(&hidden, &mask_pool, &mask_sum)?;
+        let pooled = pool_and_normalize(&hidden, mask_pool, mask_sum)?;
         Ok(vec![pooled])
     };
     Box::new(compile(function, true))
