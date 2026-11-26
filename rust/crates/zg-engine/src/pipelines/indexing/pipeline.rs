@@ -4428,11 +4428,14 @@ mod tests {
     }
 
     /// A runtime that reports a live backend identity which flips after a
-    /// controlled number of embeds, for exercising the identity checks.
+    /// controlled number of embeds, for exercising the identity checks. It
+    /// also records the last-seen `allow_provider_fallback` so tests can
+    /// assert the run mode the pipeline handed to the embedding path.
     struct FlippingIdentityModel {
         info: EmbeddingModelInfo,
         embeds: std::sync::Arc<std::sync::atomic::AtomicU32>,
         fallback_after: std::sync::Arc<std::sync::atomic::AtomicU32>,
+        observed_allow_fallback: AtomicBool,
     }
 
     impl FlippingIdentityModel {
@@ -4457,6 +4460,7 @@ mod tests {
                 },
                 embeds,
                 fallback_after,
+                observed_allow_fallback: AtomicBool::new(false),
             }
         }
     }
@@ -4498,10 +4502,12 @@ mod tests {
         async fn embed(
             &self,
             contents: &[Vec<Content>],
-            _options: EmbeddingOptions,
+            options: EmbeddingOptions,
             _progress: Option<IndexProgressReporter>,
         ) -> Result<EmbeddingResult, ModelError> {
             self.embeds.fetch_add(1, Ordering::AcqRel);
+            self.observed_allow_fallback
+                .store(options.allow_provider_fallback, Ordering::Release);
             Ok(EmbeddingResult {
                 vectors: contents
                     .iter()
@@ -4561,6 +4567,13 @@ mod tests {
             !error.message().contains("changed during the build"),
             "an incremental run never stages a build: {}",
             error.message()
+        );
+        // The run mode also governs the embedding path: an identity-less
+        // incremental run must not allow provider fallback, which would let
+        // fallback-runtime vectors append to a live generation.
+        assert!(
+            !model.observed_allow_fallback.load(Ordering::Acquire),
+            "incremental runs must pass allow_provider_fallback: false"
         );
     }
 }
