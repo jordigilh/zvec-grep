@@ -213,15 +213,17 @@ run on `ubuntu-latest` only, so this lane is new work.
    cancellation, budget handling, cancellation/panic paths) is therefore
    covered by unit tests on the macOS runner, pinned to the CPU device so they
    do not need a GPU.
-2. **Hosted macOS lane — gates the Metal kernels.** `runs-on: macos-26`
-   (arm64, 3-core M1, 7 GB). Standard GitHub-hosted runners are **free and
+2. **Hosted macOS lane — builds the feature and runs the unit tests.**
+   `runs-on: macos-latest`. Standard GitHub-hosted runners are **free and
    unlimited on public repositories**, macOS included, so this lane costs
-   nothing and needs no payment method. Steps: run `xcrun -f metal`, and
+   nothing and needs no payment method. Steps: verify
+   `xcrun -sdk macosx metal --version` and run
    `xcodebuild -downloadComponent MetalToolchain` when it fails (Xcode 26+
    ships Metal as a separate downloadable component; CommandLineTools alone
-   never has it), then the `#[ignore]`d `cached_jina_mlx` numerics test
-   (cosine >= 0.999 against the fp32 fixtures from this spike), a smoke
-   embedding, and one end-to-end `zg` run.
+   never has it), check `mlx.metallib` exists, then clippy and
+   `cargo test -p zg-engine --lib --features mlx`. The `#[ignore]`d
+   `cached_jina_mlx` numerics gate is **not** wired into CI yet: it needs the
+   committed fixtures from `jina_mlx_spike.py --dump-fixtures`.
 3. **Hosted Metal must be proven, not assumed.** Metal does execute on
    hosted arm64 macOS VMs — actions/runner-images#14836 (Oct 2026) shows
    Metal command buffers running cleanly on `macos-15`/`macos-26` arm64,
@@ -287,9 +289,9 @@ crate is tolerable, a wrong one fails CI.
 is exposed, so the compiled 3.7-5.2x is the target). Deductions: `Array
 !Send` forces the worker-thread design; the precision policy adds a
 correctness surface (fp32 LN/scores are mandatory, measured); single-maintainer
-crate; the Ubuntu CPU-only `mlx-sys` build the CI baseline depends on is
-unverified on Linux; and hosted macOS runners have not been shown to allocate
-an MLX Metal device (upstream MLX uses self-hosted runners for exactly this
-reason). The toolchain risk that dominated the earlier estimate is gone.
+crate; and the numerics gate is still unproven on a hosted runner (its default
+MLX device does resolve to the GPU there — construction and small-op evals are
+green — but no run has compared kernels against the fp32 fixtures). The
+toolchain risk that dominated the earlier estimate is gone.
 Numerics risk is low (spec validated here); scheduling/identity risk is low
 (runtime rules already established in #73/#77).

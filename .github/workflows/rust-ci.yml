@@ -117,8 +117,8 @@ jobs:
   # feature cannot link on Linux even with MLX's CPU backend. Non-GPU logic is
   # covered here by the unit tests, which pin the CPU device.
   mlx:
-    name: rust mlx (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: rust mlx (macos)
+    runs-on: macos-latest
     timeout-minutes: 60
     permissions:
       contents: read
@@ -127,10 +127,6 @@ jobs:
       # target dir means a restored cache still finds the file, instead of a
       # build-script fingerprint that is fresh while $HOME lost the metallib.
       MLX_RS_METAL_PATH: ${{ github.workspace }}/rust/target/mlx-metallib
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -138,7 +134,6 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: rustup show active-toolchain
       - name: Ensure the Metal toolchain
-        if: runner.os == 'macOS'
         run: |
           if ! xcrun -sdk macosx metal --version; then
             xcodebuild -downloadComponent MetalToolchain
@@ -155,6 +150,8 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-rust-mlx-v1-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-rust-mlx-v1-
+      - name: Verify the MLX metallib exists
+        run: test -f "$MLX_RS_METAL_PATH/mlx.metallib"
       - name: Check the opt-in MLX feature
         run: cargo clippy --locked -p zg-engine --all-targets --features mlx -- -D warnings
       - name: Test the opt-in MLX feature

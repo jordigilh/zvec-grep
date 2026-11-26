@@ -32,7 +32,15 @@ fn catalog_entry_reports_its_own_backend_identity() {
     .expect("model");
     let info = model.info();
     info.validate().expect("valid model info");
-    assert_eq!(info.backend.as_deref(), Some("mlx-gpu"));
+    let expected = match mlx_rs::Device::try_default()
+        .expect("default device")
+        .get_type()
+        .expect("device type")
+    {
+        mlx_rs::DeviceType::Gpu => "mlx-gpu",
+        mlx_rs::DeviceType::Cpu => "mlx-cpu",
+    };
+    assert_eq!(info.backend.as_deref(), Some(expected));
     assert_eq!(info.dtype.as_deref(), Some("fp16"));
     assert_eq!(info.dimension, 768);
     assert_eq!(info.max_batch_size, 8);
@@ -43,7 +51,7 @@ fn catalog_entry_reports_its_own_backend_identity() {
 }
 
 #[test]
-fn the_requested_device_is_honoured_or_rejected() {
+fn the_requested_device_selects_the_recorded_backend() {
     let build = |device: crate::domain::model::Device| {
         MlxEmbeddingModel::new(
             entry(),

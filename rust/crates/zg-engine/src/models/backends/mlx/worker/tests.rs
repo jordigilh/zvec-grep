@@ -297,6 +297,14 @@ fn padding_rounds_up_to_bucket_boundaries_so_compiled_shapes_repeat() {
     assert_eq!(short.sequence_length, 128, "short inputs share one bucket");
 }
 
+#[test]
+fn a_device_initialization_failure_is_a_structured_error() {
+    let error = MlxWorker::try_spawn_with_failing_device(|_| Ok(EchoForward::new().0), 2)
+        .err()
+        .expect("a failed device must not yield a worker");
+    assert_eq!(error.code(), crate::EngineError::INTERNAL);
+}
+
 #[tokio::test]
 async fn the_worker_reports_the_device_it_was_pinned_to() {
     let worker = MlxWorker::try_spawn(|_| Ok(EchoForward::new().0), 2, mlx_rs::DeviceType::Cpu)

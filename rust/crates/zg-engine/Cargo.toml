@@ -86,9 +86,10 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = ["coreml"
 # feature is enabled.
 mlx-rs = { version = "0.34", optional = true, features = ["safetensors"] }
 
-# Same dependency on every other target, CPU-only, so `--features mlx` still
-# compiles and unit-tests on the Ubuntu CI lane (MLX supports a CPU backend).
-# Without this the feature would enable code whose crate is unavailable here.
+# Same dependency on every other target, CPU-only: it keeps the feature
+# *resolvable* so metadata and checkouts on other platforms do not hard-fail.
+# It does not make the feature linkable there — mlx-sys always links Apple
+# frameworks (see benchmarks/mlx-gpu/README.md).
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 mlx-rs = { version = "0.34", optional = true, default-features = false, features = ["safetensors"] }
 

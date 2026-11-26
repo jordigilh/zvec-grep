@@ -54,9 +54,10 @@ struct LoadedMlxModel {
     worker: MlxWorker,
 }
 
-/// MLX runs on the Apple GPU or the CPU; the other device kinds have no MLX
-/// backend, so an explicit request for them is a caller error rather than a
-/// silent downgrade.
+/// MLX runs on the Apple GPU or the CPU. `None`/`Auto` take whatever MLX
+/// resolves as its default device, `Metal` is explicit, and device kinds MLX
+/// has no backend for fall back to the CPU (the recorded identity follows the
+/// fallback, so an index can never claim a device it did not use).
 fn resolve_device(device: Option<Device>) -> Result<mlx_rs::DeviceType, ModelError> {
     match device {
         // Ask MLX itself: with the metal feature this is the GPU, and on a

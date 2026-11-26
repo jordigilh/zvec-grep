@@ -119,6 +119,31 @@ impl MlxWorker {
     where
         F: MlxForward,
     {
+        Self::try_spawn_impl(loader, max_batch_size, device, false)
+    }
+
+    /// Test-only constructor that fails device initialization, so the
+    /// "device initialization failed" branch has coverage.
+    #[cfg(test)]
+    pub(super) fn try_spawn_with_failing_device<F>(
+        loader: impl Fn(&CancellationToken) -> Result<F, ModelError> + Send + 'static,
+        max_batch_size: usize,
+    ) -> Result<Self, ModelError>
+    where
+        F: MlxForward,
+    {
+        Self::try_spawn_impl(loader, max_batch_size, DeviceType::Cpu, true)
+    }
+
+    fn try_spawn_impl<F>(
+        loader: impl Fn(&CancellationToken) -> Result<F, ModelError> + Send + 'static,
+        max_batch_size: usize,
+        device: DeviceType,
+        fail_device: bool,
+    ) -> Result<Self, ModelError>
+    where
+        F: MlxForward,
+    {
         let (commands, mut receiver) = mpsc::unbounded_channel();
         // The device and its stream are created inside the thread. Report
         // readiness so a failure there becomes a structured error instead of a
@@ -127,6 +152,11 @@ impl MlxWorker {
         let thread = thread::Builder::new()
             .name("zg-mlx-embed".to_owned())
             .spawn(move || {
+                if fail_device {
+                    // No readiness signal is sent, so the caller reports a
+                    // structured initialization error.
+                    return;
+                }
                 // Pin the model-owning thread to the resolved device, so the
                 // arrays and compiled graphs it creates use exactly that device.
                 mlx_rs::with_device(mlx_rs::Device::new(device, 0), || {
@@ -187,8 +217,12 @@ impl MlxWorker {
                 ModelError::internal("MLX worker thread failed to start").with_cause(error)
             })?;
         // A panic during stream creation closes the channel without a ready
-        // signal, which is exactly the case this catches.
-        if device_ready.recv().is_err() {
+        // signal, which is exactly the case this catches. The timeout keeps a
+        // stalled driver from blocking a runtime thread forever.
+        if device_ready
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .is_err()
+        {
             let _ = thread.join();
             return Err(ModelError::internal(
                 "MLX device initialization failed on the worker thread",
