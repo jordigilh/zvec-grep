@@ -141,9 +141,21 @@ pub(crate) async fn read_provenance(root: &Path) -> GitProvenance {
 }
 
 async fn read_dirty(root: &Path) -> Option<bool> {
-    let output = git(root, &["--no-optional-locks", "status", "--porcelain"])
-        .await?
-        .success()?;
+    // The workspace's own index directory is untracked content that says
+    // nothing about the source tree, so it is excluded from the dirty check;
+    // without this every indexed workspace would record `dirty: true`.
+    let output = git(
+        root,
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain",
+            "--",
+            ":(exclude).zvec-grep",
+        ],
+    )
+    .await?
+    .success()?;
     Some(!output.is_empty())
 }
 
@@ -216,6 +228,8 @@ async fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> Option<bo
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
+            // A timed-out query must not leak its child process.
+            .kill_on_drop(true)
             .status(),
     )
     .await
@@ -250,7 +264,9 @@ async fn git(root: &Path, args: &[&str]) -> Option<GitOutput> {
         .arg(root)
         .args(args)
         .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stderr(std::process::Stdio::null())
+        // A timed-out query must not leak its child process (review finding).
+        .kill_on_drop(true);
     let output = tokio::time::timeout(timeout, command.output())
         .await
         .ok()?
@@ -402,7 +418,16 @@ mod tests {
         let clean = read_provenance(root).await;
         assert!(clean.commit.is_some(), "HEAD resolves to a commit");
         assert_eq!(clean.branch.as_deref(), Some("main").or(Some("master")));
-        assert_eq!(clean.dirty, Some(false));
+        // The workspace's own index directory is untracked but excluded from
+        // the dirty check (issue #105 review finding).
+        std::fs::create_dir(root.join(".zvec-grep")).expect("index directory");
+        let still_clean = read_provenance(root).await;
+        assert_eq!(
+            still_clean.dirty,
+            Some(false),
+            "the index directory is not dirt"
+        );
+        assert_eq!(still_clean.commit, clean.commit);
 
         std::fs::write(root.join("file.txt"), "changed").expect("dirty the tree");
         let dirty = read_provenance(root).await;
@@ -412,6 +437,32 @@ mod tests {
         let relation =
             commit_relation(root, clean.commit.as_deref(), clean.commit.as_deref()).await;
         assert_eq!(relation, CommitRelation::Same);
+        // A second commit: the first becomes its ancestor, and a donor at the
+        // first commit lags the target by exactly one commit.
+        let status = std::process::Command::new("git")
+            .args(["commit", "--quiet", "--allow-empty", "-m", "second"])
+            .current_dir(root)
+            .status()
+            .expect("git commit");
+        assert!(status.success());
+        let second = read_provenance(root).await;
+        assert_eq!(
+            commit_relation(root, clean.commit.as_deref(), second.commit.as_deref()).await,
+            CommitRelation::Ancestor
+        );
+        assert_eq!(
+            commit_relation(root, second.commit.as_deref(), clean.commit.as_deref()).await,
+            CommitRelation::Ancestor
+        );
+        assert_eq!(
+            commits_behind(
+                root,
+                clean.commit.as_deref().expect("first commit"),
+                second.commit.as_deref().expect("second commit"),
+            )
+            .await,
+            Some(1)
+        );
     }
 
     #[tokio::test]

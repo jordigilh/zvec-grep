@@ -527,8 +527,9 @@ pub mod result {
         /// The branch label the donor's generation was built from, when recorded.
         pub donor_branch: Option<String>,
         pub relation: SeedRelation,
-        /// How far the donor lags this workspace's commit; `None` when
-        /// unknown or the histories are unrelated.
+        /// Commits in this workspace's history that the donor lacks — how far
+        /// the donor lags. `0` when the donor is at or ahead of this commit;
+        /// `None` when unknown or the histories are unrelated.
         pub commits_behind: Option<u64>,
         /// Target files already embedded by the donor (estimated).
         pub files_matched: usize,

@@ -69,6 +69,20 @@ pub(crate) struct WorkspaceIndexService {
     /// exercising the full-build fallback (issue #72).
     #[cfg(test)]
     fail_seed_copy: bool,
+    /// Test hook: mutate the selected donor between selection and adoption,
+    /// exercising the copy-time freshness check (issue #105 failure matrix).
+    #[cfg(test)]
+    donor_mutation_after_selection: Option<DonorMutationAfterSelection>,
+}
+
+/// What a test hook does to the selected donor after selection (issue #105).
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(crate) enum DonorMutationAfterSelection {
+    /// Rebuild the donor's index, moving it to a new generation.
+    Rebuild,
+    /// Disable indexing on the donor, invalidating the selection invariants.
+    Disable,
 }
 
 impl WorkspaceIndexService {
@@ -83,6 +97,8 @@ impl WorkspaceIndexService {
             fail_index_completion: false,
             #[cfg(test)]
             fail_seed_copy: false,
+            #[cfg(test)]
+            donor_mutation_after_selection: None,
         }
     }
 
@@ -99,6 +115,7 @@ impl WorkspaceIndexService {
             _registry_directory: Some(directory),
             fail_index_completion: false,
             fail_seed_copy: false,
+            donor_mutation_after_selection: None,
         }
     }
 
@@ -271,6 +288,52 @@ impl WorkspaceIndexService {
             rebuilding && !options.rebuild,
         ))
         .await?;
+        // Test hook (issue #105 failure matrix): mutate the selected donor
+        // after selection but before adoption, exercising the copy-time
+        // freshness check. Production builds never take this path.
+        #[cfg(test)]
+        if let Some(mutation) = self.donor_mutation_after_selection
+            && let Some(donor) = seed_selection
+                .as_ref()
+                .and_then(|selection| selection.donors.first())
+        {
+            let donor_root = donor.manifest.workspace.root.clone();
+            match mutation {
+                DonorMutationAfterSelection::Rebuild => {
+                    let mut donor_options = IndexOptions {
+                        root: Some(donor_root),
+                        rebuild: true,
+                        ..IndexOptions::default()
+                    };
+                    donor_options.embedding = Some(EmbeddingModelSpec {
+                        reference: "local/potion-code-16m-v2".into(),
+                        revision: None,
+                        cache_dir: None,
+                        endpoint: None,
+                        device: crate::domain::model::Device::Cpu,
+                    });
+                    Box::pin(self.index(models, donor_options))
+                        .await
+                        .expect("test hook rebuilds the donor");
+                }
+                DonorMutationAfterSelection::Disable => {
+                    let home = donor_root.join(".zvec-grep");
+                    let mut donor_manifest = read_workspace_manifest(&home)
+                        .expect("donor manifest read")
+                        .expect("donor manifest");
+                    let _writer = crate::workspace::lock::acquire_home_lock(
+                        &home,
+                        LockMode::Write,
+                        "test.disable_donor",
+                    )
+                    .expect("donor writer");
+                    donor_manifest.workspace.index = IndexState::Disabled;
+                    donor_manifest.index_version = None;
+                    donor_manifest.storage_generation = None;
+                    write_workspace_manifest(&home, &donor_manifest).expect("disable donor");
+                }
+            }
+        }
         // Acquisition precedes the identity refusal below: construction is
         // lazy and runtime-manager-cached, while the true backend identity is
         // only known once the backend exists. Globs validate before it.
@@ -476,6 +539,9 @@ impl WorkspaceIndexService {
         let capsule = target
             .embedding()
             .expect("indexing resolves exactly one embedding model");
+        // Whether any donor passed the guard, captured before the donors are
+        // consumed: it distinguishes a guard refusal from a capsule mismatch.
+        let donors_passed_guard = !selection.donors.is_empty();
         let compatible: Vec<crate::workspace::seed::RankedSeed> = selection
             .donors
             .into_iter()
@@ -489,7 +555,20 @@ impl WorkspaceIndexService {
             })
             .collect();
         if compatible.is_empty() {
-            if let Some(donor) = selection.refused {
+            // Attribute the refusal to its actual cause (review finding): the
+            // guard refusal only applies when no donor passed it at all; a
+            // donor set emptied by the capsule filter is a model mismatch.
+            if donors_passed_guard {
+                if let Some(donor) = selection.refused.as_ref() {
+                    let mut report = SeedReport::refused(donor);
+                    report.refusal = Some(format!(
+                        "no seed donor matches the resolved model capsule; the closest donor {} was estimated at {:.0}% divergence",
+                        donor.manifest.workspace.root.display(),
+                        donor.divergence.ratio * 100.0,
+                    ));
+                    *seed_report = Some(report);
+                }
+            } else if let Some(donor) = selection.refused {
                 *seed_report = Some(SeedReport::refused(&donor));
             }
             return Ok(None);
@@ -532,13 +611,15 @@ impl WorkspaceIndexService {
             else {
                 continue;
             };
+            // A refreshed donor may have been disabled or reconfigured since
+            // selection: re-validate the selection-time invariants instead of
+            // trusting them (review finding: a disabled donor must be
+            // skipped, never panic).
+            let Some(donor_embedding) = donor.manifest.embedding() else {
+                continue;
+            };
             // A rebuilt donor may have changed model or moved past the guard.
-            if donor
-                .manifest
-                .embedding()
-                .expect("donors record an embedding")
-                .ensure_model_compatible(capsule)
-                .is_err()
+            if donor_embedding.ensure_model_compatible(capsule).is_err()
                 || donor.divergence.ratio > crate::workspace::seed::SEED_MAX_DIVERGENCE_RATIO
             {
                 continue;
@@ -1048,12 +1129,17 @@ async fn publish_completed_run(
         // runtime was verified against it before the copy, fallback was
         // disabled, and each batch enforced it. Relabeling here would
         // launder the seed's vectors under a different runtime.
-        // Provenance (issue #105): a fresh or adopted generation reflects
-        // the target's working tree, so it records the target's commit,
-        // branch and dirty flag at publication — the seed's own
-        // provenance is superseded by the delta pass that just ran.
-        let provenance_root = manifest.workspace.root.clone();
-        record_provenance(&mut manifest, &provenance_root).await;
+        // Provenance (issue #105): a fresh or adopted generation records the
+        // target's commit, branch and dirty flag at publication — the seed's
+        // own provenance is superseded by the delta pass that just ran. A
+        // build is a new generation born from the target's tree, so a
+        // zero-delta adoption still records it; only failed files withhold
+        // the label, because successful files remain published and the stored
+        // content would not fully reflect the recorded commit.
+        if indexed.files_failed == 0 {
+            let provenance_root = manifest.workspace.root.clone();
+            record_provenance(&mut manifest, &provenance_root).await;
+        }
         build.target = manifest.clone();
         publish_build(build, now)?;
         return Ok(());
@@ -1723,6 +1809,8 @@ mod tests {
 
     use super::provenance_advances;
     use crate::api::index::result::SeedRelation;
+    use crate::pipelines::indexing::service::DonorMutationAfterSelection;
+    use crate::workspace::lock::LockMode;
     use crate::workspace::manifest::WorkspaceManifest;
 
     use crate::{
@@ -4577,9 +4665,9 @@ mod tests {
         let provenance = manifest.provenance.as_ref().expect("recorded provenance");
         assert!(provenance.commit.is_some());
         assert_eq!(provenance.commit, report.donor_commit);
-        // The untracked `.zvec-grep` directory makes the working tree differ
-        // from HEAD: the dirty flag is true, and recorded as such.
-        assert_eq!(provenance.dirty, Some(true));
+        // The tree is clean: the workspace's own `.zvec-grep` directory is
+        // excluded from the dirty check.
+        assert_eq!(provenance.dirty, Some(false));
         assert!(
             provenance.branch.is_none(),
             "a detached worktree HEAD records no branch label"
@@ -4895,6 +4983,126 @@ mod tests {
         assert_eq!(
             report.donor_root.canonicalize().ok(),
             main.canonicalize().ok()
+        );
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn a_donor_rebuilt_between_selection_and_adoption_is_remeasured() {
+        let directory = tempdir().expect("repository parent");
+        let (main, worktree) = git_repo_fixture(directory.path());
+        std::fs::write(main.join("one.txt"), "orchard rows and orchard vines").expect("source");
+        let mut service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("donor index");
+        // The worktree shares one.txt and adds two.txt. Selection measures the
+        // donor before it knows two.txt; the test hook then rebuilds the donor
+        // WITH two.txt, so adoption must re-measure against the new
+        // generation instead of trusting the stale measurement.
+        std::fs::write(worktree.join("one.txt"), "orchard rows and orchard vines").expect("same");
+        std::fs::write(worktree.join("two.txt"), "irrigation notes for the orchard")
+            .expect("added");
+        std::fs::write(main.join("two.txt"), "irrigation notes for the orchard")
+            .expect("donor adds");
+        service.donor_mutation_after_selection = Some(DonorMutationAfterSelection::Rebuild);
+        let result = service
+            .index(&models, empty_index_options(&worktree))
+            .await
+            .expect("worktree index");
+        assert!(
+            result.seeded,
+            "the rebuilt donor is adopted after re-measurement"
+        );
+        let report = result.seed.as_ref().expect("seed report");
+        assert_eq!(
+            report.donor_root.canonicalize().ok(),
+            main.canonicalize().ok()
+        );
+        assert_eq!(
+            result.files_added + result.files_modified,
+            0,
+            "the re-measured donor covers the whole target"
+        );
+        assert_eq!(result.files_unchanged, 2);
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn a_donor_disabled_between_selection_and_adoption_is_skipped_without_panicking() {
+        let directory = tempdir().expect("repository parent");
+        let (main, worktree) = git_repo_fixture(directory.path());
+        std::fs::write(main.join("one.txt"), "orchard rows and orchard vines").expect("source");
+        let mut service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("donor index");
+        std::fs::write(worktree.join("one.txt"), "orchard rows and orchard vines").expect("same");
+        // The donor is disabled after selection: its manifest no longer
+        // carries an embedding, so the adoption must skip it — never panic on
+        // the invalidated selection invariant.
+        service.donor_mutation_after_selection = Some(DonorMutationAfterSelection::Disable);
+        let result = service
+            .index(&models, empty_index_options(&worktree))
+            .await
+            .expect("worktree index without a panic");
+        assert!(!result.seeded, "a disabled donor is skipped");
+        assert_eq!(result.files_added, 1, "the worktree pays a full build");
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn an_implicit_build_never_adopts_a_remote_donor_model() {
+        let directory = tempdir().expect("repository parent");
+        let (main, worktree) = git_repo_fixture(directory.path());
+        std::fs::write(main.join("one.txt"), "orchard rows and orchard vines").expect("source");
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("donor index");
+        // Rewrite the donor's recorded model to a remote reference: a
+        // no-signal implicit build must not adopt it.
+        let donor = manifest_at(&main);
+        let mut embedding = donor.embedding().expect("embedding").clone();
+        embedding.model.provider = "dashscope".into();
+        embedding.model.name = "text-embedding-v4".into();
+        let mut rewritten = donor.clone();
+        rewritten.workspace.index =
+            IndexState::Enabled(crate::domain::IndexDescriptor::single(embedding));
+        let _writer = crate::workspace::lock::acquire_home_lock(
+            &donor.path,
+            LockMode::Write,
+            "test.rewrite_model",
+        )
+        .expect("writer");
+        super::write_workspace_manifest(&donor.path, &rewritten).expect("rewrite donor model");
+        std::fs::write(worktree.join("one.txt"), "orchard rows and orchard vines").expect("same");
+        let mut options = IndexOptions {
+            root: Some(worktree.clone()),
+            implicit: true,
+            ..IndexOptions::default()
+        };
+        // Nothing embeds: the request isolates the model-resolution rule.
+        options.scan.globs = Some(vec!["nothing/**".into()]);
+        let result = service
+            .index(&models, options)
+            .await
+            .expect("implicit worktree index");
+        assert!(!result.seeded, "a remote donor model is never adopted");
+        let reference = manifest_at(&worktree)
+            .embedding()
+            .expect("embedding")
+            .model
+            .reference();
+        assert!(
+            reference.starts_with("local/"),
+            "an implicit build falls back to a local model, not the donor's remote model: {reference}"
         );
         models.close();
     }
