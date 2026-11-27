@@ -146,6 +146,14 @@ pub(crate) async fn read_provenance(root: &Path) -> GitProvenance {
     } else {
         None
     };
+    // Reftable repositories (and other layouts without a loose or packed ref
+    // for HEAD) lose the commit in the direct lookup: fall back to bounded
+    // read-only plumbing so same-commit ranking still works there.
+    let commit = match commit {
+        Some(commit) => Some(commit),
+        None if own_git_dir => rev_parse_head(root).await,
+        None => None,
+    };
     GitProvenance {
         commit,
         branch,
@@ -153,16 +161,35 @@ pub(crate) async fn read_provenance(root: &Path) -> GitProvenance {
     }
 }
 
+/// Resolve the commit id of `HEAD` with read-only plumbing; `None` on
+/// failure, timeout, or a non-commit answer.
+async fn rev_parse_head(root: &Path) -> Option<String> {
+    let output = git(root, &["rev-parse", "HEAD"], GIT_QUERY_TIMEOUT)
+        .await?
+        .success()?;
+    let commit = output.trim().to_owned();
+    is_commit_id(&commit).then_some(commit)
+}
+
 async fn read_dirty(root: &Path) -> Option<bool> {
     // The workspace's own index directory is untracked content that says
     // nothing about the source tree, so it is excluded from the dirty check;
     // without this every indexed workspace would record `dirty: true`.
+    // The untracked policy is pinned (`status.showUntrackedFiles` could
+    // otherwise hide new source files) and the optional machinery a
+    // repository may configure (fsmonitor, untracked cache) is disabled for
+    // this invocation, so no repository-configured command ever runs.
     let output = git(
         root,
         &[
             "--no-optional-locks",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.untrackedCache=false",
             "status",
             "--porcelain",
+            "--untracked-files=normal",
             "--",
             ":(exclude).zvec-grep",
         ],
@@ -430,8 +457,10 @@ mod tests {
         // master); both are valid branch labels for this test.
         assert!(matches!(clean.branch.as_deref(), Some("main" | "master")));
         // The workspace's own index directory is untracked but excluded from
-        // the dirty check (issue #105 review finding).
+        // the dirty check (issue #105 review finding). A file inside it makes
+        // the exclusion meaningful: git ignores empty directories.
         std::fs::create_dir(root.join(".zvec-grep")).expect("index directory");
+        std::fs::write(root.join(".zvec-grep/manifest.json"), "{}").expect("index metadata");
         let still_clean = read_provenance(root).await;
         assert_eq!(
             still_clean.dirty,

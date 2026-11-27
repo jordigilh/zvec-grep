@@ -249,8 +249,10 @@ fn write_embedding(
             if !value.is_empty() {
                 value.push_str(" @ ");
             }
-            let short = &commit[..commit.len().min(7)];
-            value.push_str(short);
+            // Truncate on a character boundary: the manifest accepts
+            // arbitrary strings and a byte slice could panic mid-UTF-8.
+            let short: String = commit.chars().take(7).collect();
+            value.push_str(&short);
         }
         if provenance.dirty == Some(true) {
             if !value.is_empty() {

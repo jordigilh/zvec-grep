@@ -347,13 +347,20 @@ impl WorkspaceIndexService {
             options.on_progress.clone(),
         )
         .await?;
-        let manifest = index_manifest(
+        let mut manifest = index_manifest(
             &location,
             existing.as_ref(),
             &options,
             &acquired,
             descriptor,
         )?;
+        // An in-place update starts from the active generation's provenance:
+        // a no-op or partially failed refresh must not wipe the recorded
+        // label (the publication gate only overwrites it on a fully
+        // successful change). Fresh builds establish their own at publication.
+        if !rebuilding && let Some(active) = existing.as_ref() {
+            manifest.provenance = active.provenance.clone();
+        }
         let (manifest, build, seed_report) = if rebuilding {
             self.stage_fresh_build(manifest, &mut options, &acquired, seed_selection)
                 .await?
@@ -494,7 +501,14 @@ impl WorkspaceIndexService {
                     "acquiring the seed donor's model failed, falling back to the language default: {}",
                     error.message()
                 );
-                acquire_index_models(models, existing, options, None)?
+                // Re-resolve the profile the workspace would use without the
+                // donor, so the retry keeps the language profile instead of
+                // dropping to the generalist default (CodeRabbit review).
+                let profile = self
+                    .index_profile(existing, options, root, None)
+                    .await?
+                    .filter(|profile| donor_model.as_deref() != Some(profile.as_str()));
+                acquire_index_models(models, existing, options, profile.as_deref())?
             }
             Err(error) => return Err(error),
         };
@@ -578,8 +592,12 @@ impl WorkspaceIndexService {
         // Prepare to learn the runtime's live identity before adopting: a lazy
         // runtime's construction-time info may not report it, and a mismatched
         // identity refuses adoption rather than silently re-embedding with
-        // another runtime, mirroring the incremental refusal.
-        model
+        // another runtime, mirroring the incremental refusal. A preparation
+        // failure declines adoption instead of aborting the build (CodeRabbit
+        // review): adoption is an optimization, and the ordinary build fails
+        // at embedding time exactly like an explicit-model request whose
+        // model cannot load.
+        if let Err(error) = model
             .prepare(
                 crate::models::EmbeddingPrepareOptions {
                     signal: options.signal.clone(),
@@ -591,7 +609,15 @@ impl WorkspaceIndexService {
                     .map(super::model_progress::for_index),
             )
             .await
-            .map_err(ModelError::into_engine_error)?;
+        {
+            let error = ModelError::into_engine_error(error);
+            tracing::warn!(
+                code = error.code(),
+                "preparing the runtime for seed adoption failed, declining adoption: {}",
+                error.message()
+            );
+            return Ok(None);
+        }
         let live = model
             .backend_identity()
             .or_else(|| model.info().backend_identity());
@@ -603,15 +629,24 @@ impl WorkspaceIndexService {
             }
             return Ok(None);
         };
+        // A donor that exceeded the guard only at re-measurement time: kept
+        // for a reported refusal when no other donor is adopted.
+        let mut remeasured_refusal: Option<crate::workspace::seed::RankedSeed> = None;
         for donor in compatible {
             // The donor may have been rebuilt since selection: re-inspect its
             // manifest and re-measure when the generation moved. A donor that
-            // no longer matches is skipped, never fatal.
-            let Some(donor) = self
+            // no longer matches is skipped, never fatal; an over-threshold
+            // re-measurement is kept as a reported refusal.
+            let donor = match self
                 .refreshed_donor(donor, &mut selection.snapshot, target, options)
                 .await
-            else {
-                continue;
+            {
+                crate::workspace::seed::Remeasured::Usable(donor) => donor,
+                crate::workspace::seed::Remeasured::OverThreshold(donor) => {
+                    remeasured_refusal = Some(donor);
+                    continue;
+                }
+                crate::workspace::seed::Remeasured::Unavailable => continue,
             };
             // A refreshed donor may have been disabled or reconfigured since
             // selection: re-validate the selection-time invariants instead of
@@ -678,38 +713,48 @@ impl WorkspaceIndexService {
                 }
             }
         }
-        // No donor matched: report the divergence-guard refusal of the
-        // closest donor when that is why adoption cannot happen (issue #105).
-        if let Some(donor) = selection.refused {
+        // No donor matched: report why. An over-threshold re-measurement is
+        // the freshest evidence, then the selection-time guard refusal, then
+        // a capsule mismatch (issue #105, CodeRabbit review).
+        if seed_report.is_none()
+            && let Some(donor) = remeasured_refusal.or(selection.refused)
+        {
             *seed_report = Some(SeedReport::refused(&donor));
         }
         Ok(None)
     }
 
     /// Re-inspect a donor that may have been rebuilt since selection, and
-    /// re-measure it when its generation moved. `None` when the donor is
-    /// gone, busy, or now past the divergence guard: skip it, never fatal.
+    /// re-measure it when its generation moved. `Unavailable` when the donor
+    /// is gone or busy: skip it, never fatal; `OverThreshold` carries the
+    /// fresh measurement for a reported divergence refusal.
     async fn refreshed_donor(
         &self,
         donor: crate::workspace::seed::RankedSeed,
         snapshot: &mut crate::workspace::seed::TargetSnapshot,
         target: &WorkspaceManifest,
         options: &IndexOptions,
-    ) -> Option<crate::workspace::seed::RankedSeed> {
-        let current = crate::workspace::seed::reinspect_donor(&donor.manifest)?;
+    ) -> crate::workspace::seed::Remeasured {
+        let Some(current) = crate::workspace::seed::reinspect_donor(&donor.manifest) else {
+            return crate::workspace::seed::Remeasured::Unavailable;
+        };
         if current.storage_generation == donor.manifest.storage_generation {
             let mut donor = donor;
             donor.manifest = current;
-            return Some(donor);
+            return crate::workspace::seed::Remeasured::Usable(donor);
         }
         let scan = resolve_scan(None, options);
-        let selection =
-            crate::file_selection::GlobMatcher::new(&target.workspace.root, &scan.globs).ok()?;
+        let Ok(selection) =
+            crate::file_selection::GlobMatcher::new(&target.workspace.root, &scan.globs)
+        else {
+            return crate::workspace::seed::Remeasured::Unavailable;
+        };
         crate::workspace::seed::remeasure_donor(
             &current,
             snapshot,
             &target.workspace.root,
             &selection,
+            &scan,
         )
         .await
     }
@@ -819,11 +864,14 @@ impl WorkspaceIndexService {
         publish_completed_run(
             manifest,
             build,
-            opened_identity,
-            runtime_identity,
-            &run_observation,
-            &indexed,
-            now,
+            CompletedRun {
+                opened_identity,
+                runtime_identity,
+                run_observation: &run_observation,
+                indexed: &indexed,
+                now,
+                signal: options.signal.as_ref(),
+            },
         )
         .await?;
         let mut indexed = indexed;
@@ -1102,6 +1150,17 @@ async fn record_provenance(manifest: &mut WorkspaceManifest, root: &Path) {
     }
 }
 
+/// The completed-run state publication needs, grouped to keep the
+/// publication helper's argument list small.
+struct CompletedRun<'a> {
+    opened_identity: Option<crate::domain::model::BackendIdentity>,
+    runtime_identity: Option<crate::domain::model::BackendIdentity>,
+    run_observation: &'a RunIdentityObservation,
+    indexed: &'a IndexResult,
+    now: u64,
+    signal: Option<&'a tokio_util::sync::CancellationToken>,
+}
+
 /// Publish a completed indexing run: fresh and adopted builds publish a new
 /// generation (recording the target's git provenance, issue #105); an
 /// incremental update appends in place and advances the recorded provenance
@@ -1109,12 +1168,16 @@ async fn record_provenance(manifest: &mut WorkspaceManifest, root: &Path) {
 async fn publish_completed_run(
     mut manifest: WorkspaceManifest,
     build: Option<WorkspaceBuild>,
-    opened_identity: Option<crate::domain::model::BackendIdentity>,
-    runtime_identity: Option<crate::domain::model::BackendIdentity>,
-    run_observation: &RunIdentityObservation,
-    indexed: &IndexResult,
-    now: u64,
+    run: CompletedRun<'_>,
 ) -> Result<(), EngineError> {
+    let CompletedRun {
+        opened_identity,
+        runtime_identity,
+        run_observation,
+        indexed,
+        now,
+        signal,
+    } = run;
     if let Some(mut build) = build {
         if build.expected_identity.is_none() {
             // A fresh build may relabel itself: the storage schema was
@@ -1141,6 +1204,15 @@ async fn publish_completed_run(
         if indexed.files_failed == 0 {
             let provenance_root = manifest.workspace.root.clone();
             record_provenance(&mut manifest, &provenance_root).await;
+        }
+        // The git query above can wait on a subprocess: re-check
+        // cancellation before the active generation is replaced, so a cancel
+        // during that window still unwinds through the staged-build cleanup
+        // (CodeRabbit review).
+        if signal.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
+            return Err(EngineError::cancelled(
+                "indexing was cancelled before publication",
+            ));
         }
         build.target = manifest.clone();
         publish_build(build, now)?;
@@ -4871,6 +4943,19 @@ mod tests {
             Some("topic"),
             "the branch label survives the incremental update"
         );
+        // A no-op refresh must not wipe the recorded provenance (CodeRabbit
+        // review: the in-place manifest starts from the active generation's
+        // label, and only a fully successful change overwrites it).
+        service
+            .index(&models, empty_index_options(&worktree))
+            .await
+            .expect("no-op refresh");
+        let no_op = manifest_at(&worktree);
+        assert_eq!(
+            no_op.provenance.as_ref().and_then(|p| p.commit.as_deref()),
+            Some(commit.as_str()),
+            "a no-op refresh keeps the recorded commit"
+        );
         models.close();
     }
 
@@ -5158,6 +5243,15 @@ mod tests {
                 .await
                 .expect("seeded run");
             let seed_ms = started.elapsed().as_millis();
+            if diverged * 100 <= 102 * 100 {
+                // Rows at or below the guard (102/120 = 85%) measure adoption;
+                // rows above it measure a refusal plus a fresh build, which
+                // the printed label must not present as an adopted build.
+                assert!(
+                    seeded.seeded,
+                    "in-guard rows must adopt for the timing to measure adoption"
+                );
+            }
             std::fs::remove_dir_all(worktree.join(".zvec-grep")).expect("reset target");
             let started = std::time::Instant::now();
             let fresh = service

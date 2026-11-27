@@ -156,6 +156,31 @@ impl Divergence {
     }
 }
 
+/// Whether a donor path falls inside the target's scan selection. Globs are
+/// checked by the matcher; file-type filters mirror the scanner's catalog so
+/// a donor file the target's `file_types` excludes is scan exclusion, not a
+/// deletion (issue #105 review finding). Hidden-file and ignore-rule parity
+/// is approximated by these checks — the walker's full policy is not
+/// re-derived here — and any residue only nudges the divergence estimate,
+/// never correctness.
+fn donor_in_target_selection(
+    path: &Path,
+    selection: &crate::file_selection::GlobMatcher,
+    scan: &ScanRules,
+) -> bool {
+    if !selection.matches_path(path) {
+        return false;
+    }
+    if scan.file_types.is_empty() && scan.excluded_file_types.is_empty() {
+        return true;
+    }
+    let Ok(types) = crate::file_selection::file_types(&scan.file_types, &scan.excluded_file_types)
+    else {
+        return true; // Never fail the measurement over a filter build error.
+    };
+    types.matched(path, false).is_whitelist()
+}
+
 /// Compare a donor's stored file records against the target snapshot. Donor
 /// records without a content hash (pending, failed, deleting) never match and
 /// are excluded from the union — they are not donor content the target can
@@ -166,6 +191,7 @@ pub(crate) fn measure_divergence(
     snapshot: &mut TargetSnapshot,
     root: &Path,
     selection: &crate::file_selection::GlobMatcher,
+    scan: &ScanRules,
 ) -> Divergence {
     let mut matched = 0_usize;
     let mut deleted = 0_usize;
@@ -179,7 +205,7 @@ pub(crate) fn measure_divergence(
             continue;
         };
         let path = record.relative_path.as_path();
-        if !selection.matches_path(path) {
+        if !donor_in_target_selection(path, selection, scan) {
             continue; // The target's scan rules exclude it: not a deletion.
         }
         match snapshot.files.get_mut(path) {
@@ -364,7 +390,7 @@ pub(crate) async fn select_seed(
         let (Ok(records), Ok(())) = (records, close) else {
             continue;
         };
-        let divergence = measure_divergence(&records, &mut snapshot, own_root, selection);
+        let divergence = measure_divergence(&records, &mut snapshot, own_root, selection, scan);
         let relation = git::commit_relation(
             own_root,
             manifest
@@ -478,29 +504,53 @@ pub(crate) fn reinspect_donor(
     }
 }
 
+/// The outcome of re-measuring a donor that may have been rebuilt since
+/// selection (issue #105 review finding: an over-threshold re-measurement
+/// must be reported as a divergence refusal, not silently skipped).
+pub(crate) enum Remeasured {
+    /// The donor is usable, with fresh measurements.
+    Usable(RankedSeed),
+    /// The donor now exceeds the divergence guard, with the new measurement.
+    OverThreshold(RankedSeed),
+    /// The donor is gone, busy or unreadable: skip it, never fatal.
+    Unavailable,
+}
+
 /// Re-measure a donor that was rebuilt since selection: refresh its
-/// divergence and relation, and re-apply the guard. `None` when the donor is
-/// busy, unreadable or now over the threshold.
+/// divergence and relation, and re-apply the guard.
 pub(crate) async fn remeasure_donor(
     current: &super::manifest::WorkspaceManifest,
     snapshot: &mut TargetSnapshot,
     root: &Path,
     selection: &crate::file_selection::GlobMatcher,
-) -> Option<RankedSeed> {
+    scan: &ScanRules,
+) -> Remeasured {
     let Ok(storage) = IndexStore::open(WorkspaceIndexStorageOptions::ReadOnly {
         storage_path: current.storage_home(),
     }) else {
-        return None;
+        return Remeasured::Unavailable;
     };
     let records = storage.list_files();
     let close = storage.close();
     let (Ok(records), Ok(())) = (records, close) else {
-        return None;
+        return Remeasured::Unavailable;
     };
-    let divergence = measure_divergence(&records, snapshot, root, selection);
+    let divergence = measure_divergence(&records, snapshot, root, selection, scan);
+    let ranked = ranked(current, divergence, root, snapshot).await;
     if divergence.ratio > SEED_MAX_DIVERGENCE_RATIO {
-        return None;
+        Remeasured::OverThreshold(ranked)
+    } else {
+        Remeasured::Usable(ranked)
     }
+}
+
+/// Build a ranked donor from a current manifest and a fresh measurement.
+async fn ranked(
+    current: &super::manifest::WorkspaceManifest,
+    divergence: Divergence,
+    root: &Path,
+    snapshot: &TargetSnapshot,
+) -> RankedSeed {
     let relation = git::commit_relation(
         root,
         current
@@ -522,12 +572,12 @@ pub(crate) async fn remeasure_donor(
         }
         _ => None,
     };
-    Some(RankedSeed {
+    RankedSeed {
         manifest: current.clone(),
         divergence,
         relation,
         commits_behind,
-    })
+    }
 }
 
 /// Open the first candidate whose recorded backend identity matches the live
@@ -834,7 +884,7 @@ mod tests {
     mod divergence {
         use crate::domain::{FileId, FileIndexStatus, FileRecord, FileSnapshot, SourcePath};
 
-        use super::super::{GitProvenance, TargetFile, TargetSnapshot, measure_divergence};
+        use super::super::{GitProvenance, TargetFile, TargetSnapshot};
         use crate::domain::ScanRules;
         use crate::utils::sha256_hex;
 
@@ -887,11 +937,20 @@ mod tests {
                 .expect("matcher")
         }
 
+        fn measure(
+            donor: &[FileRecord],
+            target: &mut TargetSnapshot,
+            root: &std::path::Path,
+            selection: &crate::file_selection::GlobMatcher,
+        ) -> super::super::Divergence {
+            super::super::measure_divergence(donor, target, root, selection, &ScanRules::default())
+        }
+
         #[test]
         fn identical_content_matches_without_divergence() {
             let (directory, mut target) = snapshot(&[("one.txt", "shared bytes")]);
             let donor = [record("one.txt", b"shared bytes", true)];
-            let divergence = measure_divergence(
+            let divergence = measure(
                 &donor,
                 &mut target,
                 directory.path(),
@@ -910,7 +969,7 @@ mod tests {
         fn a_size_difference_counts_as_modified_without_reading_the_file() {
             let (directory, mut target) = snapshot(&[("one.txt", "longer target bytes")]);
             let donor = [record("one.txt", b"short", true)];
-            let divergence = measure_divergence(
+            let divergence = measure(
                 &donor,
                 &mut target,
                 directory.path(),
@@ -927,7 +986,7 @@ mod tests {
         fn same_size_different_bytes_count_as_modified() {
             let (directory, mut target) = snapshot(&[("one.txt", "target bytes")]);
             let donor = [record("one.txt", b"donor bytes", true)];
-            let divergence = measure_divergence(
+            let divergence = measure(
                 &donor,
                 &mut target,
                 directory.path(),
@@ -944,7 +1003,7 @@ mod tests {
                 record("one.txt", b"target bytes", true),
                 record("gone.txt", b"deleted on the branch", true),
             ];
-            let divergence = measure_divergence(
+            let divergence = measure(
                 &donor,
                 &mut target,
                 directory.path(),
@@ -970,7 +1029,7 @@ mod tests {
                 record("one.txt", b"target bytes", true),
                 record("two.txt", b"excluded by the target scan", true),
             ];
-            let divergence = measure_divergence(&donor, &mut target, directory.path(), &selection);
+            let divergence = measure(&donor, &mut target, directory.path(), &selection);
             assert_eq!(divergence.deleted, 0, "scan exclusion is not a deletion");
             assert!((divergence.ratio - 0.0).abs() < 1e-9);
         }
@@ -988,7 +1047,7 @@ mod tests {
                 },
             );
             let donor = [record("one.txt", b"bytes", true)];
-            let divergence = measure_divergence(
+            let divergence = measure(
                 &donor,
                 &mut target,
                 directory.path(),
@@ -1005,7 +1064,7 @@ mod tests {
                 record("one.txt", b"target bytes", true),
                 record("failed.txt", b"failed to index", false),
             ];
-            let divergence = measure_divergence(
+            let divergence = measure(
                 &donor,
                 &mut target,
                 directory.path(),
@@ -1019,10 +1078,41 @@ mod tests {
         }
 
         #[test]
+        fn donor_files_excluded_by_the_targets_file_types_are_not_deletions() {
+            let (directory, mut target) = snapshot(&[("one.rs", "fn main() {}")]);
+            // The target indexes Rust only; the donor (indexed without the
+            // restriction) also holds Python files. They are scan exclusion,
+            // not deletions (issue #105 review finding).
+            let scan = crate::domain::ScanRules {
+                file_types: vec!["rust".to_owned()],
+                ..ScanRules::default()
+            };
+            let selection = crate::file_selection::GlobMatcher::new(directory.path(), &scan.globs)
+                .expect("matcher");
+            let donor = [
+                record("one.rs", b"fn main() {}", true),
+                record("script.py", b"print('python')", true),
+            ];
+            let divergence = super::super::measure_divergence(
+                &donor,
+                &mut target,
+                directory.path(),
+                &selection,
+                &scan,
+            );
+            assert_eq!(divergence.matched, 1);
+            assert_eq!(
+                divergence.deleted, 0,
+                "file-type exclusion is not a deletion"
+            );
+            assert!((divergence.ratio - 0.0).abs() < 1e-9);
+        }
+
+        #[test]
         fn an_empty_target_never_seeds() {
             let (directory, mut target) = snapshot(&[]);
             let donor = [record("one.txt", b"bytes", true)];
-            let divergence = measure_divergence(
+            let divergence = measure(
                 &donor,
                 &mut target,
                 directory.path(),
