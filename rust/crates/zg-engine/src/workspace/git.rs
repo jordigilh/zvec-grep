@@ -428,10 +428,7 @@ mod tests {
         assert!(clean.commit.is_some(), "HEAD resolves to a commit");
         // The initial branch name follows the host git's default (main or
         // master); both are valid branch labels for this test.
-        assert!(matches!(
-            clean.branch.as_deref(),
-            Some("main") | Some("master")
-        ));
+        assert!(matches!(clean.branch.as_deref(), Some("main" | "master")));
         // The workspace's own index directory is untracked but excluded from
         // the dirty check (issue #105 review finding).
         std::fs::create_dir(root.join(".zvec-grep")).expect("index directory");
