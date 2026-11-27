@@ -12,7 +12,10 @@ use zg_host_native::{NativeScanner, ScanRequest, TaskControl, WorkspaceScannerPo
 use crate::{
     EngineError,
     api::{
-        index::{IndexOptions, IndexResult, options::EmbeddingModelSpec},
+        index::{
+            IndexOptions, IndexResult, options::EmbeddingModelSpec, result::SeedRelation,
+            result::SeedReport,
+        },
         info::{
             InfoOptions, InfoResult,
             result::{IndexCompatibility, InfoSource, WorkspaceIndexInfo, WorkspaceIndexPolicy},
@@ -126,16 +129,29 @@ impl WorkspaceIndexService {
     }
 
     /// Resolves the scan rules, the workspace glob filter and, for a new
-    /// workspace, the model its dominant source language prefers.
+    /// workspace, the model its dominant source language prefers — or, when
+    /// seed selection found a guard-passing donor, the closest donor's model
+    /// (issue #105: a release-train worktree inherits its donor's model
+    /// instead of paying a full build under the language default).
     async fn index_profile(
         &self,
         existing: Option<&WorkspaceManifest>,
         options: &IndexOptions,
         root: &Path,
-    ) -> Result<Option<&'static str>, EngineError> {
+        donor_model: Option<String>,
+    ) -> Result<Option<String>, EngineError> {
         let scan = resolve_scan(existing, options);
         let selection = crate::file_selection::GlobMatcher::new(root, &scan.globs)?;
-        dominant_language_model(&self.scanner, existing, options, root, &scan, &selection).await
+        dominant_language_model(
+            &self.scanner,
+            existing,
+            options,
+            root,
+            &scan,
+            &selection,
+            donor_model,
+        )
+        .await
     }
 
     fn register_name(
@@ -172,6 +188,10 @@ impl WorkspaceIndexService {
         Ok(name)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the admission sequence (lock, recovery, naming, seed selection, staging) reads as one linear protocol"
+    )]
     pub(crate) async fn index(
         &self,
         models: &ModelRuntimeManager,
@@ -227,20 +247,30 @@ impl WorkspaceIndexService {
             || existing
                 .as_ref()
                 .is_none_or(|manifest| !is_indexed(manifest));
-        // Validate before model acquisition; invalid globs must not trigger downloads or inference.
-        let language_default = self
-            .index_profile(existing.as_ref(), &options, &location.root)
-            .await?;
         if options.reset_paths
             || options.scan != crate::api::index::options::ScanRulesUpdate::default()
         {
             // A changed selection can admit files outside a watcher's narrow change scope.
             options.changes.clear();
         }
-        let IndexModels {
-            runtimes: acquired,
-            descriptor,
-        } = acquire_index_models(models, existing.as_ref(), &options, language_default)?;
+        // Seed selection precedes model acquisition (issue #105): the closest
+        // donor's model may become this workspace's model, and the ranking is
+        // measured against the target's current tree. Only a brand-new
+        // workspace — not an explicit `--rebuild` — considers donors.
+        let (
+            seed_selection,
+            IndexModels {
+                runtimes: acquired,
+                descriptor,
+            },
+        ) = Box::pin(self.resolve_fresh_models(
+            models,
+            existing.as_ref(),
+            &options,
+            &location.root,
+            rebuilding && !options.rebuild,
+        ))
+        .await?;
         // Acquisition precedes the identity refusal below: construction is
         // lazy and runtime-manager-cached, while the true backend identity is
         // only known once the backend exists. Globs validate before it.
@@ -261,16 +291,24 @@ impl WorkspaceIndexService {
             &acquired,
             descriptor,
         )?;
-        let (manifest, build) = if rebuilding {
-            self.stage_fresh_build(manifest, &mut options, &acquired)
+        let (manifest, build, seed_report) = if rebuilding {
+            self.stage_fresh_build(manifest, &mut options, &acquired, seed_selection)
                 .await?
         } else {
-            (manifest, None)
+            (manifest, None, None)
         };
         let pending = build.clone();
-        let result = self
-            .run_index(manifest, build, acquired, options, Arc::clone(&home_lock))
-            .await;
+        // Boxed: run_index's future (pipeline, publication) keeps this
+        // function's state machine under the large-future budget.
+        let result = Box::pin(self.run_index(
+            manifest,
+            build,
+            acquired,
+            options,
+            Arc::clone(&home_lock),
+            seed_report,
+        ))
+        .await;
         if result.is_err()
             && let Some(build) = pending
         {
@@ -283,58 +321,177 @@ impl WorkspaceIndexService {
 
     /// Stage a fresh build. An explicit `--rebuild` replaces on purpose;
     /// otherwise a brand-new workspace first tries to adopt a seed — the
-    /// newest index of the same repository built by the same model and
-    /// backend identity, copied copy-on-write so the indexing pass only
-    /// re-embeds the delta (issue #72). Without a seed it starts empty.
+    /// closest index of the same repository by measured divergence, built by
+    /// a compatible model and backend identity, copied copy-on-write so the
+    /// indexing pass only re-embeds the delta (issues #72 and #105). Without
+    /// a seed it starts empty.
     async fn stage_fresh_build(
         &self,
         manifest: WorkspaceManifest,
         options: &mut IndexOptions,
         acquired: &[ModelRuntimeLease],
-    ) -> Result<(WorkspaceManifest, Option<WorkspaceBuild>), EngineError> {
+        seed_selection: Option<crate::workspace::seed::SeedSelection>,
+    ) -> Result<
+        (
+            WorkspaceManifest,
+            Option<WorkspaceBuild>,
+            Option<SeedReport>,
+        ),
+        EngineError,
+    > {
         // Fresh builds always cover the full configured workspace.
         options.changes.clear();
+        let mut seed_report = None;
         let adopted = if options.rebuild {
             None
         } else {
-            self.adopt_seed(&manifest, acquired, options).await?
+            Box::pin(self.adopt_seed(
+                &manifest,
+                acquired,
+                options,
+                seed_selection,
+                &mut seed_report,
+            ))
+            .await?
         };
         let build = match adopted {
             Some(build) => build,
             None => prepare_build(manifest)?,
         };
-        Ok((build.target.clone(), Some(build)))
+        Ok((build.target.clone(), Some(build), seed_report))
     }
 
-    /// Try to seed this brand-new workspace from a registered sibling index of
-    /// the same repository. Returns the staged adopted build, or `None` when
-    /// no seed matches (different repo, model, or backend identity) — the
-    /// caller then pays an ordinary full build. The runtime is prepared first
-    /// so its live backend identity is known before a seed is adopted; a
-    /// mismatched identity refuses adoption rather than silently re-embedding
-    /// with another runtime, mirroring the incremental refusal. Preparation
-    /// here precedes the first embedding batch (unlike the pipeline's lazy
-    /// prepare) because the identity must be verified before the copy; a
-    /// workspace whose delta embeds nothing still prepares once, and the
-    /// runtime manager caches the result for the run.
+    /// Rank seed donors for a brand-new workspace (issue #105). Delegates to
+    /// [`crate::workspace::seed::select_seed`]; split so the scan rules and
+    /// glob matcher resolve exactly as the indexing pass will resolve them.
+    async fn select_seed(
+        &self,
+        root: &Path,
+        existing: Option<&WorkspaceManifest>,
+        options: &IndexOptions,
+    ) -> Result<Option<crate::workspace::seed::SeedSelection>, EngineError> {
+        let registry = self.registry()?;
+        let scan = resolve_scan(existing, options);
+        let selection = crate::file_selection::GlobMatcher::new(root, &scan.globs)?;
+        crate::workspace::seed::select_seed(
+            &registry,
+            root,
+            &self.scanner,
+            &scan,
+            &selection,
+            options.signal.as_ref(),
+        )
+        .await
+    }
+
+    /// Seed selection plus model acquisition (issue #105). When `selecting`,
+    /// donors are ranked by measured divergence first, and a workspace with no
+    /// model signal of its own may adopt the closest donor's model. A donor
+    /// model that cannot be acquired (missing key, unauthorized remote,
+    /// unavailable provider) degrades to the language profile instead of
+    /// failing the request; adoption then re-filters the donors by the capsule
+    /// actually acquired.
+    async fn resolve_fresh_models(
+        &self,
+        models: &ModelRuntimeManager,
+        existing: Option<&WorkspaceManifest>,
+        options: &IndexOptions,
+        root: &Path,
+        selecting: bool,
+    ) -> Result<(Option<crate::workspace::seed::SeedSelection>, IndexModels), EngineError> {
+        let seed_selection = if selecting {
+            // Boxed: the selection future (scan, per-dor measurement, git
+            // queries) would otherwise inflate every caller's state machine
+            // past the large-future budget.
+            Box::pin(self.select_seed(root, existing, options)).await?
+        } else {
+            None
+        };
+        let donor_model = seed_selection
+            .as_ref()
+            .and_then(crate::workspace::seed::SeedSelection::donor_model);
+        // Validate before model acquisition; invalid globs must not trigger
+        // downloads or inference.
+        let language_default = self
+            .index_profile(existing, options, root, donor_model.clone())
+            .await?;
+        let acquired = match acquire_index_models(
+            models,
+            existing,
+            options,
+            language_default.as_deref(),
+        ) {
+            Ok(acquired) => acquired,
+            Err(error)
+                if donor_model.is_some()
+                    && language_default.as_deref() == donor_model.as_deref() =>
+            {
+                tracing::warn!(
+                    code = error.code(),
+                    "acquiring the seed donor's model failed, falling back to the language default: {}",
+                    error.message()
+                );
+                acquire_index_models(models, existing, options, None)?
+            }
+            Err(error) => return Err(error),
+        };
+        Ok((seed_selection, acquired))
+    }
+
+    /// Try to seed this brand-new workspace from a registered sibling index
+    /// of the same repository. Returns the staged adopted build, or `None`
+    /// when no seed matches (different repo, model, or backend identity) —
+    /// the caller then pays an ordinary full build. The runtime is prepared
+    /// first so its live backend identity is known before a seed is adopted;
+    /// a mismatched identity refuses adoption rather than silently
+    /// re-embedding with another runtime, mirroring the incremental refusal.
+    /// Preparation here precedes the first embedding batch (unlike the
+    /// pipeline's lazy prepare) because the identity must be verified before
+    /// the copy; a workspace whose delta embeds nothing still prepares once,
+    /// and the runtime manager caches the result for the run.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "donor adoption is one protocol: capsule filter, identity prepare, refresh, copy, report"
+    )]
     async fn adopt_seed(
         &self,
         target: &WorkspaceManifest,
         models: &[ModelRuntimeLease],
         options: &IndexOptions,
+        seed_selection: Option<crate::workspace::seed::SeedSelection>,
+        seed_report: &mut Option<SeedReport>,
     ) -> Result<Option<WorkspaceBuild>, EngineError> {
+        let Some(mut selection) = seed_selection else {
+            return Ok(None);
+        };
         let Some(model) = models.first() else {
             return Ok(None);
         };
-        let registry = self.registry()?;
-        // Cheap capsule-only selection first: a repo without a matching model
-        // never prepares a model or copies a byte.
+        // The capsule the run actually resolved (possibly the donor's own
+        // model, possibly the caller's explicit choice): a donor on another
+        // model is never silently re-embedded. Filtering by capsule before
+        // preparing the runtime also keeps a run whose model has no matching
+        // donor from loading that model merely to learn its identity — its
+        // preparation stays lazy in the pipeline (issue #105).
         let capsule = target
             .embedding()
             .expect("indexing resolves exactly one embedding model");
-        let candidates =
-            crate::workspace::seed::seed_candidates(&registry, &target.workspace.root, capsule)?;
-        if candidates.is_empty() {
+        let compatible: Vec<crate::workspace::seed::RankedSeed> = selection
+            .donors
+            .into_iter()
+            .filter(|donor| {
+                donor
+                    .manifest
+                    .embedding()
+                    .expect("donors record an embedding")
+                    .ensure_model_compatible(capsule)
+                    .is_ok()
+            })
+            .collect();
+        if compatible.is_empty() {
+            if let Some(donor) = selection.refused {
+                *seed_report = Some(SeedReport::refused(&donor));
+            }
             return Ok(None);
         }
         // Prepare to learn the runtime's live identity before adopting: a lazy
@@ -354,68 +511,134 @@ impl WorkspaceIndexService {
             )
             .await
             .map_err(ModelError::into_engine_error)?;
-        let Some(live) = model
+        let live = model
             .backend_identity()
-            .or_else(|| model.info().backend_identity())
-        else {
-            // A runtime that records no identity cannot vouch for a seed's
-            // vectors; never adopt across unknown provenance.
+            .or_else(|| model.info().backend_identity());
+        // A runtime that records no identity cannot vouch for a seed's
+        // vectors; never adopt across unknown provenance.
+        let Some(live) = live else {
+            if let Some(donor) = selection.refused {
+                *seed_report = Some(SeedReport::refused(&donor));
+            }
             return Ok(None);
         };
-        let Some(seed) = crate::workspace::seed::open_seed(candidates, &live) else {
-            return Ok(None);
-        };
-        // The adopted manifest keeps the seed's index descriptor (identical
-        // capsule and identity) while this workspace owns the root, name and
-        // scan rules the caller resolved. Adoption is an optimization: a
-        // failed copy falls back to an ordinary full build, never a failed
-        // index request.
-        let mut adopted = target.clone();
-        adopted.workspace.index = seed.manifest.workspace.index.clone();
-        #[cfg(test)]
-        let copy: &dyn Fn(&Path, &Path) -> Result<(), EngineError> = if self.fail_seed_copy {
-            &|_source, _destination| Err(EngineError::storage_failure("injected seed copy failure"))
-        } else {
-            &crate::workspace::seed::copy_tree_cow
-        };
-        #[cfg(not(test))]
-        let copy: &dyn Fn(&Path, &Path) -> Result<(), EngineError> =
-            &crate::workspace::seed::copy_tree_cow;
-        let build = crate::workspace::build::prepare_adopted_build(
-            adopted,
-            live,
-            &seed.storage_home(),
-            copy,
-        );
-        // Release the seed's shared storage lock before the run starts; the
-        // handle also drops, so a close failure never discards a staged build.
-        if let Err(error) = seed.close() {
-            tracing::warn!(
-                code = error.code(),
-                "closing the adopted seed: {}",
-                error.message()
+        for donor in compatible {
+            // The donor may have been rebuilt since selection: re-inspect its
+            // manifest and re-measure when the generation moved. A donor that
+            // no longer matches is skipped, never fatal.
+            let Some(donor) = self
+                .refreshed_donor(donor, &mut selection.snapshot, target, options)
+                .await
+            else {
+                continue;
+            };
+            // A rebuilt donor may have changed model or moved past the guard.
+            if donor
+                .manifest
+                .embedding()
+                .expect("donors record an embedding")
+                .ensure_model_compatible(capsule)
+                .is_err()
+                || donor.divergence.ratio > crate::workspace::seed::SEED_MAX_DIVERGENCE_RATIO
+            {
+                continue;
+            }
+            let Some(seed) = crate::workspace::seed::open_seed(vec![donor.manifest.clone()], &live)
+            else {
+                continue;
+            };
+            // The adopted manifest keeps the seed's index descriptor (identical
+            // capsule and identity) while this workspace owns the root, name and
+            // scan rules the caller resolved. Adoption is an optimization: a
+            // failed copy falls back to an ordinary full build, never a failed
+            // index request.
+            let mut adopted = target.clone();
+            adopted.workspace.index = seed.manifest.workspace.index.clone();
+            #[cfg(test)]
+            let copy: &dyn Fn(&Path, &Path) -> Result<(), EngineError> = if self.fail_seed_copy {
+                &|_source, _destination| {
+                    Err(EngineError::storage_failure("injected seed copy failure"))
+                }
+            } else {
+                &crate::workspace::seed::copy_tree_cow
+            };
+            #[cfg(not(test))]
+            let copy: &dyn Fn(&Path, &Path) -> Result<(), EngineError> =
+                &crate::workspace::seed::copy_tree_cow;
+            let build = crate::workspace::build::prepare_adopted_build(
+                adopted,
+                live,
+                &seed.storage_home(),
+                copy,
             );
-        }
-        match build {
-            Ok(build) => Ok(Some(build)),
-            Err(error) => {
+            // Release the seed's shared storage lock before the run starts; the
+            // handle also drops, so a close failure never discards a staged build.
+            if let Err(error) = seed.close() {
                 tracing::warn!(
                     code = error.code(),
-                    "seed adoption failed, falling back to a full build: {}",
+                    "closing the adopted seed: {}",
                     error.message()
                 );
-                Ok(None)
+            }
+            match build {
+                Ok(build) => {
+                    *seed_report = Some(SeedReport::adopted(&donor));
+                    return Ok(Some(build));
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        code = error.code(),
+                        "seed adoption failed, falling back to a full build: {}",
+                        error.message()
+                    );
+                    return Ok(None);
+                }
             }
         }
+        // No donor matched: report the divergence-guard refusal of the
+        // closest donor when that is why adoption cannot happen (issue #105).
+        if let Some(donor) = selection.refused {
+            *seed_report = Some(SeedReport::refused(&donor));
+        }
+        Ok(None)
+    }
+
+    /// Re-inspect a donor that may have been rebuilt since selection, and
+    /// re-measure it when its generation moved. `None` when the donor is
+    /// gone, busy, or now past the divergence guard: skip it, never fatal.
+    async fn refreshed_donor(
+        &self,
+        donor: crate::workspace::seed::RankedSeed,
+        snapshot: &mut crate::workspace::seed::TargetSnapshot,
+        target: &WorkspaceManifest,
+        options: &IndexOptions,
+    ) -> Option<crate::workspace::seed::RankedSeed> {
+        let current = crate::workspace::seed::reinspect_donor(&donor.manifest)?;
+        if current.storage_generation == donor.manifest.storage_generation {
+            let mut donor = donor;
+            donor.manifest = current;
+            return Some(donor);
+        }
+        let scan = resolve_scan(None, options);
+        let selection =
+            crate::file_selection::GlobMatcher::new(&target.workspace.root, &scan.globs).ok()?;
+        crate::workspace::seed::remeasure_donor(
+            &current,
+            snapshot,
+            &target.workspace.root,
+            &selection,
+        )
+        .await
     }
 
     async fn run_index(
         &self,
-        mut manifest: WorkspaceManifest,
+        manifest: WorkspaceManifest,
         build: Option<WorkspaceBuild>,
         models: Vec<ModelRuntimeLease>,
         options: IndexOptions,
         home_lock: Arc<FileLock>,
+        mut seed_report: Option<SeedReport>,
     ) -> Result<IndexResult, EngineError> {
         // Whether this run adopted a seed's generation (issue #72): reported
         // on the result so callers can observe that only the delta paid.
@@ -510,45 +733,25 @@ impl WorkspaceIndexService {
         let opened_identity = opened_embeddings
             .first()
             .and_then(crate::domain::model::EmbeddingModelInfo::backend_identity);
-        if let Some(mut build) = build {
-            if build.expected_identity.is_none() {
-                // A fresh build may relabel itself: the storage schema was
-                // written before the models loaded, so an accelerated provider
-                // that fell back to CPU while embedding is corrected here, before
-                // the generation is published. Storage handles are closed and
-                // the home write lock is still held.
-                record_runtime_backend_identity(&mut manifest, runtime_identity.clone());
-                if opened_identity != runtime_identity {
-                    IndexStore::rewrite_schema(&manifest.storage_home(), manifest.embeddings())?;
-                }
-            }
-            // An adopted seed keeps the identity it was copied with: the
-            // runtime was verified against it before the copy, fallback was
-            // disabled, and each batch enforced it. Relabeling here would
-            // launder the seed's vectors under a different runtime.
-            build.target = manifest.clone();
-            publish_build(build, now)?;
-        } else {
-            // An incremental update appends to the live generation in place.
-            // The pipeline already refused any batch whose runtime identity
-            // deviated before committing it; this end-of-run check is a
-            // backstop for drift that bypassed the batches (for example a
-            // sticky fallen-back snapshot appearing after the last batch).
-            // It applies only to runs that completed at least one batch —
-            // `saw_batch` is set by the first batch's identity check even
-            // if that batch's files all failed — so a no-op run on an
-            // up-to-date generation never refuses.
-            if run_observation.saw_batch() && opened_identity != runtime_identity {
-                return Err(crate::domain::model::mid_run_backend_mismatch(
-                    opened_identity.as_ref(),
-                    runtime_identity.as_ref(),
-                ));
-            }
-            manifest.record_update(now);
-            write_workspace_manifest(&manifest.path, &manifest)?;
-        }
+        publish_completed_run(
+            manifest,
+            build,
+            opened_identity,
+            runtime_identity,
+            &run_observation,
+            &indexed,
+            now,
+        )
+        .await?;
         let mut indexed = indexed;
         indexed.seeded = seeded;
+        if let Some(report) = seed_report.as_mut()
+            && seeded
+        {
+            // The adoption's actual re-embed count replaces the estimate.
+            report.files_re_embedded = indexed.files_added + indexed.files_modified;
+        }
+        indexed.seed = seed_report;
         Ok(indexed)
     }
 
@@ -792,6 +995,102 @@ fn record_runtime_backend_identity(
     manifest.workspace.index = IndexState::Enabled(IndexDescriptor::single(updated));
 }
 
+/// Whether an incremental run's changes advance the recorded provenance
+/// (issue #105): content must have moved and every file must have succeeded —
+/// a partial failure keeps the previous provenance, so status never claims a
+/// commit the stored content does not reflect.
+fn provenance_advances(
+    files_added: usize,
+    files_modified: usize,
+    files_deleted: usize,
+    files_failed: usize,
+) -> bool {
+    files_added + files_modified + files_deleted > 0 && files_failed == 0
+}
+
+/// Record the working tree's git provenance on a manifest at publication
+/// (issue #105). Advisory metadata only — it never touches the embedding
+/// descriptor, backend identity or model capsule. Unknown git state leaves
+/// any previously recorded provenance untouched.
+async fn record_provenance(manifest: &mut WorkspaceManifest, root: &Path) {
+    let provenance = crate::workspace::git::read_provenance(root).await;
+    if provenance.is_known() {
+        manifest.provenance = Some(provenance);
+    }
+}
+
+/// Publish a completed indexing run: fresh and adopted builds publish a new
+/// generation (recording the target's git provenance, issue #105); an
+/// incremental update appends in place and advances the recorded provenance
+/// only when the content fully changed.
+async fn publish_completed_run(
+    mut manifest: WorkspaceManifest,
+    build: Option<WorkspaceBuild>,
+    opened_identity: Option<crate::domain::model::BackendIdentity>,
+    runtime_identity: Option<crate::domain::model::BackendIdentity>,
+    run_observation: &RunIdentityObservation,
+    indexed: &IndexResult,
+    now: u64,
+) -> Result<(), EngineError> {
+    if let Some(mut build) = build {
+        if build.expected_identity.is_none() {
+            // A fresh build may relabel itself: the storage schema was
+            // written before the models loaded, so an accelerated provider
+            // that fell back to CPU while embedding is corrected here, before
+            // the generation is published. Storage handles are closed and
+            // the home write lock is still held.
+            record_runtime_backend_identity(&mut manifest, runtime_identity.clone());
+            if opened_identity != runtime_identity {
+                IndexStore::rewrite_schema(&manifest.storage_home(), manifest.embeddings())?;
+            }
+        }
+        // An adopted seed keeps the identity it was copied with: the
+        // runtime was verified against it before the copy, fallback was
+        // disabled, and each batch enforced it. Relabeling here would
+        // launder the seed's vectors under a different runtime.
+        // Provenance (issue #105): a fresh or adopted generation reflects
+        // the target's working tree, so it records the target's commit,
+        // branch and dirty flag at publication — the seed's own
+        // provenance is superseded by the delta pass that just ran.
+        let provenance_root = manifest.workspace.root.clone();
+        record_provenance(&mut manifest, &provenance_root).await;
+        build.target = manifest.clone();
+        publish_build(build, now)?;
+        return Ok(());
+    }
+    // An incremental update appends to the live generation in place.
+    // The pipeline already refused any batch whose runtime identity
+    // deviated before committing it; this end-of-run check is a
+    // backstop for drift that bypassed the batches (for example a
+    // sticky fallen-back snapshot appearing after the last batch).
+    // It applies only to runs that completed at least one batch —
+    // `saw_batch` is set by the first batch's identity check even
+    // if that batch's files all failed — so a no-op run on an
+    // up-to-date generation never refuses.
+    if run_observation.saw_batch() && opened_identity != runtime_identity {
+        return Err(crate::domain::model::mid_run_backend_mismatch(
+            opened_identity.as_ref(),
+            runtime_identity.as_ref(),
+        ));
+    }
+    // Provenance (issue #105): an incremental run advances the recorded
+    // commit only when the content actually moved and every file succeeded —
+    // a partial failure keeps the previous provenance so status never claims
+    // a commit the stored content does not reflect.
+    if provenance_advances(
+        indexed.files_added,
+        indexed.files_modified,
+        indexed.files_deleted,
+        indexed.files_failed,
+    ) {
+        let provenance_root = manifest.workspace.root.clone();
+        record_provenance(&mut manifest, &provenance_root).await;
+    }
+    manifest.record_update(now);
+    write_workspace_manifest(&manifest.path, &manifest)?;
+    Ok(())
+}
+
 fn index_manifest(
     location: &WorkspaceIndexLocation,
     active: Option<&WorkspaceManifest>,
@@ -831,6 +1130,39 @@ fn index_manifest(
     Ok(manifest)
 }
 
+impl SeedReport {
+    fn from_donor(donor: &crate::workspace::seed::RankedSeed, refusal: Option<String>) -> Self {
+        let provenance = donor.manifest.provenance.as_ref();
+        Self {
+            donor_root: donor.manifest.workspace.root.clone(),
+            donor_commit: provenance.and_then(|p| p.commit.clone()),
+            donor_branch: provenance.and_then(|p| p.branch.clone()),
+            relation: match donor.relation {
+                crate::workspace::git::CommitRelation::Same => SeedRelation::SameCommit,
+                crate::workspace::git::CommitRelation::Ancestor => SeedRelation::Ancestor,
+                crate::workspace::git::CommitRelation::Unrelated => SeedRelation::Unrelated,
+            },
+            commits_behind: match donor.relation {
+                crate::workspace::git::CommitRelation::Same => Some(0),
+                _ => donor.commits_behind,
+            },
+            files_matched: donor.divergence.matched,
+            files_re_embedded: donor.divergence.added_or_modified,
+            files_deleted: donor.divergence.deleted,
+            divergence_permille: donor.divergence.permille(),
+            refusal,
+        }
+    }
+
+    fn adopted(donor: &crate::workspace::seed::RankedSeed) -> Self {
+        Self::from_donor(donor, None)
+    }
+
+    fn refused(donor: &crate::workspace::seed::RankedSeed) -> Self {
+        Self::from_donor(donor, Some(crate::workspace::seed::refusal_reason(donor)))
+    }
+}
+
 impl Default for WorkspaceIndexService {
     fn default() -> Self {
         Self::new()
@@ -860,7 +1192,8 @@ async fn dominant_language_model(
     root: &Path,
     scan: &crate::domain::ScanRules,
     selection: &crate::file_selection::GlobMatcher,
-) -> Result<Option<&'static str>, EngineError> {
+    donor_model: Option<String>,
+) -> Result<Option<String>, EngineError> {
     if options.embedding.is_some() || existing.and_then(|manifest| manifest.embedding()).is_some() {
         return Ok(None);
     }
@@ -869,8 +1202,23 @@ async fn dominant_language_model(
     if configured_default_wins(configured.as_deref(), options.implicit) {
         return Ok(None);
     }
+    // Donor-model adoption (issue #105): a workspace with no model signal of
+    // its own inherits the closest donor's model, so the seed's vectors stay
+    // reusable. A local donor always qualifies; a remote donor model only on
+    // an explicit build that already carries remote authorization — implicit
+    // builds never select remote models, and an unauthorized remote donor
+    // falls back to the language profile rather than failing the request.
+    if let Some(donor) = donor_model
+        && (donor.starts_with("local/")
+            || (!options.implicit
+                && (options.allow_remote || !options.authorized_remote.is_empty())))
+    {
+        return Ok(Some(donor));
+    }
 
-    language_model_from_scan(scanner, options, root, scan, selection).await
+    language_model_from_scan(scanner, options, root, scan, selection)
+        .await
+        .map(|model| model.map(str::to_owned))
 }
 
 /// Scans the workspace and maps its file profile to a model. Split from the
@@ -963,7 +1311,7 @@ fn acquire_index_models(
     models: &ModelRuntimeManager,
     existing: Option<&WorkspaceManifest>,
     options: &IndexOptions,
-    language_default: Option<&'static str>,
+    language_default: Option<&str>,
 ) -> Result<IndexModels, EngineError> {
     let model = acquire_model(models, existing, options, language_default)?;
     let descriptor = IndexDescriptor::single(model.info().clone());
@@ -994,7 +1342,7 @@ fn acquire_model(
     models: &ModelRuntimeManager,
     existing: Option<&WorkspaceManifest>,
     options: &IndexOptions,
-    language_default: Option<&'static str>,
+    language_default: Option<&str>,
 ) -> Result<ModelRuntimeLease, EngineError> {
     reject_revision_override(options)?;
     let reference = embedding_reference(
@@ -1099,7 +1447,7 @@ fn needs_implicit_fallback(implicit: bool, has_requested: bool, has_stored: bool
 pub(crate) fn embedding_reference(
     existing: Option<&WorkspaceManifest>,
     requested: Option<&EmbeddingModelSpec>,
-    language_default: Option<&'static str>,
+    language_default: Option<&str>,
     implicit: bool,
     suppress_environment: bool,
 ) -> Result<String, EngineError> {
@@ -1321,7 +1669,7 @@ fn epoch_millis() -> u64 {
 }
 
 fn workspace_info(manifest: &WorkspaceManifest) -> WorkspaceIndexInfo {
-    WorkspaceIndexInfo::from_workspace(&manifest.workspace, &manifest.path, manifest.index_version)
+    WorkspaceIndexInfo::from_manifest(manifest)
 }
 
 /// Find the old registration of a physically moved workspace. The recorded root
@@ -1372,6 +1720,10 @@ mod tests {
 
     use tempfile::tempdir;
     use zg_host_native::{ScanRequest, TaskControl, WorkspaceScannerPort};
+
+    use super::provenance_advances;
+    use crate::api::index::result::SeedRelation;
+    use crate::workspace::manifest::WorkspaceManifest;
 
     use crate::{
         api::{
@@ -3845,7 +4197,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn seed_selection_takes_the_newest_index_regardless_of_root() {
+    async fn seed_selection_takes_the_closest_content_regardless_of_freshness() {
         let directory = tempdir().expect("repository parent");
         let main = directory.path().join("main");
         let fresh = directory.path().join("fresh");
@@ -3873,8 +4225,10 @@ mod tests {
             .index(&models, empty_index_options(&main))
             .await
             .expect("repo-root index");
-        // A fresher sibling with a narrower scan: adopting it costs one added
-        // file, which distinguishes it from the repo-root seed.
+        // A fresher sibling with a narrower scan: adopting it would cost one
+        // added file, which distinguishes it from the repo-root seed. Issue
+        // #105 replaces freshness-first ranking: the donor with the least
+        // measured divergence wins even when a fresher one exists.
         let mut narrow = empty_index_options(&fresh);
         narrow.scan.globs = Some(vec!["one.txt".into()]);
         for root in [&fresh, &adopter] {
@@ -3892,12 +4246,19 @@ mod tests {
             .await
             .expect("adopting worktree index");
         assert!(result.seeded);
+        let report = result.seed.as_ref().expect("seed report");
         assert_eq!(
-            result.files_added, 1,
-            "the freshest seed wins even off the repository root: its narrower \
-             coverage is re-embedded as the delta"
+            report.donor_root.canonicalize().ok(),
+            main.canonicalize().ok(),
+            "the closest content wins even when a fresher donor exists"
         );
-        assert_eq!(result.files_unchanged, 1);
+        assert_eq!(
+            result.files_added, 0,
+            "the full-coverage seed pays no delta at all"
+        );
+        assert_eq!(result.files_unchanged, 2);
+        assert_eq!(report.files_matched, 2);
+        assert_eq!(report.files_re_embedded, 0);
         models.close();
     }
 
@@ -4128,6 +4489,481 @@ mod tests {
             .await
             .expect("clean retry");
         assert!(retried.seeded, "the retry adopts the seed again");
+        models.close();
+    }
+
+    // ---- Issue #105: provenance, divergence-aware selection, guard, model adoption ----
+
+    fn run_git(root: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("git binary on the test host");
+        assert!(
+            status.success(),
+            "git {args:?} failed in {}",
+            root.display()
+        );
+    }
+
+    fn commit_all(root: &Path, message: &str) {
+        run_git(root, &["add", "-A"]);
+        run_git(root, &["commit", "--quiet", "-m", message]);
+    }
+
+    /// A real git repository with one commit, on branch `main`.
+    fn real_git_repo(parent: &Path) -> std::path::PathBuf {
+        let root = parent.join("repo");
+        std::fs::create_dir(&root).expect("repo root");
+        run_git(&root, &["init", "--quiet", "-b", "main"]);
+        run_git(&root, &["config", "user.email", "test@example.test"]);
+        run_git(&root, &["config", "user.name", "Test"]);
+        root
+    }
+
+    fn manifest_at(root: &Path) -> WorkspaceManifest {
+        super::read_workspace_manifest(&root.join(".zvec-grep"))
+            .expect("manifest read")
+            .expect("manifest")
+    }
+
+    #[tokio::test]
+    async fn a_same_commit_seed_reports_matching_provenance_and_zero_drift() {
+        let directory = tempdir().expect("repository parent");
+        let main = real_git_repo(directory.path());
+        std::fs::write(main.join("one.txt"), "orchard rows and orchard vines").expect("source");
+        std::fs::write(main.join("two.txt"), "irrigation notes for the orchard").expect("source");
+        commit_all(&main, "initial");
+        let worktree = directory.path().join("wt");
+        run_git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "--detach",
+                &worktree.to_string_lossy(),
+            ],
+        );
+
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("main checkout index");
+        let seeded = service
+            .index(&models, empty_index_options(&worktree))
+            .await
+            .expect("seeded worktree index");
+        assert!(seeded.seeded);
+        let report = seeded.seed.as_ref().expect("seed report");
+        assert_eq!(report.relation, SeedRelation::SameCommit);
+        assert_eq!(
+            report.files_re_embedded, 0,
+            "same-commit seed pays no delta"
+        );
+        assert_eq!(report.files_matched, 2);
+        assert_eq!(report.commits_behind, Some(0));
+        assert!(report.refusal.is_none());
+
+        // The adopted generation records the target's own provenance.
+        let manifest = manifest_at(&worktree);
+        let provenance = manifest.provenance.as_ref().expect("recorded provenance");
+        assert!(provenance.commit.is_some());
+        assert_eq!(provenance.commit, report.donor_commit);
+        // The untracked `.zvec-grep` directory makes the working tree differ
+        // from HEAD: the dirty flag is true, and recorded as such.
+        assert_eq!(provenance.dirty, Some(true));
+        assert!(
+            provenance.branch.is_none(),
+            "a detached worktree HEAD records no branch label"
+        );
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn a_release_worktree_prefers_its_release_donor_over_a_fresher_main_checkout() {
+        let directory = tempdir().expect("repository parent");
+        let main = real_git_repo(directory.path());
+        std::fs::write(main.join("one.txt"), "orchard rows and orchard vines").expect("source");
+        std::fs::write(main.join("two.txt"), "irrigation notes for the orchard").expect("source");
+        commit_all(&main, "initial");
+        // A release branch that diverges from main by one commit.
+        let release = directory.path().join("release");
+        run_git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "release/v1.6",
+                &release.to_string_lossy(),
+            ],
+        );
+        std::fs::write(release.join("one.txt"), "release rows for the orchard").expect("changed");
+        commit_all(&release, "release change");
+        // The target: a second checkout of the release branch's commit.
+        let target = directory.path().join("target");
+        run_git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "--detach",
+                &target.to_string_lossy(),
+                "release/v1.6",
+            ],
+        );
+
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("main checkout index");
+        service
+            .index(&models, empty_index_options(&release))
+            .await
+            .expect("release donor index");
+        // Main is the *freshest* registration but shares less content.
+        set_updated_epoch(&main, 5_000);
+        set_updated_epoch(&release, 1_000);
+        let seeded = service
+            .index(&models, empty_index_options(&target))
+            .await
+            .expect("target worktree index");
+        assert!(seeded.seeded);
+        let report = seeded.seed.as_ref().expect("seed report");
+        assert_eq!(
+            report.donor_root.canonicalize().ok(),
+            release.canonicalize().ok(),
+            "the release donor wins over a fresher, more divergent main checkout"
+        );
+        assert_eq!(report.relation, SeedRelation::SameCommit);
+        assert_eq!(report.files_re_embedded, 0);
+        // The donor's branch label is reported (issue #105).
+        assert_eq!(report.donor_branch.as_deref(), Some("release/v1.6"));
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn a_donor_above_the_divergence_threshold_is_refused_with_a_reason() {
+        let directory = tempdir().expect("repository parent");
+        let (main, worktree) = git_repo_fixture(directory.path());
+        for index in 0..10 {
+            std::fs::write(
+                main.join(format!("file{index}.txt")),
+                format!("contents {index}"),
+            )
+            .expect("source");
+        }
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("main checkout index");
+        // Rewrite nine of ten files: ~90% estimated re-embed, above the guard.
+        for index in 0..9 {
+            std::fs::write(
+                worktree.join(format!("file{index}.txt")),
+                format!("rewritten {index}"),
+            )
+            .expect("divergence");
+        }
+        std::fs::write(worktree.join("file9.txt"), "contents 9").expect("same");
+        let result = service
+            .index(&models, empty_index_options(&worktree))
+            .await
+            .expect("worktree index");
+        assert!(!result.seeded, "an over-divergent donor is refused");
+        let report = result.seed.as_ref().expect("refusal report");
+        let refusal = report.refusal.as_deref().expect("refusal reason");
+        assert!(
+            refusal.contains("threshold"),
+            "reason names the guard: {refusal}"
+        );
+        assert!(report.divergence_permille >= 850);
+        assert_eq!(result.files_added, 10, "the worktree builds fresh instead");
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn provenance_survives_adoption_and_incremental_refresh() {
+        let directory = tempdir().expect("repository parent");
+        let main = real_git_repo(directory.path());
+        std::fs::write(main.join("one.txt"), "orchard rows and orchard vines").expect("source");
+        commit_all(&main, "initial");
+        let worktree = directory.path().join("wt");
+        run_git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "topic",
+                &worktree.to_string_lossy(),
+            ],
+        );
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("main checkout index");
+        let first = manifest_at(&main);
+        let first_commit = first
+            .provenance
+            .as_ref()
+            .expect("provenance")
+            .commit
+            .clone()
+            .expect("commit");
+        let seeded = service
+            .index(&models, empty_index_options(&worktree))
+            .await
+            .expect("seeded worktree index");
+        assert!(seeded.seeded);
+        let adopted = manifest_at(&worktree);
+        assert_eq!(
+            adopted
+                .provenance
+                .as_ref()
+                .and_then(|p| p.commit.as_deref()),
+            Some(first_commit.as_str()),
+            "adoption records the target tree's commit"
+        );
+        assert_eq!(
+            adopted
+                .provenance
+                .as_ref()
+                .and_then(|p| p.branch.as_deref()),
+            Some("topic")
+        );
+        // An incremental update that fully succeeds advances the provenance.
+        std::fs::write(worktree.join("one.txt"), "changed on the topic branch").expect("change");
+        commit_all(&worktree, "topic change");
+        service
+            .index(&models, empty_index_options(&worktree))
+            .await
+            .expect("incremental update");
+        let incremented = manifest_at(&worktree);
+        let commit = incremented
+            .provenance
+            .as_ref()
+            .and_then(|p| p.commit.clone())
+            .expect("provenance kept");
+        assert_ne!(
+            commit, first_commit,
+            "a fully successful update advances the commit"
+        );
+        assert_eq!(
+            incremented
+                .provenance
+                .as_ref()
+                .and_then(|p| p.branch.as_deref()),
+            Some("topic"),
+            "the branch label survives the incremental update"
+        );
+        models.close();
+    }
+
+    #[test]
+    fn provenance_advances_only_on_fully_successful_content_changes() {
+        // Content moved, nothing failed: advance.
+        assert!(provenance_advances(1, 0, 0, 0));
+        assert!(provenance_advances(0, 2, 0, 0));
+        assert!(provenance_advances(0, 0, 3, 0));
+        // A no-op run keeps the previous provenance.
+        assert!(!provenance_advances(0, 0, 0, 0));
+        // A partial failure keeps the previous provenance: the stored content
+        // does not reflect the new commit (issue #105 review).
+        assert!(!provenance_advances(1, 0, 0, 1));
+        assert!(!provenance_advances(0, 5, 0, 2));
+    }
+
+    #[tokio::test]
+    async fn branch_labels_never_enter_the_backend_identity() {
+        let directory = tempdir().expect("repository parent");
+        let main = real_git_repo(directory.path());
+        std::fs::write(main.join("one.txt"), "orchard rows and orchard vines").expect("source");
+        commit_all(&main, "initial");
+        let worktree = directory.path().join("wt");
+        run_git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "release/v1.7",
+                &worktree.to_string_lossy(),
+            ],
+        );
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("main checkout index");
+        let donor = manifest_at(&main);
+        let seeded = service
+            .index(&models, empty_index_options(&worktree))
+            .await
+            .expect("seeded worktree index");
+        assert!(
+            seeded.seeded,
+            "identical content across branches stays shareable"
+        );
+        let adopted = manifest_at(&worktree);
+        // The identity is exactly the donor's — the branch label never leaks in.
+        assert_eq!(
+            adopted.embedding().expect("embedding").backend_identity(),
+            donor.embedding().expect("embedding").backend_identity(),
+            "the adopted generation keeps the seed's backend identity"
+        );
+        let json = serde_json::to_value(&adopted).expect("manifest JSON");
+        let embeddings = json["embeddings"].to_string();
+        assert!(
+            !embeddings.contains("release/v1.7"),
+            "the branch label never enters the embedding descriptor: {embeddings}"
+        );
+        assert!(
+            adopted
+                .embedding()
+                .expect("embedding")
+                .ensure_model_compatible(donor.embedding().expect("embedding"))
+                .is_ok(),
+            "the capsule is unaffected by the branch label"
+        );
+        // While the provenance does carry the branch, as advisory metadata.
+        assert_eq!(
+            adopted
+                .provenance
+                .as_ref()
+                .and_then(|p| p.branch.as_deref()),
+            Some("release/v1.7")
+        );
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn a_no_signal_worktree_adopts_the_donor_model() {
+        let directory = tempdir().expect("repository parent");
+        let (main, worktree) = git_repo_fixture(directory.path());
+        std::fs::write(main.join("one.txt"), "orchard rows and orchard vines").expect("source");
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("main checkout index");
+        std::fs::write(worktree.join("one.txt"), "orchard rows and orchard vines").expect("same");
+        // No explicit model, no stored model, no configured default: the
+        // worktree inherits the donor's model instead of the language profile
+        // (issue #105 model resolution).
+        let mut options = IndexOptions {
+            root: Some(worktree.clone()),
+            ..IndexOptions::default()
+        };
+        options.embedding = None;
+        let result = service
+            .index(&models, options)
+            .await
+            .expect("worktree index");
+        assert!(
+            result.seeded,
+            "the donor's model keeps the seed reusable: {:?}",
+            result.seed
+        );
+        let manifest = manifest_at(&worktree);
+        assert_eq!(
+            manifest.embedding().expect("embedding").model.reference(),
+            "local/potion-code-16m-v2",
+            "the donor's model is adopted and recorded, not the language default"
+        );
+        let report = result.seed.as_ref().expect("seed report");
+        assert_eq!(
+            report.donor_root.canonicalize().ok(),
+            main.canonicalize().ok()
+        );
+        models.close();
+    }
+
+    /// The measured break-even behind `SEED_MAX_DIVERGENCE_RATIO` (issue #105):
+    /// compares an adopted build's wall time against a fresh build at
+    /// increasing divergence. Run explicitly with
+    /// `cargo test -p zg-engine --lib --ignored seed_guard_break_even_measurement -- --nocapture`.
+    #[tokio::test]
+    #[ignore = "timing measurement, not a correctness test"]
+    async fn seed_guard_break_even_measurement() {
+        let directory = tempdir().expect("repository parent");
+        let (main, worktree) = git_repo_fixture(directory.path());
+        let files = 120;
+        for index in 0..files {
+            std::fs::write(
+                main.join(format!("file{index}.txt")),
+                format!("measurement corpus contents {index}"),
+            )
+            .expect("source");
+        }
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("donor index");
+        for diverged in [0, 60, 102, 114, 120] {
+            for index in 0..files {
+                let contents = if index < diverged {
+                    format!("diverged corpus contents {index}")
+                } else {
+                    format!("measurement corpus contents {index}")
+                };
+                std::fs::write(worktree.join(format!("file{index}.txt")), contents)
+                    .expect("target file");
+            }
+            // Each measurement starts from a brand-new workspace: seeding is
+            // only attempted for a workspace without an existing index.
+            let _ = std::fs::remove_dir_all(worktree.join(".zvec-grep"));
+            let started = std::time::Instant::now();
+            let seeded = service
+                .index(&models, empty_index_options(&worktree))
+                .await
+                .expect("seeded run");
+            let seed_ms = started.elapsed().as_millis();
+            std::fs::remove_dir_all(worktree.join(".zvec-grep")).expect("reset target");
+            let started = std::time::Instant::now();
+            let fresh = service
+                .index(&models, {
+                    let mut options = empty_index_options(&worktree);
+                    options.rebuild = true;
+                    options
+                })
+                .await
+                .expect("fresh run");
+            let fresh_ms = started.elapsed().as_millis();
+            println!(
+                "divergence {}/{} ({:.0}%): seeded={} seed={}ms fresh={}ms re-embed={}",
+                diverged,
+                files,
+                f64::from(diverged) / f64::from(files) * 100.0,
+                seeded.seeded,
+                seed_ms,
+                fresh_ms,
+                seeded.files_added + seeded.files_modified,
+            );
+            let _ = fresh;
+        }
         models.close();
     }
 }

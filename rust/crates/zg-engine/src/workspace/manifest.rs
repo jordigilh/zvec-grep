@@ -28,6 +28,11 @@ pub(crate) struct WorkspaceManifest {
     pub index_version: Option<u32>,
     pub storage_generation: Option<String>,
     pub embedding_runtimes: BTreeMap<String, ModelConfig>,
+    /// Git provenance of the tree this generation's content reflects
+    /// (issue #105). Advisory metadata only: never part of backend identity
+    /// or the model capsule. `None` on legacy manifests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<crate::workspace::git::GitProvenance>,
 }
 
 // Serialized policy is a disk concern; domain enabled state always has a descriptor.
@@ -55,6 +60,8 @@ struct ManifestData {
     index_version: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     storage_generation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provenance: Option<crate::workspace::git::GitProvenance>,
     created_time: u64,
     updated_time: u64,
     #[serde(default)]
@@ -86,6 +93,7 @@ impl TryFrom<ManifestData> for WorkspaceManifest {
             path: input.path,
             index_version: input.index_version,
             storage_generation: input.storage_generation,
+            provenance: input.provenance,
             embedding_runtimes: input.embedding_runtimes,
         };
         manifest
@@ -118,6 +126,7 @@ impl From<WorkspaceManifest> for ManifestData {
                 .map_or_else(BTreeMap::new, |index| index.routes.clone()),
             index_version: manifest.index_version,
             storage_generation: manifest.storage_generation,
+            provenance: manifest.provenance,
             created_time: workspace.created_epoch_ms,
             updated_time: workspace.updated_epoch_ms,
             embedding_runtimes: manifest.embedding_runtimes,
@@ -138,6 +147,7 @@ impl WorkspaceManifest {
             workspace,
             index_version,
             storage_generation: None,
+            provenance: None,
             embedding_runtimes,
         };
         manifest.validate()?;
@@ -596,6 +606,43 @@ mod tests {
             .expect("manifest");
         assert_eq!(decoded.embedding().expect("embedding").backend, None);
         assert_eq!(decoded.embedding().expect("embedding").dtype, None);
+    }
+
+    #[test]
+    fn manifest_round_trips_git_provenance_and_legacy_manifests_decode_without_it() {
+        let directory = tempdir().expect("workspace");
+        let home = directory.path().join(".zvec-grep");
+        let mut manifest = fixture_manifest(&home);
+        manifest.provenance = Some(crate::workspace::git::GitProvenance {
+            commit: Some("1234567890abcdef1234567890abcdef12345678".into()),
+            branch: Some("release/v1.6".into()),
+            dirty: Some(true),
+        });
+        write_workspace_manifest(&home, &manifest).expect("write manifest");
+        let text = fs::read_to_string(workspace_manifest_path(&home)).expect("manifest text");
+        let json: serde_json::Value = serde_json::from_str(&text).expect("manifest json");
+        assert_eq!(
+            json["provenance"]["commit"],
+            "1234567890abcdef1234567890abcdef12345678"
+        );
+        assert_eq!(json["provenance"]["branch"], "release/v1.6");
+        assert_eq!(json["provenance"]["dirty"], true);
+        assert_eq!(
+            read_workspace_manifest(&home).expect("read manifest"),
+            Some(manifest)
+        );
+        // A legacy manifest carries no provenance and still decodes, with no
+        // recorded provenance — the same policy as backend identity.
+        let mut legacy = json;
+        legacy
+            .as_object_mut()
+            .expect("manifest object")
+            .remove("provenance");
+        fs::write(workspace_manifest_path(&home), legacy.to_string()).expect("legacy manifest");
+        let decoded = read_workspace_manifest(&home)
+            .expect("legacy manifest reads")
+            .expect("manifest");
+        assert_eq!(decoded.provenance, None);
     }
 
     #[test]

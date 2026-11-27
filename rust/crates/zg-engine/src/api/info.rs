@@ -169,6 +169,19 @@ pub mod result {
         pub index_version: Option<u32>,
         pub created_epoch_ms: u64,
         pub updated_epoch_ms: u64,
+        /// Git provenance of the tree this generation's content reflects
+        /// (issue #105): advisory metadata, never part of index identity.
+        #[serde(default)]
+        pub provenance: Option<GitProvenanceInfo>,
+    }
+
+    /// Git state recorded with a generation (issue #105). Each field is
+    /// `None` when it could not be determined.
+    #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+    pub struct GitProvenanceInfo {
+        pub commit: Option<String>,
+        pub branch: Option<String>,
+        pub dirty: Option<bool>,
     }
 
     #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -222,14 +235,11 @@ impl From<&crate::domain::IndexState> for result::WorkspaceIndexPolicy {
 }
 
 impl result::WorkspaceIndexInfo {
-    pub(crate) fn from_workspace(
-        workspace: &crate::domain::Workspace,
-        home: &std::path::Path,
-        index_version: Option<u32>,
-    ) -> Self {
+    pub(crate) fn from_manifest(manifest: &crate::workspace::manifest::WorkspaceManifest) -> Self {
+        let workspace = &manifest.workspace;
         Self {
             name: workspace.name.clone(),
-            path: home.to_path_buf(),
+            path: manifest.path.clone(),
             root: workspace.root.clone(),
             scan: workspace.scan.clone(),
             policy: (&workspace.index).into(),
@@ -241,9 +251,17 @@ impl result::WorkspaceIndexInfo {
                 .index
                 .descriptor()
                 .map(|index| (&index.fts).into()),
-            index_version,
+            index_version: manifest.index_version,
             created_epoch_ms: workspace.created_epoch_ms,
             updated_epoch_ms: workspace.updated_epoch_ms,
+            provenance: manifest
+                .provenance
+                .as_ref()
+                .map(|provenance| result::GitProvenanceInfo {
+                    commit: provenance.commit.clone(),
+                    branch: provenance.branch.clone(),
+                    dirty: provenance.dirty,
+                }),
         }
     }
 }

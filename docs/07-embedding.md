@@ -123,6 +123,21 @@ metric unless `--embedding` and `--rebuild` explicitly change them. `zg --index`
 forwards the current CLI environment default in server and auto modes; direct
 MCP calls use the environment inherited by the daemon.
 
+## Seed donor model adoption
+
+A brand-new worktree of a repository whose siblings already hold indexes can
+seed from the closest donor instead of paying a full build (see
+[Pipeline](./04-pipeline.md)). When such a donor exists and the new workspace
+has no model signal of its own — no `--embedding`, no stored model, no
+configured default, no `ZVEC_GREP_EMBEDDING` — it adopts the selected donor's
+model and records it like any explicit choice, so the donor's vectors stay
+reusable. A local donor model always qualifies. A remote donor model is only
+adopted by an explicit build that already carries remote authorization
+(`--allow-remote` or a grant at the target root); implicit first-search builds
+and unauthorized builds fall back to the built-in language selection, and a
+donor model that cannot be acquired degrades the same way instead of failing
+the index.
+
 ## Local runtime and device
 
 Select a device for local Transformer and GGUF models:
