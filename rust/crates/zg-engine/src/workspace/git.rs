@@ -426,7 +426,12 @@ mod tests {
 
         let clean = read_provenance(root).await;
         assert!(clean.commit.is_some(), "HEAD resolves to a commit");
-        assert_eq!(clean.branch.as_deref(), Some("main").or(Some("master")));
+        // The initial branch name follows the host git's default (main or
+        // master); both are valid branch labels for this test.
+        assert!(matches!(
+            clean.branch.as_deref(),
+            Some("main") | Some("master")
+        ));
         // The workspace's own index directory is untracked but excluded from
         // the dirty check (issue #105 review finding).
         std::fs::create_dir(root.join(".zvec-grep")).expect("index directory");
