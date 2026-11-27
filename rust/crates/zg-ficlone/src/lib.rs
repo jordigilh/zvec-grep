@@ -12,11 +12,13 @@ mod linux {
     /// The generic (x86-64/aarch64) request encoding of `FICLONE`. Exotic
     /// architectures encode ioctl request bits differently; there the call
     /// fails and the caller degrades to a full copy.
-    const FICLONE: libc::c_ulong = 0x40049409;
+    const FICLONE: libc::c_ulong = 0x4004_9409;
 
     /// Clone `source`'s extents into `destination` copy-on-write. The
     /// destination must have just been created and not yet written. The
     /// ioctl does not carry the source's mode bits; the caller applies them.
+    ///
+    /// # Errors
     ///
     /// Returns the operating system's error when the filesystem does not
     /// support reflinks (for example ext4), so the caller can fall back to a
