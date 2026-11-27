@@ -493,6 +493,10 @@ pub mod result {
         /// Full skip counts, independent of the bounded diagnostic samples.
         #[serde(default)]
         pub skipped_counts: std::collections::BTreeMap<String, usize>,
+        /// Whether this run adopted a seed index from a sibling checkout of
+        /// the same repository and only re-embedded the delta (issue #72).
+        #[serde(default)]
+        pub seeded: bool,
     }
 
     #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

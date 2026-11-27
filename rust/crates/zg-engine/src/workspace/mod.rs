@@ -5,6 +5,7 @@ pub(crate) mod layout;
 pub(crate) mod lock;
 pub(crate) mod manifest;
 pub(crate) mod registry;
+pub(crate) mod seed;
 
 /// One format version covers the manifest, storage schema, records and indexing semantics.
 /// Version 1 belongs to the released Node.js implementation, and version 2 to the
