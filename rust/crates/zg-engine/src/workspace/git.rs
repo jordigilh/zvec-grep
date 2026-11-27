@@ -130,9 +130,22 @@ fn resolve_ref(git_dir: &Path, reference: &str) -> Option<String> {
 /// git directory directly; the dirty flag shells out to
 /// `git --no-optional-locks status --porcelain`, which never touches refs.
 pub(crate) async fn read_provenance(root: &Path) -> GitProvenance {
-    let (branch, commit) =
-        resolve_git_dir(root).map_or((None, None), |git_dir| head_state(&git_dir));
-    let dirty = read_dirty(root).await;
+    let (branch, commit, own_git_dir) = match resolve_git_dir(root) {
+        Some(git_dir) => {
+            let (branch, commit) = head_state(&git_dir);
+            (branch, commit, true)
+        }
+        None => (None, None, false),
+    };
+    // Only a root with its own git directory has a meaningful dirty flag: a
+    // bare `git status` in a subdirectory of a larger repository would report
+    // the parent repo's whole tree, which says nothing about this workspace
+    // (and would spawn a doomed subprocess for roots outside any repo).
+    let dirty = if own_git_dir {
+        read_dirty(root).await
+    } else {
+        None
+    };
     GitProvenance {
         commit,
         branch,
@@ -153,6 +166,7 @@ async fn read_dirty(root: &Path) -> Option<bool> {
             "--",
             ":(exclude).zvec-grep",
         ],
+        GIT_STATUS_TIMEOUT,
     )
     .await?
     .success()?;
@@ -212,7 +226,7 @@ pub(crate) async fn commit_relation(
 /// `right`. `None` for unknown commits, unrelated histories or failure.
 pub(crate) async fn commits_behind(root: &Path, left: &str, right: &str) -> Option<u64> {
     let range = format!("{left}..{right}");
-    let output = git(root, &["rev-list", "--count", &range])
+    let output = git(root, &["rev-list", "--count", &range], GIT_QUERY_TIMEOUT)
         .await?
         .success()?;
     output.trim().parse().ok()
@@ -252,12 +266,7 @@ impl GitOutput {
 
 /// Run a read-only git query under a timeout. `None` on spawn failure,
 /// timeout, or a killed process: provenance degrades, it never fails.
-async fn git(root: &Path, args: &[&str]) -> Option<GitOutput> {
-    let timeout = if args.contains(&"status") {
-        GIT_STATUS_TIMEOUT
-    } else {
-        GIT_QUERY_TIMEOUT
-    };
+async fn git(root: &Path, args: &[&str], timeout: Duration) -> Option<GitOutput> {
     let mut command = tokio::process::Command::new("git");
     command
         .arg("-C")

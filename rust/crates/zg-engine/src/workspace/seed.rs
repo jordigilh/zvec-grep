@@ -447,6 +447,12 @@ pub(crate) async fn select_seed(
 
 /// The reported reason a donor was declined by the divergence guard.
 pub(crate) fn refusal_reason(donor: &RankedSeed) -> String {
+    if donor.divergence.target_files == 0 {
+        return format!(
+            "seed donor {}: the target scan selects no files to reuse; building fresh",
+            donor.manifest.workspace.root.display(),
+        );
+    }
     format!(
         "seed donor {} estimated {:.0}% re-embed ({} of {} files) exceeds the {:.0}% adoption threshold; building fresh",
         donor.manifest.workspace.root.display(),

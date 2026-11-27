@@ -539,9 +539,11 @@ impl WorkspaceIndexService {
         let capsule = target
             .embedding()
             .expect("indexing resolves exactly one embedding model");
-        // Whether any donor passed the guard, captured before the donors are
-        // consumed: it distinguishes a guard refusal from a capsule mismatch.
+        // Whether any donor passed the guard, and the closest one, captured
+        // before the donors are consumed: they distinguish a guard refusal
+        // from a capsule mismatch and name the closest donor either way.
         let donors_passed_guard = !selection.donors.is_empty();
+        let closest_donor = selection.donors.first().cloned();
         let compatible: Vec<crate::workspace::seed::RankedSeed> = selection
             .donors
             .into_iter()
@@ -559,8 +561,8 @@ impl WorkspaceIndexService {
             // guard refusal only applies when no donor passed it at all; a
             // donor set emptied by the capsule filter is a model mismatch.
             if donors_passed_guard {
-                if let Some(donor) = selection.refused.as_ref() {
-                    let mut report = SeedReport::refused(donor);
+                if let Some(donor) = closest_donor.as_ref().or(selection.refused.as_ref()) {
+                    let mut report = SeedReport::from_donor(donor, None);
                     report.refusal = Some(format!(
                         "no seed donor matches the resolved model capsule; the closest donor {} was estimated at {:.0}% divergence",
                         donor.manifest.workspace.root.display(),
@@ -4186,10 +4188,8 @@ mod tests {
             .expect("main checkout index");
         std::fs::write(worktree.join("one.txt"), "orchard rows and orchard vines").expect("same");
         let mut options = empty_index_options(&worktree);
-        options.embedding.as_mut().expect("model").reference = "local/potion-retrieval-32m".into();
-        // The alternate model never embeds here (no matching files), so the
-        // request succeeds and isolates the capsule refusal.
-        options.scan.globs = Some(vec!["nothing/**".into()]);
+        options.embedding.as_mut().expect("model").reference =
+            "local/jina-embeddings-v2-base-code".into();
         let result = service
             .index(&models, options)
             .await
@@ -4198,12 +4198,21 @@ mod tests {
             !result.seeded,
             "a model mismatch never silently re-embeds with another model"
         );
+        let refusal = result
+            .seed
+            .as_ref()
+            .and_then(|report| report.refusal.as_deref())
+            .expect("a capsule mismatch reports its reason");
+        assert!(
+            refusal.contains("model capsule"),
+            "the refusal names the capsule mismatch: {refusal}"
+        );
         let manifest = super::read_workspace_manifest(&worktree.join(".zvec-grep"))
             .expect("manifest read")
             .expect("manifest");
         assert_eq!(
             manifest.embedding().expect("embedding").model.reference(),
-            "local/potion-retrieval-32m",
+            "local/jina-embeddings-v2-base-code",
             "the requested model was honored, not the seed's"
         );
         models.close();
@@ -5082,14 +5091,14 @@ mod tests {
         )
         .expect("writer");
         super::write_workspace_manifest(&donor.path, &rewritten).expect("rewrite donor model");
+        // The worktree shares the donor's file, so selection offers the
+        // donor's (remote) model — which an implicit build must refuse.
         std::fs::write(worktree.join("one.txt"), "orchard rows and orchard vines").expect("same");
-        let mut options = IndexOptions {
+        let options = IndexOptions {
             root: Some(worktree.clone()),
             implicit: true,
             ..IndexOptions::default()
         };
-        // Nothing embeds: the request isolates the model-resolution rule.
-        options.scan.globs = Some(vec!["nothing/**".into()]);
         let result = service
             .index(&models, options)
             .await
