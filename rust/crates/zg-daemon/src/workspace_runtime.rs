@@ -1114,6 +1114,9 @@ impl IndexOperationProvider for WorkspaceRuntimeManager {
             .max_by_key(|root| root.components().count())
             .cloned()
             .unwrap_or(requested_root);
+        // The inherent runtime_snapshot (raw scheduler counters) is intended
+        // here, not the IndexOperationProvider trait method of the same
+        // name, which derives reported revisions for untracked runtimes.
         let known_runtime = runtime_present
             && (self.runtime_snapshot(&root).watcher_active || self.job_for_root(&root).is_some());
         // FTS-only retrieval never embeds, so a generation whose backend
@@ -1168,6 +1171,11 @@ impl IndexOperationProvider for WorkspaceRuntimeManager {
             .map_err(WorkspaceRuntimeError::into_engine_error)
     }
 
+    /// Reports the persisted status snapshot a preceding `info` call
+    /// recorded for this root. Callers must invoke `info` (a disk scan)
+    /// first: without a fresh observation the cached snapshot — and the
+    /// revisions derived from it for untracked runtimes — may be arbitrarily
+    /// old, because nothing invalidates it while no watcher is active.
     fn runtime_snapshot(&self, root: &Path) -> Option<IndexRuntimeSnapshot> {
         let canonical_root = std::fs::canonicalize(root).ok()?;
         let runtime = lock(&self.inner.runtimes).get(&canonical_root).cloned()?;
@@ -1185,14 +1193,29 @@ impl IndexOperationProvider for WorkspaceRuntimeManager {
                 .then(|| cache.snapshot.clone())
                 .flatten()
         };
+        // A runtime this daemon is not tracking never observed the
+        // out-of-band writes that published the current index, so its raw
+        // counters would contradict the status snapshot in this response.
+        // Derive the reported pair from that same snapshot; the scheduler
+        // atomics are never written, so freshness proofs and the watcher
+        // lifecycle keep reading the raw counters.
+        let (dirty_revision, indexed_revision) = if active || snapshot.watcher_active {
+            (snapshot.dirty_revision, snapshot.indexed_revision)
+        } else {
+            untracked_revisions(
+                index_status.as_ref(),
+                snapshot.dirty_revision,
+                snapshot.indexed_revision,
+            )
+        };
         Some(IndexRuntimeSnapshot {
             index_status,
             completion_baseline: active
                 .then(|| lock(&runtime.index_status).completion_baseline.clone())
                 .flatten(),
             watcher_active: snapshot.watcher_active,
-            dirty_revision: snapshot.dirty_revision,
-            indexed_revision: snapshot.indexed_revision,
+            dirty_revision,
+            indexed_revision,
             active_job_id: job.as_ref().map(|job| job.id.to_string()),
             job_state: job.as_ref().map(|job| operation_state(job.state)),
             progress: job.as_ref().and_then(|job| job.progress.clone()),
@@ -1247,6 +1270,52 @@ fn wait_search_fts_only(request: &ContextOptions) -> bool {
             );
             false
         }
+    }
+}
+
+/// Reported revision pair for a runtime this daemon is not tracking.
+///
+/// The counters are scheduler state: they count watcher events this daemon
+/// observed and the jobs it ran. A runtime without an active watcher never
+/// observed the out-of-band writes that published the current index — a
+/// direct-mode rebuild, a seeded worktree index, or a second daemon
+/// instance — so its initial 1/0 pair would report pending work while the
+/// engine's disk-observed status is ready. Derive the reported pair from
+/// the status snapshot reported in the same response, so the two can never
+/// disagree within one reply:
+///
+/// - `Ready`: the published index matches disk; nothing is pending.
+/// - `Stale` | `Failed` | `RebuildRequired`: an existing index may be
+///   stale; report one pending revision.
+/// - `Unknown`: the index exists but its stats could not be read; keep the
+///   conservative "may be stale" label instead of reading as clean.
+/// - `Missing` | `Uninitialized`: no index exists to be stale against.
+/// - `Disabled` or no validated snapshot: keep the raw scheduler pair.
+///
+/// The pair is a point-in-time observation of the snapshot, like the
+/// status field itself; a write landing after the scan belongs to the next
+/// response. This must only be called with the snapshot validated for the
+/// current job identity by the trait [`runtime_snapshot`]
+/// ([`IndexOperationProvider::runtime_snapshot`]) implementation.
+fn untracked_revisions(
+    status: Option<&IndexStatusSnapshot>,
+    dirty: u64,
+    indexed: u64,
+) -> (u64, u64) {
+    let Some(status) = status else {
+        return (dirty, indexed);
+    };
+    match status.status {
+        IndexStatus::Ready => {
+            let base = dirty.max(indexed);
+            (base, base)
+        }
+        IndexStatus::Stale
+        | IndexStatus::Failed
+        | IndexStatus::Unknown
+        | IndexStatus::RebuildRequired => (dirty.max(indexed + 1), indexed),
+        IndexStatus::Missing | IndexStatus::Uninitialized => (0, 0),
+        IndexStatus::Disabled => (dirty, indexed),
     }
 }
 
@@ -1745,6 +1814,205 @@ mod tests {
         );
         manager.drop_index(options).await.expect("drop");
         assert!(IndexOperationProvider::runtime_snapshot(&manager, &root).is_none());
+        manager.shutdown_all().await.expect("shutdown");
+        engine.close();
+    }
+
+    fn observed_status(
+        status: zg_engine::api::info::result::IndexStatus,
+    ) -> super::IndexStatusSnapshot {
+        super::IndexStatusSnapshot {
+            status,
+            stats: None,
+            checked_epoch_ms: 1,
+        }
+    }
+
+    #[test]
+    fn untracked_revisions_match_a_ready_published_index() {
+        use zg_engine::api::info::result::IndexStatus;
+        // An out-of-band rebuild (or a seeded worktree index) leaves the
+        // scheduler counters at their initial values while the published
+        // index matches disk: the reported pair must not claim pending
+        // work the daemon never observed (issue #104).
+        assert_eq!(
+            super::untracked_revisions(Some(&observed_status(IndexStatus::Ready)), 1, 0),
+            (1, 1)
+        );
+        // A runtime that indexed earlier keeps its adopted history.
+        assert_eq!(
+            super::untracked_revisions(Some(&observed_status(IndexStatus::Ready)), 5, 3),
+            (5, 5)
+        );
+    }
+
+    #[test]
+    fn untracked_revisions_label_untracked_edits_as_pending() {
+        use zg_engine::api::info::result::IndexStatus;
+        // Edits the daemon never observed keep the may-be-stale signal.
+        assert_eq!(
+            super::untracked_revisions(Some(&observed_status(IndexStatus::Stale)), 1, 0),
+            (1, 0)
+        );
+        // Equal scheduler revisions must still report one pending
+        // revision once disk observes changes.
+        assert_eq!(
+            super::untracked_revisions(Some(&observed_status(IndexStatus::Stale)), 5, 5),
+            (6, 5)
+        );
+    }
+
+    #[test]
+    fn untracked_revisions_label_unknown_and_failed_as_pending() {
+        use zg_engine::api::info::result::IndexStatus;
+        // Unavailable stats and failed files must not read as clean.
+        for status in [
+            IndexStatus::Failed,
+            IndexStatus::Unknown,
+            IndexStatus::RebuildRequired,
+        ] {
+            assert_eq!(
+                super::untracked_revisions(Some(&observed_status(status)), 2, 2),
+                (3, 2),
+                "{status:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn untracked_revisions_do_not_claim_an_index_when_none_exists() {
+        use zg_engine::api::info::result::IndexStatus;
+        assert_eq!(
+            super::untracked_revisions(Some(&observed_status(IndexStatus::Missing)), 1, 0),
+            (0, 0)
+        );
+        assert_eq!(
+            super::untracked_revisions(Some(&observed_status(IndexStatus::Uninitialized)), 3, 3),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn untracked_revisions_keep_raw_counters_without_a_validated_observation() {
+        use zg_engine::api::info::result::IndexStatus;
+        // A disabled policy and a missing snapshot have no disk truth to
+        // reconcile against: the raw scheduler pair is reported unchanged.
+        assert_eq!(
+            super::untracked_revisions(Some(&observed_status(IndexStatus::Disabled)), 1, 0),
+            (1, 0)
+        );
+        assert_eq!(super::untracked_revisions(None, 7, 4), (7, 4));
+    }
+
+    #[tokio::test]
+    async fn snapshot_revisions_follow_watcher_ownership() {
+        use zg_transport_mcp::IndexOperationProvider;
+
+        let workspace = tempdir().expect("workspace");
+        let root = workspace.path().canonicalize().expect("root");
+        let (_sender, receiver) = mpsc::channel(4);
+        let manager = WorkspaceRuntimeManager::new(
+            Arc::new(FailingExecutor),
+            Arc::new(ManualWatcherFactory {
+                receiver: Arc::new(tokio::sync::Mutex::new(receiver)),
+                watches: Mutex::new(Vec::new()),
+                closes: Arc::new(AtomicUsize::new(0)),
+            }),
+            SchedulerConfig::default(),
+        );
+        let runtime = manager
+            .runtime(root.clone(), &IndexOptions::default())
+            .expect("runtime");
+        let epoch = super::lock(&runtime.index_status).invalidate();
+        assert!(super::lock(&runtime.index_status).record(epoch, &inspected_info(), None));
+        runtime.dirty_revision.store(5, Ordering::Release);
+        runtime.indexed_revision.store(3, Ordering::Release);
+        // An owned runtime (watcher active) reports raw scheduler state.
+        runtime.watcher_active.store(true, Ordering::Release);
+        let tracked =
+            IndexOperationProvider::runtime_snapshot(&manager, &root).expect("tracked runtime");
+        assert_eq!((tracked.dirty_revision, tracked.indexed_revision), (5, 3));
+        // A runtime without a watcher (for example after retirement, once a
+        // later inspection re-records the snapshot) reconciles the same
+        // counters against the recorded ready snapshot. Real retirement
+        // runs require_reconciliation first, so the pair only becomes
+        // derivable after that reinspection.
+        runtime.watcher_active.store(false, Ordering::Release);
+        let retired =
+            IndexOperationProvider::runtime_snapshot(&manager, &root).expect("retired runtime");
+        assert_eq!((retired.dirty_revision, retired.indexed_revision), (5, 5));
+        // Without a validated snapshot there is no disk truth to derive
+        // from: the raw pair is reported unchanged.
+        super::lock(&runtime.index_status).invalidate();
+        let unobserved =
+            IndexOperationProvider::runtime_snapshot(&manager, &root).expect("runtime");
+        assert_eq!(
+            (unobserved.dirty_revision, unobserved.indexed_revision),
+            (5, 3)
+        );
+        manager.shutdown_all().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn out_of_band_index_publishes_reconciled_status_revisions() {
+        use zg_engine::api::{
+            index::options::{Device, EmbeddingModelSpec},
+            info::result::IndexStatus,
+        };
+        use zg_transport_mcp::IndexOperationProvider;
+
+        let workspace = tempdir().expect("workspace");
+        let root = workspace.path().canonicalize().expect("root");
+        std::fs::write(root.join("a.py"), "def out_of_band():\n    return 1\n").expect("source");
+        let engine = Arc::new(zg_engine::ZvecGrep::new());
+        // A direct-mode build never goes through the daemon: it publishes
+        // a generation the runtime below never observed (issue #104).
+        engine
+            .index(IndexOptions {
+                root: Some(root.clone()),
+                name: Some(format!("out-of-band-{}", uuid::Uuid::new_v4())),
+                embedding: Some(EmbeddingModelSpec {
+                    reference: "local/potion-code-16m-v2".into(),
+                    revision: None,
+                    cache_dir: None,
+                    endpoint: None,
+                    device: Device::Cpu,
+                }),
+                ..IndexOptions::default()
+            })
+            .await
+            .expect("out-of-band index");
+        let manager = WorkspaceRuntimeManager::native(Arc::clone(&engine));
+        let options = InfoOptions {
+            root: Some(root.clone()),
+            include_status: true,
+        };
+        // A read-only status inspection creates the runtime; the reported
+        // revisions must match the published index instead of the initial
+        // 1/0 pair, and agree with the status in the same response.
+        let info = manager
+            .info(&engine, options.clone())
+            .await
+            .expect("inspection");
+        assert_eq!(info.index_status(), IndexStatus::Ready);
+        let snapshot = IndexOperationProvider::runtime_snapshot(&manager, &root).expect("runtime");
+        assert!(!snapshot.watcher_active);
+        assert_eq!(
+            snapshot.index_status.expect("status").status,
+            IndexStatus::Ready
+        );
+        assert_eq!(snapshot.dirty_revision, snapshot.indexed_revision);
+        assert!(snapshot.indexed_revision >= 1);
+        // Untracked edits must keep the may-be-stale signal.
+        std::fs::write(root.join("b.py"), "def untracked():\n    return 2\n").expect("edit");
+        manager.info(&engine, options).await.expect("reinspection");
+        let stale = IndexOperationProvider::runtime_snapshot(&manager, &root).expect("runtime");
+        assert!(!stale.watcher_active);
+        assert_eq!(
+            stale.index_status.expect("status").status,
+            IndexStatus::Stale
+        );
+        assert!(stale.dirty_revision > stale.indexed_revision);
         manager.shutdown_all().await.expect("shutdown");
         engine.close();
     }
