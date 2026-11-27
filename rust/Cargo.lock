@@ -4465,7 +4465,6 @@ dependencies = [
  "hyper",
  "hyper-util",
  "ignore",
- "libc",
  "llama-cpp-2",
  "mlx-rs",
  "ort",
@@ -4497,6 +4496,7 @@ dependencies = [
  "uuid",
  "zg-codegraph",
  "zg-engine-macros",
+ "zg-ficlone",
  "zg-host-native",
  "zg-ort-version",
  "zg-zvec-fp16",
@@ -4510,6 +4510,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "zg-ficlone"
+version = "0.0.1"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

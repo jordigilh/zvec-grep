@@ -79,9 +79,10 @@ zvec-rust.workspace = true
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.4", features = ["fs"] }
 
-# FICLONE (reflink) for seeding indexes on Linux copy-on-write filesystems.
+# Reflink (FICLONE) for seeding indexes on Linux copy-on-write filesystems;
+# the crate quarantines the single unsafe ioctl call.
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2"
+zg-ficlone = { path = "../zg-ficlone" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["coreml"] }
