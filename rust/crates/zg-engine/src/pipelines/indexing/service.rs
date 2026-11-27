@@ -323,6 +323,9 @@ impl WorkspaceIndexService {
                 // mix runtimes, so the pipeline enforces the recorded identity
                 // per batch before committing. A fresh build accepts its starting
                 // identity and relabels its staging generation at publication.
+                // The run mode is explicit on the context, never inferred from
+                // the expected identity's absence.
+                is_build: build.is_some(),
                 expected_backend_identity: if build.is_some() {
                     None
                 } else {
