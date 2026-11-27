@@ -3827,18 +3827,35 @@ mod tests {
         models.close();
     }
 
+    /// Pin a workspace manifest's `updated_epoch_ms` under its home lock, so
+    /// seed-ordering tests do not depend on wall-clock millisecond spacing.
+    fn set_updated_epoch(root: &Path, epoch_ms: u64) {
+        let home = root.join(".zvec-grep");
+        let mut manifest = super::read_workspace_manifest(&home)
+            .expect("manifest read")
+            .expect("manifest");
+        let _writer = crate::workspace::lock::acquire_home_lock(
+            &home,
+            crate::workspace::lock::LockMode::Write,
+            "test.set_epoch",
+        )
+        .expect("writer");
+        manifest.workspace.updated_epoch_ms = epoch_ms;
+        super::write_workspace_manifest(&home, &manifest).expect("set epoch");
+    }
+
     #[tokio::test]
-    async fn seed_selection_prefers_the_repository_root_over_a_fresher_worktree() {
+    async fn seed_selection_takes_the_newest_index_regardless_of_root() {
         let directory = tempdir().expect("repository parent");
         let main = directory.path().join("main");
-        let older = directory.path().join("older");
+        let fresh = directory.path().join("fresh");
         let adopter = directory.path().join("adopter");
-        for root in [&main, &older, &adopter] {
+        for root in [&main, &fresh, &adopter] {
             std::fs::create_dir(root).expect("worktree root");
         }
-        std::fs::create_dir_all(main.join(".git/worktrees/older")).expect("gitdir");
+        std::fs::create_dir_all(main.join(".git/worktrees/fresh")).expect("gitdir");
         std::fs::create_dir_all(main.join(".git/worktrees/adopter")).expect("gitdir");
-        for (root, name) in [(&older, "older"), (&adopter, "adopter")] {
+        for (root, name) in [(&fresh, "fresh"), (&adopter, "adopter")] {
             std::fs::write(
                 root.join(".git"),
                 format!(
@@ -3856,11 +3873,11 @@ mod tests {
             .index(&models, empty_index_options(&main))
             .await
             .expect("repo-root index");
-        // A same-repo worktree indexed later (fresher) but with a narrower
-        // scan: only the repo-root seed covers both files.
-        let mut narrow = empty_index_options(&older);
+        // A fresher sibling with a narrower scan: adopting it costs one added
+        // file, which distinguishes it from the repo-root seed.
+        let mut narrow = empty_index_options(&fresh);
         narrow.scan.globs = Some(vec!["one.txt".into()]);
-        for root in [&older, &adopter] {
+        for root in [&fresh, &adopter] {
             std::fs::write(root.join("one.txt"), "orchard rows and orchard vines").expect("same");
             std::fs::write(root.join("two.txt"), "irrigation notes for the orchard").expect("same");
         }
@@ -3868,6 +3885,61 @@ mod tests {
             .index(&models, narrow)
             .await
             .expect("fresher sibling index");
+        set_updated_epoch(&main, 1_000);
+        set_updated_epoch(&fresh, 2_000);
+        let result = service
+            .index(&models, empty_index_options(&adopter))
+            .await
+            .expect("adopting worktree index");
+        assert!(result.seeded);
+        assert_eq!(
+            result.files_added, 1,
+            "the freshest seed wins even off the repository root: its narrower \
+             coverage is re-embedded as the delta"
+        );
+        assert_eq!(result.files_unchanged, 1);
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn seed_selection_breaks_timestamp_ties_with_the_repository_root() {
+        let directory = tempdir().expect("repository parent");
+        let main = directory.path().join("main");
+        let sibling = directory.path().join("sibling");
+        let adopter = directory.path().join("adopter");
+        for root in [&main, &sibling, &adopter] {
+            std::fs::create_dir(root).expect("worktree root");
+        }
+        std::fs::create_dir_all(main.join(".git/worktrees/sibling")).expect("gitdir");
+        std::fs::create_dir_all(main.join(".git/worktrees/adopter")).expect("gitdir");
+        for (root, name) in [(&sibling, "sibling"), (&adopter, "adopter")] {
+            std::fs::write(
+                root.join(".git"),
+                format!(
+                    "gitdir: {}\n",
+                    main.join(".git/worktrees").join(name).display()
+                ),
+            )
+            .expect("git file");
+        }
+        std::fs::write(main.join("one.txt"), "orchard rows and orchard vines").expect("source");
+        std::fs::write(main.join("two.txt"), "irrigation notes for the orchard").expect("source");
+        for root in [&sibling, &adopter] {
+            std::fs::write(root.join("one.txt"), "orchard rows and orchard vines").expect("same");
+            std::fs::write(root.join("two.txt"), "irrigation notes for the orchard").expect("same");
+        }
+        let service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("repo-root index");
+        let mut narrow = empty_index_options(&sibling);
+        narrow.scan.globs = Some(vec!["one.txt".into()]);
+        service.index(&models, narrow).await.expect("sibling index");
+        // Equal timestamps: the repository root wins the tie.
+        set_updated_epoch(&main, 1_000);
+        set_updated_epoch(&sibling, 1_000);
         let result = service
             .index(&models, empty_index_options(&adopter))
             .await
@@ -3875,7 +3947,7 @@ mod tests {
         assert!(result.seeded);
         assert_eq!(
             result.files_added, 0,
-            "the repo-root seed was preferred: both files were already present"
+            "an equal-timestamp tie prefers the repository root's full coverage"
         );
         assert_eq!(result.files_unchanged, 2);
         models.close();

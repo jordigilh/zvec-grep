@@ -78,7 +78,8 @@ pub(crate) fn repo_identity(root: &Path) -> Option<PathBuf> {
 /// Candidate seeds for a workspace: registered indexes of the same repository
 /// whose embedding model capsule matches the target exactly and that record a
 /// backend identity (unknown provenance is never adoptable). Ordered by
-/// preference: rooted at the repository root first, then freshest.
+/// preference: the freshest update first (issue #72 — cost is content
+/// divergence), with the repository-root checkout breaking timestamp ties.
 pub(crate) fn seed_candidates(
     registry: &WorkspaceRegistry,
     own_root: &Path,
@@ -126,7 +127,10 @@ pub(crate) fn seed_candidates(
             *manifest,
         ));
     }
-    candidates.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.0.cmp(&left.0)));
+    // Freshest first — cost is content divergence, so a newer sibling seed
+    // saves more embedding than a stale main checkout — with the repository
+    // root breaking timestamp ties.
+    candidates.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
     Ok(candidates
         .into_iter()
         .map(|(_, _, manifest)| manifest)
