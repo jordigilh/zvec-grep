@@ -81,6 +81,9 @@ pub(crate) struct WorkspaceIndexService {
 pub(crate) enum DonorMutationAfterSelection {
     /// Rebuild the donor's index, moving it to a new generation.
     Rebuild,
+    /// Incrementally update the donor's index in place, keeping its
+    /// generation (an in-place update must still be re-measured).
+    Update,
     /// Disable indexing on the donor, invalidating the selection invariants.
     Disable,
 }
@@ -315,6 +318,24 @@ impl WorkspaceIndexService {
                     Box::pin(self.index(models, donor_options))
                         .await
                         .expect("test hook rebuilds the donor");
+                }
+                DonorMutationAfterSelection::Update => {
+                    // An incremental update keeps the donor's generation: the
+                    // adoption path must still re-measure it.
+                    let mut donor_options = IndexOptions {
+                        root: Some(donor_root),
+                        ..IndexOptions::default()
+                    };
+                    donor_options.embedding = Some(EmbeddingModelSpec {
+                        reference: "local/potion-code-16m-v2".into(),
+                        revision: None,
+                        cache_dir: None,
+                        endpoint: None,
+                        device: crate::domain::model::Device::Cpu,
+                    });
+                    Box::pin(self.index(models, donor_options))
+                        .await
+                        .expect("test hook updates the donor");
                 }
                 DonorMutationAfterSelection::Disable => {
                     let home = donor_root.join(".zvec-grep");
@@ -724,8 +745,11 @@ impl WorkspaceIndexService {
         Ok(None)
     }
 
-    /// Re-inspect a donor that may have been rebuilt since selection, and
-    /// re-measure it when its generation moved. `Unavailable` when the donor
+    /// Re-inspect and re-measure a donor that may have changed since
+    /// selection. The donor's `storage_generation` does **not** change on an
+    /// incremental update, so generation equality cannot establish that the
+    /// measured content is unchanged — the donor is always re-measured from
+    /// its current records (found in code review). `Unavailable` when the donor
     /// is gone or busy: skip it, never fatal; `OverThreshold` carries the
     /// fresh measurement for a reported divergence refusal.
     async fn refreshed_donor(
@@ -738,11 +762,6 @@ impl WorkspaceIndexService {
         let Some(current) = crate::workspace::seed::reinspect_donor(&donor.manifest) else {
             return crate::workspace::seed::Remeasured::Unavailable;
         };
-        if current.storage_generation == donor.manifest.storage_generation {
-            let mut donor = donor;
-            donor.manifest = current;
-            return crate::workspace::seed::Remeasured::Usable(donor);
-        }
         let scan = resolve_scan(None, options);
         let Ok(selection) =
             crate::file_selection::GlobMatcher::new(&target.workspace.root, &scan.globs)
@@ -5121,6 +5140,51 @@ mod tests {
             "the re-measured donor covers the whole target"
         );
         assert_eq!(result.files_unchanged, 2);
+        models.close();
+    }
+
+    #[tokio::test]
+    async fn a_donor_updated_in_place_past_the_guard_is_refused_at_adoption() {
+        let directory = tempdir().expect("repository parent");
+        let (main, worktree) = git_repo_fixture(directory.path());
+        std::fs::write(main.join("one.txt"), "orchard rows and orchard vines").expect("source");
+        let mut service = WorkspaceIndexService::with_test_registry();
+        let models = ModelRuntimeManager::new();
+        service
+            .index(&models, empty_index_options(&main))
+            .await
+            .expect("donor index");
+        // Nine extra files land in the donor's tree; an incremental update
+        // indexes them in place, keeping the storage generation. Selection
+        // measured only one.txt, so adoption must re-measure and refuse
+        // (CodeRabbit review: generation equality cannot vouch for content).
+        for index in 0..9 {
+            std::fs::write(
+                main.join(format!("extra{index}.txt")),
+                format!("extra orchard file {index}"),
+            )
+            .expect("donor growth");
+        }
+        std::fs::write(worktree.join("one.txt"), "orchard rows and orchard vines").expect("same");
+        service.donor_mutation_after_selection = Some(DonorMutationAfterSelection::Update);
+        let result = service
+            .index(&models, empty_index_options(&worktree))
+            .await
+            .expect("worktree index");
+        assert!(
+            !result.seeded,
+            "an in-place donor update past the guard is refused at adoption"
+        );
+        let refusal = result
+            .seed
+            .as_ref()
+            .and_then(|report| report.refusal.as_deref())
+            .expect("the re-measured refusal is reported");
+        assert!(
+            refusal.contains("threshold"),
+            "reason names the guard: {refusal}"
+        );
+        assert_eq!(result.files_added, 1, "the worktree builds fresh instead");
         models.close();
     }
 

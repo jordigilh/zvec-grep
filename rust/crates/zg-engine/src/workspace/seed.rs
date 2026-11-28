@@ -178,7 +178,10 @@ fn donor_in_target_selection(
     else {
         return true; // Never fail the measurement over a filter build error.
     };
-    types.matched(path, false).is_whitelist()
+    // Same admission rule as the scanner: an explicit selection whitelists
+    // its files and ignores the rest, while a negation-only filter ignores
+    // the excluded types and leaves everything else unmatched (None).
+    !types.matched(path, false).is_ignore()
 }
 
 /// Compare a donor's stored file records against the target snapshot. Donor
@@ -351,6 +354,15 @@ pub(crate) async fn snapshot_target(
     })
 }
 
+/// Resolves when the token is cancelled; never resolves for `None`, so
+/// `tokio::select!` against it simply runs the other branch to completion.
+async fn cancellation(signal: Option<&tokio_util::sync::CancellationToken>) {
+    match signal {
+        Some(token) => token.cancelled().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// Select seed donors for a brand-new workspace by measured divergence
 /// instead of wall-clock freshness (issue #105): same commit first, then
 /// ancestor/descendant, then content overlap, with freshness only breaking
@@ -374,50 +386,40 @@ pub(crate) async fn select_seed(
         return Ok(None);
     };
     let repo_root = repo.parent().map(Path::to_path_buf);
-    let target_commit = snapshot.provenance.commit.clone();
     let mut measured: Vec<RankedSeed> = Vec::new();
     for manifest in candidates {
+        // Cancellation stops selection promptly (CodeRabbit review): a
+        // cancelled request must not keep hashing and probing donors. The
+        // caller's own cancellation check then fails the request cleanly.
+        if signal.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
+            return Ok(None);
+        }
         // One donor at a time, closed immediately (issue #105 review): the
         // shared storage lock must never overlap another candidate or
         // outlive the measurement.
-        let Ok(storage) = IndexStore::open(WorkspaceIndexStorageOptions::ReadOnly {
-            storage_path: manifest.storage_home(),
-        }) else {
+        let donor = tokio::select! {
+            () = cancellation(signal) => return Ok(None),
+            donor = async {
+                let Ok(storage) = IndexStore::open(WorkspaceIndexStorageOptions::ReadOnly {
+                    storage_path: manifest.storage_home(),
+                }) else {
+                    return Option::<RankedSeed>::None; // Busy or unreadable: skip.
+                };
+                let records = storage.list_files();
+                let close = storage.close();
+                let (Ok(records), Ok(())) = (records, close) else {
+                    return None;
+                };
+                let divergence =
+                    measure_divergence(&records, &mut snapshot, own_root, selection, scan);
+                let ranked = ranked(&manifest, divergence, own_root, &snapshot).await;
+                Some(ranked)
+            } => donor,
+        };
+        let Some(donor) = donor else {
             continue; // Busy, missing or unreadable: skip, never fatal.
         };
-        let records = storage.list_files();
-        let close = storage.close();
-        let (Ok(records), Ok(())) = (records, close) else {
-            continue;
-        };
-        let divergence = measure_divergence(&records, &mut snapshot, own_root, selection, scan);
-        let relation = git::commit_relation(
-            own_root,
-            manifest
-                .provenance
-                .as_ref()
-                .and_then(|p| p.commit.as_deref()),
-            target_commit.as_deref(),
-        )
-        .await;
-        let commits_behind = match (
-            manifest
-                .provenance
-                .as_ref()
-                .and_then(|p| p.commit.as_deref()),
-            target_commit.as_deref(),
-        ) {
-            (Some(donor), Some(target)) if relation == CommitRelation::Ancestor => {
-                git::commits_behind(own_root, donor, target).await
-            }
-            _ => None,
-        };
-        measured.push(RankedSeed {
-            manifest,
-            divergence,
-            relation,
-            commits_behind,
-        });
+        measured.push(donor);
     }
     if measured.is_empty() {
         return Ok(None);
@@ -1104,6 +1106,37 @@ mod tests {
             assert_eq!(
                 divergence.deleted, 0,
                 "file-type exclusion is not a deletion"
+            );
+            assert!((divergence.ratio - 0.0).abs() < 1e-9);
+        }
+
+        #[test]
+        fn donor_files_excluded_only_by_excluded_file_types_still_match() {
+            let (directory, mut target) = snapshot(&[("one.rs", "fn main() {}")]);
+            // A negation-only filter excludes Python but leaves everything
+            // else unmatched (None), which the scanner admits: the same rule
+            // must apply to donor paths (CodeRabbit review).
+            let scan = crate::domain::ScanRules {
+                excluded_file_types: vec!["python".to_owned()],
+                ..ScanRules::default()
+            };
+            let selection = crate::file_selection::GlobMatcher::new(directory.path(), &scan.globs)
+                .expect("matcher");
+            let donor = [
+                record("one.rs", b"fn main() {}", true),
+                record("script.py", b"print('python')", true),
+            ];
+            let divergence = super::super::measure_divergence(
+                &donor,
+                &mut target,
+                directory.path(),
+                &selection,
+                &scan,
+            );
+            assert_eq!(divergence.matched, 1, "the Rust file matches");
+            assert_eq!(
+                divergence.deleted, 0,
+                "the excluded Python file is not a deletion"
             );
             assert!((divergence.ratio - 0.0).abs() < 1e-9);
         }
