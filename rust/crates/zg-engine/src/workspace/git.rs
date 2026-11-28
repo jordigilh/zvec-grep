@@ -146,19 +146,40 @@ pub(crate) async fn read_provenance(root: &Path) -> GitProvenance {
     } else {
         None
     };
-    // Reftable repositories (and other layouts without a loose or packed ref
-    // for HEAD) lose the commit in the direct lookup: fall back to bounded
-    // read-only plumbing so same-commit ranking still works there.
-    let commit = match commit {
-        Some(commit) => Some(commit),
-        None if own_git_dir => rev_parse_head(root).await,
-        None => None,
-    };
-    GitProvenance {
+    let mut provenance = GitProvenance {
         commit,
         branch,
         dirty,
+    };
+    // Reftable repositories (and other layouts without a loose or packed ref
+    // for HEAD) lose the commit in the direct lookup: fall back to bounded
+    // read-only plumbing so same-commit ranking still works there. The loose
+    // HEAD file in such layouts can also carry a placeholder symref
+    // (`refs/heads/.invalid`), so the branch is re-resolved by plumbing too.
+    if provenance.commit.is_none()
+        && own_git_dir
+        && let Some(commit) = rev_parse_head(root).await
+    {
+        provenance.commit = Some(commit);
+        if let Some(branch) = plumbing_branch(root).await {
+            provenance.branch = Some(branch);
+        }
     }
+    provenance
+}
+
+/// Resolve the branch label of `HEAD` with read-only plumbing; `None` on
+/// failure, timeout, or a detached HEAD.
+async fn plumbing_branch(root: &Path) -> Option<String> {
+    let output = git(
+        root,
+        &["rev-parse", "--abbrev-ref", "HEAD"],
+        GIT_QUERY_TIMEOUT,
+    )
+    .await?
+    .success()?;
+    let branch = output.trim().to_owned();
+    (branch != "HEAD" && !branch.is_empty() && !branch.contains(' ')).then_some(branch)
 }
 
 /// Resolve the commit id of `HEAD` with read-only plumbing; `None` on
@@ -503,6 +524,58 @@ mod tests {
             .await,
             Some(1)
         );
+    }
+
+    fn run_git(root: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("git binary on the test host");
+        assert!(
+            status.success(),
+            "git {args:?} failed in {}",
+            root.display()
+        );
+    }
+
+    #[tokio::test]
+    async fn provenance_resolves_commits_in_reftable_repositories() {
+        let directory = tempdir().expect("temporary directory");
+        let root = directory.path().join("repo");
+        std::fs::create_dir(&root).expect("repo root");
+        // Reftable repositories keep refs in a binary table with no loose
+        // ref file, so only the bounded rev-parse plumbing fallback can
+        // resolve the commit (issue #105 review finding).
+        let initialized = std::process::Command::new("git")
+            .args(["init", "--quiet", "-b", "main", "--ref-format=reftable"])
+            .current_dir(&root)
+            .status()
+            .expect("git binary on the test host");
+        if !initialized.success() {
+            // Older git without reftable support: nothing to test here.
+            return;
+        }
+        run_git(&root, &["config", "user.email", "test@example.test"]);
+        run_git(&root, &["config", "user.name", "Test"]);
+        std::fs::write(root.join("file.txt"), "content").expect("source");
+        run_git(&root, &["add", "-A"]);
+        run_git(&root, &["commit", "--quiet", "-m", "initial"]);
+        assert!(
+            !root.join(".git/refs/heads/main").exists(),
+            "a reftable repository has no loose ref file"
+        );
+        let provenance = read_provenance(&root).await;
+        assert!(
+            provenance.commit.is_some(),
+            "the rev-parse fallback resolves the reftable commit"
+        );
+        assert!(matches!(provenance.branch.as_deref(), Some("main")));
+        assert_eq!(provenance.dirty, Some(false));
     }
 
     #[tokio::test]
