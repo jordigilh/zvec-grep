@@ -1,0 +1,57 @@
+name: Seed calibration
+
+# Manual re-calibration of the seed-adoption divergence guard (issue #105).
+# Runs the ignored break-even timing measurement that backs
+# `SEED_MAX_DIVERGENCE_RATIO` in rust/crates/zg-engine/src/workspace/seed.rs:
+# an adopted build's wall time vs a fresh build at increasing divergence.
+# ubuntu-latest root filesystems are ext4, so this lane measures the plain
+# `fs::copy` fallback path (no copy-on-write), complementing the APFS
+# clonefile measurements recorded in the constant's doc comment.
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.sha }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: rust
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  break-even:
+    name: seed guard break-even (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Restore Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/target/
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-cargo-v1-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-cargo-v1-
+      - name: Report the runner's filesystem
+        run: stat -f -c "root fs: %T" .
+      - name: Run the break-even measurement
+        run: >-
+          cargo test --locked -p zg-engine --lib --release -- --ignored
+          --nocapture seed_guard_break_even_measurement
