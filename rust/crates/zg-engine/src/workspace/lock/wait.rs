@@ -160,6 +160,21 @@ mod tests {
         .expect("writer reserves admission");
     }
 
+    /// Assert the home lock becomes readable again, retrying within a budget.
+    /// Cancelling or aborting a waiting writer returns before its blocking
+    /// retry loop observes the stop and releases the intent lock; the
+    /// invariant is eventual release, not instant release, so a single
+    /// immediate probe races under load.
+    async fn assert_eventually_readable(home: &Path, label: &str) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while try_home_read(home, label).expect("probe").is_none() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("released lock after cancellation or abort");
+    }
+
     #[tokio::test]
     async fn writer_intent_blocks_new_readers_until_active_readers_drain() {
         let directory = tempfile::tempdir().expect("workspace");
@@ -232,11 +247,7 @@ mod tests {
                 .code(),
             EngineError::CANCELLED
         );
-        assert!(
-            try_home_read(&home, "after cancellation")
-                .expect("probe")
-                .is_some()
-        );
+        assert_eventually_readable(&home, "after cancellation").await;
         let error = LockWait::new(None, Some(10))
             .expect("budget")
             .acquire(&home, LockMode::Write, "timed index")
@@ -244,11 +255,7 @@ mod tests {
             .expect_err("timeout");
         assert_eq!(error.code(), EngineError::RESOURCE_BUSY);
         assert!(error.to_string().contains("timed out"));
-        assert!(
-            try_home_read(&home, "after timeout")
-                .expect("probe")
-                .is_some()
-        );
+        assert_eventually_readable(&home, "after timeout").await;
         let writer = tokio::spawn({
             let home = home.clone();
             async move {
@@ -261,11 +268,7 @@ mod tests {
         pending_writer(&home).await;
         writer.abort();
         assert!(writer.await.expect_err("aborted").is_cancelled());
-        assert!(
-            try_home_read(&home, "after abort")
-                .expect("probe")
-                .is_some()
-        );
+        assert_eventually_readable(&home, "after abort").await;
     }
 
     #[tokio::test]

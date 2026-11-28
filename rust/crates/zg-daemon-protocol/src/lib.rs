@@ -309,6 +309,7 @@ mod tests {
 
                 created_epoch_ms: 1,
                 updated_epoch_ms: 2,
+                provenance: None,
             }),
             status: Some(IndexStats {
                 entities_indexed: count,

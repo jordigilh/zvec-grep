@@ -497,6 +497,52 @@ pub mod result {
         /// the same repository and only re-embedded the delta (issue #72).
         #[serde(default)]
         pub seeded: bool,
+        /// Details of seed selection for this run (issue #105): the adopted
+        /// donor's provenance and measured drift, or the refusal reason when
+        /// the closest donor was declined. `None` when no donor existed.
+        #[serde(default)]
+        pub seed: Option<SeedReport>,
+    }
+
+    /// How the adopted donor's commit related to this workspace's commit
+    /// (issue #105).
+    #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum SeedRelation {
+        /// The donor indexed the same commit.
+        SameCommit,
+        /// One commit is an ancestor of the other.
+        Ancestor,
+        /// Histories are unrelated or could not be compared.
+        Unrelated,
+    }
+
+    /// Seed selection outcome reported on [`IndexResult::seed`] (issue #105).
+    #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+    pub struct SeedReport {
+        /// The donor workspace's root.
+        pub donor_root: PathBuf,
+        /// The commit the donor's generation was built from, when recorded.
+        pub donor_commit: Option<String>,
+        /// The branch label the donor's generation was built from, when recorded.
+        pub donor_branch: Option<String>,
+        pub relation: SeedRelation,
+        /// Commits in this workspace's history that the donor lacks — how far
+        /// the donor lags. `0` when the donor is at or ahead of this commit;
+        /// `None` when unknown or the histories are unrelated.
+        pub commits_behind: Option<u64>,
+        /// Target files already embedded by the donor (estimated).
+        pub files_matched: usize,
+        /// Files re-embedded by the adoption (actual, once the run finishes),
+        /// or the estimate when the donor was refused.
+        pub files_re_embedded: usize,
+        /// Donor files the target no longer has (estimated).
+        pub files_deleted: usize,
+        /// Estimated share of embedding work the adoption still pays, in
+        /// per-mille of the union (1000 = everything re-embeds).
+        pub divergence_permille: u64,
+        /// Why the closest donor was refused; `None` for an adopted seed.
+        pub refusal: Option<String>,
     }
 
     #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

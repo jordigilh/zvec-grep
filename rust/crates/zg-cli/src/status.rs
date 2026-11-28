@@ -238,6 +238,32 @@ fn write_embedding(
         },
     );
     write_status_field(writer, theme, "Embedding", &values)?;
+    // Git provenance (issue #105): advisory metadata naming the tree the
+    // generation's content reflects. Partial provenance renders what is known.
+    if let Some(provenance) = &index.provenance {
+        let mut value = String::new();
+        if let Some(branch) = &provenance.branch {
+            value.push_str(branch);
+        }
+        if let Some(commit) = &provenance.commit {
+            if !value.is_empty() {
+                value.push_str(" @ ");
+            }
+            // Truncate on a character boundary: the manifest accepts
+            // arbitrary strings and a byte slice could panic mid-UTF-8.
+            let short: String = commit.chars().take(7).collect();
+            value.push_str(&short);
+        }
+        if provenance.dirty == Some(true) {
+            if !value.is_empty() {
+                value.push(' ');
+            }
+            value.push_str("(dirty)");
+        }
+        if !value.is_empty() {
+            write_status_field(writer, theme, "Provenance", &[value])?;
+        }
+    }
     if let Some(fts) = &index.fts {
         write_status_field(
             writer,
@@ -366,7 +392,7 @@ pub(crate) fn scan_filters(scan: &ScanRules) -> String {
 mod tests {
     use super::*;
     use zg_engine::api::info::result::{
-        FailedFile, InfoSource, WorkspaceIndexEmbedding, WorkspaceIndexFts,
+        FailedFile, GitProvenanceInfo, InfoSource, WorkspaceIndexEmbedding, WorkspaceIndexFts,
     };
 
     fn ready() -> InfoResult {
@@ -397,6 +423,7 @@ mod tests {
                 index_version: Some(2),
                 created_epoch_ms: 0,
                 updated_epoch_ms: 0,
+                provenance: None,
             }),
             status: Some(IndexStats {
                 files_scanned: 1132,
@@ -576,5 +603,37 @@ mod tests {
             output
                 .contains("Roots       /workspace (glob=*.rs glob=!vendor/** hidden max-depth=0)")
         );
+    }
+
+    #[test]
+    fn provenance_line_names_branch_commit_and_dirt() {
+        let mut info = ready();
+        info.workspace_index = info.workspace_index.map(|mut index| {
+            index.provenance = Some(GitProvenanceInfo {
+                commit: Some("1234567890abcdef1234567890abcdef12345678".into()),
+                branch: Some("release/v1.6".into()),
+                dirty: Some(false),
+            });
+            index
+        });
+        let output = render(&info, ColorMode::Never);
+        assert!(output.contains("Provenance  release/v1.6 @ 1234567"));
+        assert!(!output.contains("dirty"));
+        info.workspace_index = info.workspace_index.map(|mut index| {
+            index.provenance = Some(GitProvenanceInfo {
+                commit: None,
+                branch: None,
+                dirty: Some(true),
+            });
+            index
+        });
+        let output = render(&info, ColorMode::Never);
+        assert!(output.contains("Provenance  (dirty)"));
+        info.workspace_index = info.workspace_index.map(|mut index| {
+            index.provenance = None;
+            index
+        });
+        let output = render(&info, ColorMode::Never);
+        assert!(!output.contains("Provenance"));
     }
 }

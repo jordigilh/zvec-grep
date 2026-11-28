@@ -2480,6 +2480,7 @@ fn build_index_result(
         skipped: first.skipped.clone(),
         skipped_counts: first.skipped_counts.clone(),
         seeded: false,
+        seed: None,
     }
 }
 
