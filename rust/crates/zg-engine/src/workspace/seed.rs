@@ -302,17 +302,28 @@ impl SeedSelection {
 /// build (issue #105). Measured, not guessed: the break-even timing
 /// measurement (`seed_guard_break_even_measurement`, run with
 /// `cargo test -p zg-engine --lib --release -- --ignored --nocapture
-/// seed_guard_break_even_measurement`) compares an adopted build's wall time
-/// against a fresh build at increasing divergence on a 120-file corpus
-/// (local/potion-code-16m-v2, APFS clonefile). Two runs on arm64 macOS:
-/// divergence 0% seed 1.26s vs fresh 2.14s; 50% 1.49s vs 1.60s; 85% 1.50s vs
-/// 1.46s — parity. Embedding one corpus costs ~0.9s while the copy-on-write
-/// copy plus the lazy-hash measurement cost ~0.10-0.15s, so the break-even
-/// sits at roughly 1 - 0.13/0.9 ≈ 0.85-0.95; the guard keeps the conservative
-/// end of that band. Filesystems without copy-on-write (the plain `fs::copy`
-/// fallback) pay
-/// more for the copy, making the guard stricter there, which is the safe
-/// direction.
+/// seed_guard_break_even_measurement`, or via the manual `Seed calibration`
+/// GitHub workflow) compares an adopted build's wall time against a fresh
+/// build at increasing divergence on a 120-file corpus.
+///
+/// APFS (clonefile), arm64 macOS, local/potion-code-16m-v2: divergence 0%
+/// seed 1.26s vs fresh 2.14s; 50% 1.49s vs 1.60s; 85% 1.50s vs 1.46s —
+/// parity. Embedding one corpus costs ~0.9s while the copy-on-write copy
+/// plus the lazy-hash measurement cost ~0.10-0.15s, so the break-even sits
+/// at roughly 1 - 0.13/0.9 ≈ 0.85-0.95; the guard keeps the conservative end
+/// of that band.
+///
+/// ext4 (the plain `fs::copy` fallback, no copy-on-write), ubuntu-latest,
+/// same template: seeding loses at *every* divergence with a static-lookup
+/// model (0%: 706ms vs 403ms; 85%: 794ms vs 419ms) — the full-tree copy
+/// costs more than model2vec's near-free embedding. The threshold is
+/// therefore model-dependent, not only filesystem-dependent: with a
+/// transformer-class model on the same corpus, embedding takes minutes
+/// against a seconds-long copy, so adoption wins on ext4 as well. The guard
+/// is calibrated for the transformer case, where seeding exists to save
+/// embedding work; the static-lookup-on-plain-copy corner is a bounded
+/// pessimization (a wasted copy, never a correctness issue) tracked as a
+/// follow-up.
 pub(crate) const SEED_MAX_DIVERGENCE_RATIO: f64 = 0.85;
 
 /// Scan the target working tree once for seed selection: the discovered file

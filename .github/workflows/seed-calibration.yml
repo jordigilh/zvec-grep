@@ -9,11 +9,6 @@ name: Seed calibration
 # clonefile measurements recorded in the constant's doc comment.
 
 on:
-  # Temporary: run on this calibration branch only; after merge the manual
-  # dispatch below is the entry point (it requires the default branch).
-  push:
-    branches:
-      - feat/seed-provenance-divergence
   workflow_dispatch:
 
 permissions: {}
