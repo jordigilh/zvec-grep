@@ -55,7 +55,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-rust-cargo-v1-
       - name: Report the runner's filesystem
-        run: stat -f -c "root fs: %T" .
+        run: |
+          stat -f -c 'root fs: %T' .
       - name: Run the break-even measurement
         run: >-
           cargo test --locked -p zg-engine --lib --release -- --ignored
